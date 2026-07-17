@@ -142,7 +142,7 @@ interface PresentationToolbarProps {
     handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
     handleOpenWebEditor: () => void;
     handleExitWebEditor: () => void;
-    handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;
+    handleEnableDocEdit: (mode?: SpecQuickEditMode, options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => void;
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
@@ -166,6 +166,7 @@ interface PresentationToolbarProps {
     handleOpenAxureUsageGuide: () => void;
     handleOpenIdeFile: () => void | Promise<void>;
     handleOpenDocInIDE: () => void | Promise<void>;
+    handleOpenPrototypeSpec: () => void | Promise<void>;
     handleOpenThemeInIDE: () => void | Promise<void>;
     handleOpenDataTableInIDE: () => void | Promise<void>;
     preferredIDE?: MainIDEPreference;
@@ -185,8 +186,11 @@ interface PresentationToolbarProps {
     prototypeDecisionDataAvailable?: boolean;
     handleRunHostToolbarAction?: (action: CommentaryHostToolbarAction) => void | Promise<boolean>;
     handleRunQuickEditSaveAction?: (action: QuickEditSaveAction) => void | Promise<boolean>;
-    contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+    contentMode?: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     selectedDoc?: ItemData | null;
+    selectedPrototypeSpec?: ItemData | null;
+    prototypeSpecSupported?: boolean;
+    prototypeSpecLoading?: boolean;
     selectedTemplate?: ItemData | null;
     selectedTheme?: ThemeResourceItem | null;
     selectedDataTable?: DataTableResourceItem | null;
@@ -244,6 +248,7 @@ export default function PresentationToolbar({
     handleOpenAxureUsageGuide,
     handleOpenIdeFile,
     handleOpenDocInIDE,
+    handleOpenPrototypeSpec,
     handleOpenThemeInIDE,
     handleOpenDataTableInIDE,
     preferredIDE = null,
@@ -260,6 +265,9 @@ export default function PresentationToolbar({
     handleRunQuickEditSaveAction,
     contentMode = 'preview',
     selectedDoc = null,
+    selectedPrototypeSpec = null,
+    prototypeSpecSupported = false,
+    prototypeSpecLoading = false,
     selectedTemplate = null,
     selectedTheme = null,
     selectedDataTable = null,
@@ -271,7 +279,9 @@ export default function PresentationToolbar({
 }: PresentationToolbarProps) {
     const canOpenGenericFigmaExport = exportAvailability?.canOpenGenericFigmaExport ?? Boolean(selectedItem);
     const canOpenSelectedSource = hasExplicitLocalPath(selectedItem);
-    const canOpenMarkdownSource = hasExplicitLocalPath(contentMode === 'template' ? selectedTemplate : selectedDoc);
+    const canOpenMarkdownSource = hasExplicitLocalPath(
+        contentMode === 'template' ? selectedTemplate : contentMode === 'prototype-spec' ? selectedPrototypeSpec : selectedDoc,
+    );
     const canOpenThemeSource = hasExplicitLocalPath(selectedTheme);
     const canOpenDataSource = hasExplicitLocalPath(selectedDataTable);
     const figmaDomDisabledReason = exportAvailability?.figmaDomDisabledReason
@@ -282,25 +292,37 @@ export default function PresentationToolbar({
     const makeExportDisabledReason = exportAvailability?.makeExportDisabledReason || '';
     const hasCurrentPublishResource = Boolean(currentPublishResourcePath);
     const visibleCloudPublishTargetSet = new Set(visibleCloudPublishTargets);
-    const currentMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
-    const currentMarkdownLabel = contentMode === 'template' ? '模板' : '文档';
-    const showMakeExportEntry = activeTab === 'prototypes'
-        && Boolean(selectedItem);
-    const showHtmlExportEntry = activeTab === 'prototypes'
-        && Boolean(selectedItem)
-        && !htmlExportDisabledReason;
+    const currentMarkdownItem = contentMode === 'template'
+        ? selectedTemplate
+        : contentMode === 'prototype-spec'
+            ? selectedPrototypeSpec
+            : selectedDoc;
+    const currentMarkdownLabel = contentMode === 'template' ? '模板' : contentMode === 'prototype-spec' ? '规格' : '文档';
     const edgeIconButtonClass =
         "p-0 inline-flex items-center justify-center text-sm [&_svg]:h-[18px] [&_svg]:w-[18px]";
     const toolbarTextButtonClass = "gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5";
     const toolbarPillButtonClass = "h-8 rounded-md px-3 gap-1.5 text-[12px] font-medium [&_svg]:h-4 [&_svg]:w-4";
 
     const isPreviewContent = contentMode === 'preview';
+    const currentRuntimeExportResource = contentMode === 'theme' ? selectedTheme : selectedItem;
+    const showMakeExportEntry = isPreviewContent && viewMode === 'demo'
+        && Boolean(selectedItem);
+    const showHtmlExportEntry = activeTab === 'prototypes'
+        && Boolean(currentRuntimeExportResource)
+        && (isPreviewContent || contentMode === 'theme')
+        && !htmlExportDisabledReason;
+    const showInteractiveAxureExportEntry = isPreviewContent && viewMode === 'demo'
+        && Boolean(selectedItem);
+    const showEditableAxureCopyEntry = Boolean(currentRuntimeExportResource);
+    const showAxureUsageGuideEntry = showInteractiveAxureExportEntry;
     const isPrototypePreviewMode = isPreviewContent && viewMode === 'demo';
     const isCanvasViewMode = isPreviewContent && viewMode === 'canvas';
     void isPrototypePreviewMode;
     void isCanvasViewMode;
-    const isDocumentEditingContent = contentMode === 'doc' || contentMode === 'template';
+    const isDocumentEditingContent = contentMode === 'doc' || contentMode === 'template' || contentMode === 'prototype-spec';
     const isHtmlDocumentEditingContent = isDocumentEditingContent && isHtmlCommentableResource(currentMarkdownItem);
+    const isReadOnlyHtmlPrototypeSpec = contentMode === 'prototype-spec'
+        && isHtmlDocumentEditingContent;
     const isQuickEditActive = quickEditActive && (!isDocumentEditingContent || isHtmlDocumentEditingContent);
     const isDocumentEditActive = docEditState.enabled;
     const isDocumentCommentActive = isDocumentEditActive && docEditState.quickEditMode === 'comment';
@@ -398,8 +420,10 @@ export default function PresentationToolbar({
         && canShowPrototypeDecisionActions
         && !isQuickEditActive
         && !docEditState.enabled;
+    const showHostSelectionModeAction = !isDocumentCommentActive;
     const showHostPropertyPanelAction = contentMode !== 'theme'
-        && canShowPrototypeDecisionActions;
+        && canShowPrototypeDecisionActions
+        && !isDocumentCommentActive;
 
     const [hostActionMenuOpen, setHostActionMenuOpen] = React.useState(false);
     const [hostAgentMenuOpen, setHostAgentMenuOpen] = React.useState(false);
@@ -745,7 +769,7 @@ export default function PresentationToolbar({
                                 <Keyboard className={hostMenuIconClass} /> 快捷键
                             </button>
                         </div>
-                        {isQuickEditActive ? (
+                        {isQuickEditActive && !isReadOnlyHtmlPrototypeSpec ? (
                             <>
                                 <div role="separator" className={hostMenuSeparatorClass} />
                                 <div role="group" aria-label="保存与清理">
@@ -837,7 +861,7 @@ export default function PresentationToolbar({
                 'host-clear',
                 '清空',
                 <Trash2 />,
-                { type: 'clear-edits' },
+                { type: 'clear-edits', scope: 'prototype' },
                 { visible: !isQuickEditActive, disabled: hostToolbarState.clearEditsDisabled },
             )}
             {renderHostToolbarActionButton(
@@ -846,6 +870,7 @@ export default function PresentationToolbar({
                 <ScanSearch />,
                 { type: 'toggle-selection-mode', active: !hostToolbarState.selectionModeActive },
                 {
+                    visible: showHostSelectionModeAction,
                     disabled: false,
                     active: hostToolbarState.selectionModeActive,
                     tooltip: selectionModeTooltip,
@@ -869,7 +894,7 @@ export default function PresentationToolbar({
                     size="xs"
                     className="gap-1.5 [&_svg]:h-3.5 [&_svg]:w-3.5"
                     disabled={hostToolbarState.clearEditsDisabled}
-                    onClick={() => runHostAction({ type: 'clear-edits' })}
+                    onClick={() => runHostAction({ type: 'clear-edits', scope: 'prototype' })}
                 >
                     <Trash2 /> 清空
                 </Button>
@@ -885,7 +910,11 @@ export default function PresentationToolbar({
     );
 
     const resourceActionButtons = (() => {
-        if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {
+        if (
+            (contentMode === 'doc' && selectedDoc)
+            || (contentMode === 'template' && selectedTemplate)
+            || (contentMode === 'prototype-spec' && selectedPrototypeSpec)
+        ) {
             const canInlineDocEdit = isMarkdownEditableResource(currentMarkdownItem);
             const canCommentOnDocument = isDocumentCommentableResource(currentMarkdownItem);
 
@@ -1061,6 +1090,23 @@ export default function PresentationToolbar({
                                     </Tooltip>
                                 </TooltipProvider>
                             ) : null}
+
+                            <TooltipProvider>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Button
+                                            variant="ghost"
+                                            size="xs"
+                                            className={toolbarTextButtonClass}
+                                            disabled={!prototypeSpecSupported || prototypeSpecLoading}
+                                            onClick={() => { void handleOpenPrototypeSpec(); }}
+                                        >
+                                            <FileText /> 规格
+                                        </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>{prototypeSpecSupported ? '打开当前原型规格' : '当前原型没有明确的本地源码路径'}</TooltipContent>
+                                </Tooltip>
+                            </TooltipProvider>
 
                             <TooltipProvider>
                                 <Tooltip>
@@ -1330,7 +1376,8 @@ export default function PresentationToolbar({
     ) : null;
 
     const showExportMenuButton = ((isPreviewContent && viewMode === 'demo') || contentMode === 'theme') && (Boolean(selectedItem) || Boolean(selectedTheme));
-    const canCopyCurrentScreenshot = isPreviewContent && viewMode === 'demo' && Boolean(selectedItem);
+    const canCopyCurrentScreenshot = ((isPreviewContent && viewMode === 'demo') || contentMode === 'theme')
+        && Boolean(currentRuntimeExportResource);
     const exportMenuButton = (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1338,7 +1385,7 @@ export default function PresentationToolbar({
                     variant="ghost"
                     size="sm"
                     className={toolbarPillButtonClass}
-                    disabled={!canCopyCurrentScreenshot && !canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !handleOpenAxureUsageGuide && !hasCurrentPublishResource}
+                    disabled={!canCopyCurrentScreenshot && !canOpenGenericFigmaExport && !canOpenGenericAxureExport && !showHtmlExportEntry && !hasCurrentPublishResource}
                 >
                     <Cloud />
                     <span>发布</span>
@@ -1372,28 +1419,34 @@ export default function PresentationToolbar({
                 <DropdownMenuLabel className="px-2 py-1 text-[11px] font-normal text-muted-foreground">
                     Axure
                 </DropdownMenuLabel>
-                <DropdownMenuItem
-                    onClick={() => setIsExportModalOpen(true)}
-                    disabled={!canOpenGenericAxureExport}
-                    title={exportAvailability?.axureDisabledReason || ''}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Download className="h-3.5 w-3.5" /> 导出带交互原型
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={handleQuickCopyEditablePrototype}
-                    disabled={!canOpenGenericAxureExport}
-                    title={exportAvailability?.axureDisabledReason || ''}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <Copy className="h-3.5 w-3.5" /> 复制可编辑原型
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                    onClick={handleOpenAxureUsageGuide}
-                    className="gap-2 h-7 text-sm"
-                >
-                    <HelpCircle className="h-3.5 w-3.5" /> 使用说明
-                </DropdownMenuItem>
+                {showInteractiveAxureExportEntry ? (
+                    <DropdownMenuItem
+                        onClick={() => setIsExportModalOpen(true)}
+                        disabled={!canOpenGenericAxureExport}
+                        title={exportAvailability?.axureDisabledReason || ''}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Download className="h-3.5 w-3.5" /> 导出带交互原型
+                    </DropdownMenuItem>
+                ) : null}
+                {showEditableAxureCopyEntry ? (
+                    <DropdownMenuItem
+                        onClick={handleQuickCopyEditablePrototype}
+                        disabled={!canOpenGenericAxureExport}
+                        title={exportAvailability?.axureDisabledReason || ''}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <Copy className="h-3.5 w-3.5" /> 复制可编辑原型
+                    </DropdownMenuItem>
+                ) : null}
+                {showAxureUsageGuideEntry ? (
+                    <DropdownMenuItem
+                        onClick={handleOpenAxureUsageGuide}
+                        className="gap-2 h-7 text-sm"
+                    >
+                        <HelpCircle className="h-3.5 w-3.5" /> 使用说明
+                    </DropdownMenuItem>
+                ) : null}
                 {showHtmlExportEntry ? (
                     <>
                         <DropdownMenuSeparator />

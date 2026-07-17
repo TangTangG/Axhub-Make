@@ -276,18 +276,31 @@ function assertNoDuplicateResourcePath(seen: Set<string>, relativePath: string):
   return true;
 }
 
+function createResourceNameConflictBody(resourcePath: string): {
+  error: string;
+  code: 'RESOURCE_NAME_CONFLICT';
+  path: string;
+} {
+  return {
+    error: `目标文件夹中已存在同名资源：${resourcePath}`,
+    code: 'RESOURCE_NAME_CONFLICT',
+    path: resourcePath,
+  };
+}
+
 function normalizeResourceSidebarTreePayload(tree: unknown): {
   valid: true;
   tree: SidebarTreeNode[];
   folders: Array<{ previousPath: string; nextPath: string }>;
   files: Array<{ previousPath: string; nextPath: string }>;
-} | { valid: false; status: number; error: string } {
+} | { valid: false; status: number; error: string; code?: string; path?: string } {
   if (!Array.isArray(tree)) {
     return { valid: false, status: 400, error: 'tree must be an array' };
   }
 
   const usedIds = new Set<string>();
   const seenPaths = new Set<string>();
+  let duplicateResourcePath = '';
   const folders: Array<{ previousPath: string; nextPath: string }> = [];
   const files: Array<{ previousPath: string; nextPath: string }> = [];
   const makeUniqueId = (seed: string) => {
@@ -329,7 +342,11 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
         ? sanitizeFolderName(title) || (sourcePath ? path.basename(sourcePath) : '')
         : sourcePath ? path.basename(sourcePath) : '';
       const targetPath = normalizeResourceRelativePath(parentPath ? `${parentPath}/${targetName}` : targetName);
-      if (!targetPath || !assertNoDuplicateResourcePath(seenPaths, targetPath)) {
+      if (!targetPath) {
+        return null;
+      }
+      if (!assertNoDuplicateResourcePath(seenPaths, targetPath)) {
+        duplicateResourcePath = targetPath;
         return null;
       }
       if (!sourcePath) {
@@ -374,6 +391,14 @@ function normalizeResourceSidebarTreePayload(tree: unknown): {
 
   const normalized = normalizeNodes(tree as any[], '', 0);
   if (!normalized) {
+    if (duplicateResourcePath) {
+      const conflict = createResourceNameConflictBody(duplicateResourcePath);
+      return {
+        valid: false,
+        status: 409,
+        ...conflict,
+      };
+    }
     const serialized = JSON.stringify(tree);
     if (serialized.includes('../') || serialized.includes('..\\\\') || serialized.includes('"/')) {
       return { valid: false, status: 403, error: 'Forbidden' };
@@ -465,7 +490,7 @@ function applyResourceSidebarTree(resourceRoot: string, payload: {
     }
     if (!fs.existsSync(sourcePath)) continue;
     if (fs.existsSync(targetPath)) {
-      return { ok: false, status: 409, body: { error: `Target already exists: ${nextPath}` } };
+      return { ok: false, status: 409, body: createResourceNameConflictBody(nextPath) };
     }
     movePathIfNeeded(sourcePath, targetPath);
   }
@@ -493,7 +518,7 @@ function applyResourceSidebarTree(resourceRoot: string, payload: {
       return { ok: false, status: 400, body: { error: `Resource file not found: ${previousPath}` } };
     }
     if (fs.existsSync(targetPath)) {
-      return { ok: false, status: 409, body: { error: `Target already exists: ${nextPath}` } };
+      return { ok: false, status: 409, body: createResourceNameConflictBody(nextPath) };
     }
     movePathIfNeeded(sourcePath, targetPath);
   }
@@ -1035,7 +1060,11 @@ export function handleWorkspaceApi(
         if (tab === 'docs' && shouldUseFilesystemResourceRoot(projectRoot, context.metadata, 'docs')) {
           const normalized = normalizeResourceSidebarTreePayload(body?.tree);
           if (normalized.valid === false) {
-            sendJson(res, { error: normalized.error }, { status: normalized.status });
+            sendJson(res, {
+              error: normalized.error,
+              ...(normalized.code ? { code: normalized.code } : {}),
+              ...(normalized.path ? { path: normalized.path } : {}),
+            }, { status: normalized.status });
             return;
           }
           const resourceRoot = getDocsResourceRoot(projectRoot);

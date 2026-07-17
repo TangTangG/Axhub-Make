@@ -111,6 +111,7 @@ function resolvePromptCardNotePlaceholder(): string {
 }
 
 const ANNOTATION_PANEL_NODE_ID_ATTR = 'data-axhub-annotation-panel-node-id';
+const ANNOTATION_MARKER_NODE_ID_ATTR = 'data-axhub-annotation-node-id';
 
 const ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE =
   '当前元素无法可靠定位，请在 AI 输入框描述标注需求，由 AI 创建标注。';
@@ -125,35 +126,16 @@ function isAnnotationPanelTarget(element: Element | null): boolean {
   return Boolean(element.closest?.('[data-axhub-annotation-panel-target="true"]'));
 }
 
-function readCurrentAnnotationPanelNodeId(element: Element | null): string {
+function readCurrentAnnotationNodeId(element: Element | null): string {
   if (!element) return '';
-  const direct = element.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR)?.trim();
-  if (direct) return direct;
-  const closest = element.closest?.(`[${ANNOTATION_PANEL_NODE_ID_ATTR}]`);
-  return closest?.getAttribute?.(ANNOTATION_PANEL_NODE_ID_ATTR)?.trim() ?? '';
-}
-
-function isElementLocator(value: unknown): value is ElementLocator {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const locator = value as Partial<ElementLocator>;
-  return Array.isArray(locator.selectors)
-    && locator.selectors.every((selector) => typeof selector === 'string')
-    && typeof locator.fingerprint === 'string'
-    && Array.isArray(locator.path);
-}
-
-function readAnnotationSourceNodeLocator(nodeId: string): ElementLocator | null {
-  if (!nodeId || typeof window === 'undefined') return null;
-  const snapshot = (window as Window & {
-    __AXHUB_ANNOTATION_SOURCE__?: {
-      nodes?: Array<{ id?: unknown; locator?: unknown }>;
-    };
-  }).__AXHUB_ANNOTATION_SOURCE__;
-  const matchedNode = Array.isArray(snapshot?.nodes)
-    ? snapshot.nodes.find((node) => String(node?.id ?? '').trim() === nodeId)
-    : null;
-  const locator = matchedNode?.locator;
-  return isElementLocator(locator) ? locator : null;
+  for (const attr of [ANNOTATION_PANEL_NODE_ID_ATTR, ANNOTATION_MARKER_NODE_ID_ATTR]) {
+    const direct = element.getAttribute?.(attr)?.trim();
+    if (direct) return direct;
+    const closest = element.closest?.(`[${attr}]`);
+    const closestNodeId = closest?.getAttribute?.(attr)?.trim();
+    if (closestNodeId) return closestNodeId;
+  }
+  return '';
 }
 
 export function getAnnotationManualEditLocatorState(
@@ -163,15 +145,17 @@ export function getAnnotationManualEditLocatorState(
   if (!element) {
     return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
   }
-  const annotationNodeId = readCurrentAnnotationPanelNodeId(element);
-  const sourceLocator = readAnnotationSourceNodeLocator(annotationNodeId);
+  const annotationNodeId = readCurrentAnnotationNodeId(element);
+  if (annotationNodeId) {
+    return { disabled: false, message: '' };
+  }
   const isPanelTarget = isAnnotationPanelTarget(element);
-  if (isPanelTarget && !sourceLocator) {
+  if (isPanelTarget) {
     return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
   }
   let locator: ElementLocator;
   try {
-    locator = sourceLocator ?? createElementLocator(element);
+    locator = createElementLocator(element);
   } catch {
     return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
   }
@@ -186,10 +170,8 @@ export function getAnnotationManualEditLocatorState(
   if (!resolvedElement) {
     return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
   }
-  if (!sourceLocator || !isPanelTarget) {
-    if (resolvedElement !== element) {
-      return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
-    }
+  if (resolvedElement !== element) {
+    return { disabled: true, message: ANNOTATION_MANUAL_EDIT_DISABLED_MESSAGE };
   }
   return { disabled: false, message: '' };
 }
@@ -346,7 +328,6 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       noteDirty,
       onDraftChange,
       onClearCurrentElementEdits,
-      onCancelNote,
       onConfirmNote,
       onDismissSelection,
       annotationEnabled,
@@ -371,6 +352,10 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const [refreshKey, setRefreshKey] = React.useState(0);
     const [selectedSkills, setSelectedSkills] = React.useState<PromptCardSkill[]>([]);
     const [annotationEditorOpen, setAnnotationEditorOpen] = React.useState(false);
+    const [runningElementToolId, setRunningElementToolId] = React.useState<string | null>(null);
+    const [elementToolError, setElementToolError] = React.useState('');
+    const elementTools = options.getElementTools?.(currentTarget) ?? [];
+    const hasElementTools = elementTools.length > 0;
     const skillTrigger = React.useMemo(
       () => findPromptCardSkillTrigger(draftNote),
       [draftNote],
@@ -397,6 +382,8 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
 
     React.useEffect(() => {
       setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds));
+      setRunningElementToolId(null);
+      setElementToolError('');
     }, [enabledSkillIds, savedNoteMeta, currentTarget]);
 
     const onConfirmNoteWithSelectedSkills = React.useCallback(async () => {
@@ -612,6 +599,11 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [bubbleStyleEditorOpen]);
 
     React.useEffect(() => {
+      if (!hasElementTools || !bubbleStyleEditorOpen) return;
+      onBubbleStyleEditorOpenChange(false);
+    }, [bubbleStyleEditorOpen, hasElementTools, onBubbleStyleEditorOpenChange]);
+
+    React.useEffect(() => {
       onPromptCardVisibleChange?.(promptVisible);
     }, [onPromptCardVisibleChange, promptVisible]);
 
@@ -678,15 +670,6 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       onDismissSelection?.();
     }, [onConfirmNoteWithSelectedSkills, onDismissSelection]);
 
-    const cancelAndDismissSelection = React.useCallback(() => {
-      onCancelNote();
-      setSelectedSkills([]);
-      const textarea = noteComposerRef.current?.querySelector('textarea');
-      if (textarea instanceof HTMLTextAreaElement) {
-        textarea.blur();
-      }
-      onDismissSelection?.();
-    }, [onCancelNote, onDismissSelection]);
     const saveAndDismissPromptCard = React.useCallback(async () => {
       await onConfirmText();
       await onConfirmNoteWithSelectedSkills();
@@ -938,10 +921,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         event.preventDefault();
         event.stopPropagation();
         if (dismissTerminalTaskAndSelection()) return;
-        cancelAndDismissSelection();
+        void saveAndCloseNoteComposer();
       },
       [
-        cancelAndDismissSelection,
         dismissTerminalTaskAndSelection,
         saveAndCloseNoteComposer,
       ],
@@ -952,6 +934,19 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }
 
     const promptTarget = currentTarget;
+    const handleElementToolAction = async (tool: (typeof elementTools)[number]) => {
+      if (tool.disabled || runningElementToolId) return;
+      setRunningElementToolId(tool.id);
+      setElementToolError('');
+      try {
+        await options.onElementToolAction?.(tool, promptTarget);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error ?? '操作失败');
+        setElementToolError(message.trim() || '操作失败');
+      } finally {
+        setRunningElementToolId(null);
+      }
+    };
     const showPromptTextInput = false;
     const isCurrentAnnotationPanelTarget = isAnnotationPanelTarget(currentTarget);
     const showAnnotationMarkdownEditorButton = Boolean(
@@ -1105,7 +1100,24 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                 }}
               />
             ) : null}
-            {propertyPanelEnabled && styleDesignEnabled && !textCommentMode && !isCurrentAnnotationPanelTarget ? (
+            {elementTools.map((tool) => {
+              const running = runningElementToolId === tool.id;
+              return (
+                <span key={tool.id} data-we-element-tool={tool.id}>
+                  <IconActionButton
+                    title={running ? `${tool.label}（正在打开）` : tool.label}
+                    icon={tool.icon === 'document' ? <FileTextOutlined /> : <ExportOutlined />}
+                    tone="dark"
+                    loading={running}
+                    disabled={Boolean(tool.disabled || runningElementToolId)}
+                    onClick={() => {
+                      void handleElementToolAction(tool);
+                    }}
+                  />
+                </span>
+              );
+            })}
+            {propertyPanelEnabled && styleDesignEnabled && !hasElementTools && !textCommentMode && !isCurrentAnnotationPanelTarget ? (
               <IconActionButton
                 title={styleEditorToggleTitle}
                 icon={<FormatPainterOutlined />}
@@ -1167,6 +1179,22 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
             />
           </div>
         </div>
+        {elementToolError ? (
+          <div
+            role="alert"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 8,
+              background: 'rgba(255, 77, 79, 0.12)',
+              color: EDITOR_CHROME.danger,
+              fontSize: 11,
+              lineHeight: 1.45,
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {elementToolError.slice(0, 240)}
+          </div>
+        ) : null}
         <div
           ref={noteComposerRef}
           onFocusCapture={(event) => {

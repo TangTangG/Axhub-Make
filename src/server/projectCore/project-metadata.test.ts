@@ -65,4 +65,37 @@ describe('project metadata store', () => {
     expect(serialized.navigation).toEqual({ prototypes: [] });
     expect(serialized.orders).toEqual({ themes: [] });
   });
+
+  it('preserves normalized prototype page groups without retaining blank labels', () => {
+    const projectRoot = createTempRoot();
+    const metadataPath = path.join(projectRoot, '.axhub', 'make', 'project.json');
+    fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+    fs.writeFileSync(metadataPath, JSON.stringify({
+      schemaVersion: 1,
+      project: { id: 'demo', name: 'Demo' },
+      resources: {
+        prototypes: [{
+          id: 'shop',
+          name: 'shop',
+          title: 'Shop',
+          clientUrl: '/prototypes/shop',
+          pages: [
+            { id: 'orders', title: '订单列表', group: '  订单管理  ' },
+            { id: 'customers', title: '客户列表', group: '   ' },
+          ],
+          defaultPageId: 'orders',
+        }],
+        themes: [],
+      },
+      navigation: { prototypes: ['shop'] },
+      orders: { themes: [] },
+    }), 'utf8');
+
+    const metadata = createProjectMetadataStore(projectRoot).getMetadata();
+
+    expect(metadata.resources.prototypes[0]?.pages).toEqual([
+      { id: 'orders', title: '订单列表', group: '订单管理' },
+      { id: 'customers', title: '客户列表' },
+    ]);
+  });
 });

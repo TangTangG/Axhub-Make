@@ -8,6 +8,7 @@ import type {
   CommentaryModifiedElementSummary,
   CommentaryState,
   CommentaryStyleChangeSet,
+  CommentaryTargetedTextChange,
   CommentaryStatus,
   CommentaryStatusListener,
   CommentaryTextChange,
@@ -46,6 +47,7 @@ import {
 import { createEditorSummariesService } from './summaries';
 import { createTextSessionService } from './text-session';
 import { pushMobileModeOverride } from '../../utils/mobile-detect';
+import { installGlobalCommentaryReviewCommentProtocol } from '../../review/comment-protocol';
 
 export type {
   CommentaryAgentBridgeOptions,
@@ -79,13 +81,14 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   const cleanupMobileModeOverride = pushMobileModeOverride(resolvedOptions.mobileMode);
   const state = createEditorRuntimeState();
   const statusListeners = new Set<CommentaryStatusListener>();
-  const hostResourceProjectPath = (() => {
+  const initialHostResource = (() => {
     try {
-      return String(resolvedOptions.host.getResourceContext?.()?.meta?.projectPath ?? '').trim();
+      return resolvedOptions.host.getResourceContext?.() ?? null;
     } catch {
-      return '';
+      return null;
     }
   })();
+  const hostResourceProjectPath = String(initialHostResource?.meta?.projectPath ?? '').trim();
   const resolvedProjectPath = String(
     resolvedOptions.agentBridge.projectPath || hostResourceProjectPath,
   ).trim();
@@ -150,6 +153,10 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
 
   function getTextChanges(): CommentaryTextChange[] {
     return summaries.collectTextChanges();
+  }
+
+  function getTargetedTextChanges(): CommentaryTargetedTextChange[] {
+    return summaries.collectTargetedTextChanges();
   }
 
   function getClearableCount(): number {
@@ -902,6 +909,11 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     },
     onStatusChange: notifyStatusChange,
   });
+  const reviewCommentInstallation = installGlobalCommentaryReviewCommentProtocol({
+    isActive: () => !destroyed && state.active,
+    setComment: (element, comment) => changes.setNoteForElement(element, comment),
+    clearComment: (element) => changes.setNoteForElement(element, ''),
+  });
 
   const textSession = createTextSessionService({
     state,
@@ -1129,6 +1141,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   function destroy(): void {
     if (destroyed) return;
     destroyed = true;
+    reviewCommentInstallation.dispose();
     lifecycle.stop();
     statusListeners.clear();
     cleanupMobileModeOverride();
@@ -1148,6 +1161,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     getSelectedElement: buildSelectedElementSummary,
     getModifiedElements,
     getTextChanges,
+    getTargetedTextChanges,
     getStyleChanges,
     getEditedSnapshot,
     getDebugState,

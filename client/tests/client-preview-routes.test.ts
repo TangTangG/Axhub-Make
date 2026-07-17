@@ -225,7 +225,7 @@ describe('client preview routes', () => {
     const { server, getMiddleware } = createMockPreviewServer();
     const req = {
       method: 'GET',
-      url: '/prototypes/home',
+      url: '/prototypes/home?agentToolbar=host',
       headers: {},
     };
     const res = {
@@ -287,7 +287,7 @@ describe('client preview routes', () => {
     const { server, getMiddleware } = createMockPreviewServer();
     const req = {
       method: 'GET',
-      url: '/prototypes/home',
+      url: '/prototypes/home?agentToolbar=host',
       headers: {},
     };
     const res = {
@@ -327,7 +327,7 @@ describe('client preview routes', () => {
     const origin = await listenPreviewViteServer(server);
     stubAdminHealth(['http://localhost:5174', origin]);
 
-    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&agentToolbar=host`);
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -504,6 +504,67 @@ describe('client preview routes', () => {
     expect(html).toContain('请从 Make 管理端复制局域网链接或二维码');
   });
 
+  it('applies project LAN preview auth bypass changes without restarting and fails closed', async () => {
+    const projectRoot = createFixtureProject();
+    const adminOrigin = 'http://localhost:5174';
+    const accessCalls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: any) => {
+      const url = new URL(String(input));
+      if (url.pathname.startsWith('/api/access/')) {
+        accessCalls.push(url.pathname);
+      }
+      if (url.pathname === '/api/health') {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'admin',
+            capabilities: { reviewReports: true },
+            server: {
+              pid: 5174,
+              port: 5174,
+              host: 'localhost',
+              origin: adminOrigin,
+              projectRoot,
+              startedAt: '2026-05-08T00:00:00.000Z',
+            },
+          }),
+        } as any;
+      }
+      if (url.pathname === '/api/access/status') {
+        return {
+          ok: true,
+          json: async () => ({ passwordSet: true }),
+        } as any;
+      }
+      throw new Error(`Unexpected access path ${url.pathname}`);
+    }) as any;
+    writeServerInfo(projectRoot, 'admin', {
+      pid: 12345,
+      port: 5174,
+      host: 'localhost',
+      origin: adminOrigin,
+      projectRoot,
+      startedAt: '2026-05-04T00:00:00.000Z',
+    });
+    process.chdir(projectRoot);
+    const server = await createPreviewViteServer(projectRoot);
+    const origin = await listenPreviewViteServer(server);
+    const request = () => originalFetch(`${origin}/prototypes/home`, {
+      headers: { 'x-forwarded-for': '192.168.1.55' },
+    });
+
+    expect((await request()).status).toBe(401);
+    writeFile(path.join(projectRoot, '.axhub/make/axhub.config.json'), JSON.stringify({
+      server: { skipLanPreviewAuth: true },
+    }));
+    expect((await request()).status).toBe(200);
+    const callsAfterBypass = accessCalls.length;
+    writeFile(path.join(projectRoot, '.axhub/make/axhub.config.json'), '{ invalid');
+    expect((await request()).status).toBe(401);
+    expect(accessCalls.length).toBeGreaterThan(callsAfterBypass);
+  });
+
   it('keeps the preview Vite client script free of project query params', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://localhost:5174']);
@@ -520,7 +581,7 @@ describe('client preview routes', () => {
     const origin = await listenPreviewViteServer(server);
     stubAdminHealth(['http://localhost:5174', origin]);
 
-    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&agentToolbar=host`);
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -544,7 +605,7 @@ describe('client preview routes', () => {
     const origin = await listenPreviewViteServer(server);
     stubAdminHealth(['http://localhost:5174', origin]);
 
-    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`);
+    const response = await originalFetch(`${origin}/prototypes/home?projectId=make-project&agentToolbar=host`);
     const html = await response.text();
 
     expect(response.status).toBe(200);
@@ -571,7 +632,7 @@ describe('client preview routes', () => {
     const origin = await listenPreviewViteServer(server);
     stubAdminHealth(['http://localhost:5174', origin]);
 
-    const htmlResponse = await originalFetch(`${origin}/prototypes/home?projectId=make-project&genieToolbar=host`, {
+    const htmlResponse = await originalFetch(`${origin}/prototypes/home?projectId=make-project&agentToolbar=host`, {
       headers: { accept: 'text/html' },
     });
     const html = await htmlResponse.text();
@@ -582,7 +643,7 @@ describe('client preview routes', () => {
 
     const response = await originalFetch(new URL(loaderScriptPath as string, origin), {
       headers: {
-        referer: `${origin}/prototypes/home?projectId=make-project&genieToolbar=host`,
+        referer: `${origin}/prototypes/home?projectId=make-project&agentToolbar=host`,
       },
     });
     const moduleCode = await response.text();
@@ -888,7 +949,7 @@ describe('client preview routes', () => {
     const { server, getMiddleware } = createMockPreviewServer();
     const req = {
       method: 'GET',
-      url: '/prototypes/home',
+      url: '/prototypes/home?agentToolbar=host',
       headers: {
         referer: 'http://localhost:5176/?projectId=make-project',
       },
@@ -931,7 +992,7 @@ describe('client preview routes', () => {
     const { server, getMiddleware } = createMockPreviewServer();
     const req = {
       method: 'GET',
-      url: '/prototypes/home?projectId=make-project&genieToolbar=host',
+      url: '/prototypes/home?projectId=make-project&agentToolbar=host',
       headers: {},
     };
     const res = {
@@ -972,7 +1033,7 @@ describe('client preview routes', () => {
     const { server, getMiddleware } = createMockPreviewServer();
     const req = {
       method: 'GET',
-      url: '/prototypes/home?projectId=make-project&genieToolbar=host',
+      url: '/prototypes/home?projectId=make-project&agentToolbar=host',
       headers: {
         'x-forwarded-host': 'localhost:53817',
       },
@@ -999,7 +1060,7 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('uses the request LAN hostname for direct network preview runtime injection', async () => {
+  it('does not inject management runtimes into a direct network preview', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://192.168.31.79:5174'], { acceptSessionToken: 'valid-client-session' });
     writeServerInfo(projectRoot, 'admin', {
@@ -1037,9 +1098,8 @@ describe('client preview routes', () => {
     await getMiddleware()(req, res, next);
 
     const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain('src="http://192.168.31.79:5174/assets/dev-template-bootstrap.js"');
-    expect(html).toContain('src="http://192.168.31.79:5174/runtime/quick-edit.js"');
-    expect(html).not.toContain('http://localhost:5174/runtime/quick-edit.js');
+    expect(html).not.toContain('/assets/dev-template-bootstrap.js');
+    expect(html).not.toContain('/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
   });
 

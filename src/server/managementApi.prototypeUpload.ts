@@ -869,7 +869,7 @@ function parseJsonLastLine<T>(stdout: string, fallback: T): T {
   }
 }
 
-function normalizePrototypeRoutePages(value: unknown): { id: string; title: string }[] {
+function normalizePrototypeRoutePages(value: unknown): { id: string; title: string; group?: string }[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -878,9 +878,12 @@ function normalizePrototypeRoutePages(value: unknown): { id: string; title: stri
     .map((item) => {
       const id = typeof item.id === 'string' ? item.id.trim() : '';
       const title = typeof item.title === 'string' ? item.title.trim() : '';
-      return /^[a-z0-9-]+$/u.test(id) && title ? { id, title } : null;
+      const group = typeof item.group === 'string' ? item.group.trim() : '';
+      return /^[a-z0-9-]+$/u.test(id) && title
+        ? { id, title, ...(group ? { group } : {}) }
+        : null;
     })
-    .filter((item): item is { id: string; title: string } => Boolean(item));
+    .filter((item): item is { id: string; title: string; group?: string } => Boolean(item));
 }
 
 function normalizeWarnings(value: unknown): string[] {

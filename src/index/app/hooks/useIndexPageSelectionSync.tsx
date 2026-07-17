@@ -5,6 +5,7 @@ import type { DataType, ItemData, SidebarTreeNode, TabType, ViewMode } from '../
 import type { TemplateResourceItem } from '../../domains/resources/resource.types';
 import type { ResourceSection, SelectedResourceFolder, SidebarTab, ThemeResourceItem } from '../../types/index-page.types';
 import {
+    doesResourceDeepLinkRequireSidebarAssets,
     resolveIndexDeepLinkSelection,
     resolveResourceDeepLinkSelection,
     type ResourceDeepLinkTarget,
@@ -414,12 +415,7 @@ export function useIndexPageSelectionSync({
             return;
         }
         if (
-            (
-                initialResourceDeepLink?.resourceType === 'doc'
-                || initialResourceDeepLink?.resourceType === 'project-doc'
-                || initialResourceDeepLink?.resourceType === 'template'
-                || initialResourceDeepLink?.resourceType === 'theme'
-            )
+            doesResourceDeepLinkRequireSidebarAssets(initialResourceDeepLink)
             && !sidebarAssetsLoaded
         ) {
             return;

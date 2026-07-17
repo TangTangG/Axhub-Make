@@ -19,6 +19,7 @@ const LEGACY_PROMPT_CLIENT_MAP: Record<string, AcpPromptClient> = {
   qoder: 'acp:qoder',
   codebuddy: 'acp:codebuddy',
   reasonix: 'acp:reasonix',
+  'grok-build': 'acp:grok-build',
 };
 
 const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
@@ -29,6 +30,7 @@ const ACP_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([
   'acp:qoder',
   'acp:codebuddy',
   'acp:reasonix',
+  'acp:grok-build',
 ]);
 
 const LOCAL_PROMPT_CLIENT_SET: ReadonlySet<string> = new Set([

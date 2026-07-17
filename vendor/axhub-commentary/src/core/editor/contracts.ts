@@ -1,6 +1,7 @@
 import type {
   ElementLocator,
   CommentaryStyleChangeSet,
+  CommentaryTargetedTextChange,
   CommentaryTextChange,
   Transaction,
   WebEditorElementKey,
@@ -22,6 +23,7 @@ import type { WebEditorUiSettings } from './ui-settings';
 import type { PromptImageAttachment } from './state';
 import type {
   CommentaryCopyPromptContext,
+  CommentaryClearEditsOptions,
   CommentaryHostResource,
   PrototypeEditCommentsDocument,
   PrototypeEditCommentTaskStatus,
@@ -125,6 +127,7 @@ export interface EditorSummariesService {
   formatSelectorPath(locator: ElementLocator | null | undefined): string;
   formatElementLabelFromLocator(locator: ElementLocator): string;
   collectTextChanges(): CommentaryTextChange[];
+  collectTargetedTextChanges(): CommentaryTargetedTextChange[];
   collectStyleCss(): string;
   collectStyleChanges(): CommentaryStyleChangeSet;
   collectMoveSummaries(transactions: readonly Transaction[]): MoveSummary[];
@@ -224,7 +227,7 @@ export interface EditorPersistenceService {
   restoreCachedChanges(): Promise<void>;
   getPersistedPrototypeCommentsDocument(): PrototypeEditCommentsDocument | null;
   clearCachedChanges(kind: 'text' | 'style'): void;
-  clearStorage(): void;
+  clearStorage(scope?: CommentaryClearEditsOptions['scope']): void;
 }
 
 export interface EditorTextSessionService {
@@ -352,7 +355,7 @@ export interface EditorIntegrationWsService {
 
 export interface EditorLocalActionsService {
   handleCopyPrompt(): Promise<void>;
-  handleClearEdits(options?: { skipConfirm?: boolean }): Promise<void>;
+  handleClearEdits(options?: CommentaryClearEditsOptions): Promise<void>;
   handleClearElementEdits(element: Element): Promise<boolean>;
 }
 

@@ -307,12 +307,14 @@ function mockGitHubPagesRestWithResourcePrefix(input: RequestInfo | URL, init?: 
 }
 
 function writeCloudPublishRecord(projectRoot: string, input: {
-  target: 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages';
+  target: 'vercel' | 'cloudflare-pages' | 's3' | 'github-pages' | 'axhub';
   status: 'success' | 'failed';
   url?: string;
   createdAt: string;
   resourceId?: string;
   path?: string;
+  axhubProjectId?: number;
+  axhubProjectPath?: string;
 }) {
   const safeCreatedAt = input.createdAt.replace(/[:.]/g, '-');
   writeJson(path.join(getProjectExportsDir(projectRoot), `cloud.publish.${input.target}-${safeCreatedAt}.json`), {
@@ -328,6 +330,8 @@ function writeCloudPublishRecord(projectRoot: string, input: {
     metadata: {
       path: input.path || 'prototypes/home',
       ...(input.url ? { url: input.url } : {}),
+      ...(input.axhubProjectId ? { axhubProjectId: input.axhubProjectId } : {}),
+      ...(input.axhubProjectPath ? { axhubProjectPath: input.axhubProjectPath } : {}),
     },
   });
 }
@@ -1576,6 +1580,14 @@ describe('cloud publishing API', () => {
       url: 'https://lintendo.github.io/axhub-pages-demo/',
       createdAt: '2026-05-18T13:00:00.000Z',
     });
+    writeCloudPublishRecord(projectRoot, {
+      target: 'axhub',
+      status: 'success',
+      url: 'https://axhub.im/html/hosted-home/',
+      createdAt: '2026-05-18T14:00:00.000Z',
+      axhubProjectId: 123,
+      axhubProjectPath: 'hosted-home',
+    });
     const server = await startTestServer(projectRoot);
 
     try {
@@ -1595,6 +1607,12 @@ describe('cloud publishing API', () => {
         githubPages: {
           url: 'https://lintendo.github.io/axhub-pages-demo/',
           deployedAt: '2026-05-18T13:00:00.000Z',
+        },
+        axhub: {
+          url: 'https://axhub.im/html/hosted-home/',
+          deployedAt: '2026-05-18T14:00:00.000Z',
+          axhubProjectId: 123,
+          axhubProjectPath: 'hosted-home',
         },
       });
       expect(body.targets.cloudflarePages).toBeNull();

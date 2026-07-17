@@ -2763,9 +2763,11 @@ describe('make-server make client project APIs', () => {
     const parentRoot = createTempRoot('axhub-make-clone-parent-');
     const registryHome = createTempRoot('axhub-make-projects-api-home-');
     const gitUrl = 'https://github.com/example/full-client.git';
+    let cloneCommandOptions: any = null;
     runLocalCommandMock.mockImplementation(async (command: string, args: string[], commandOptions: any) => {
       if (command === 'git' && args[0] === 'clone') {
         const targetRoot = String(args[2] || '');
+        cloneCommandOptions = commandOptions;
         expect(args).toEqual(['clone', gitUrl, path.join(parentRoot, 'cloned-client')]);
         expect(commandOptions?.cwd).toBe(parentRoot);
         fs.mkdirSync(targetRoot, { recursive: true });
@@ -2850,8 +2852,18 @@ describe('make-server make client project APIs', () => {
         ['clone', gitUrl, targetRoot],
         expect.objectContaining({
           cwd: parentRoot,
+          timeoutMs: 60_000,
+          env: expect.objectContaining({
+            GIT_TERMINAL_PROMPT: '0',
+            GCM_INTERACTIVE: 'never',
+          }),
         }),
       );
+      expect(cloneCommandOptions?.timeoutMs).toBe(60_000);
+      expect(cloneCommandOptions?.env).toMatchObject({
+        GIT_TERMINAL_PROMPT: '0',
+        GCM_INTERACTIVE: 'never',
+      });
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         'git',
         expect.arrayContaining(['--depth']),

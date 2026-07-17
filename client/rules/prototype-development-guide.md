@@ -5,11 +5,13 @@
 开发流程：
 
 ```text
-读取已确认需求和设计决策 -> 修改原型目录内代码 -> 运行验收脚本 -> 按错误信息修复 -> 重新验收
+读取已确认的主规格 -> 实现原型 -> 同步主规格 -> 运行验收脚本 -> 按错误信息修复 -> 重新验收
 ```
 
 ## 实现边界
 
+- 规格门槛和双向同步以 `rules/requirements-alignment-guide.md` 的“原型主规格”为准。
+- 主规格缺失或尚未确认时，返回需求与设计对齐阶段；需求与设计完成第一轮对齐后，再使用 `src/resources/templates/规格文档 <格式> 模板.<后缀>` 创建或更新草案。
 - 一个原型目录就是主要隔离边界，页面组件、样式和素材优先留在对应原型目录内。
 - 不为单个原型随意修改 `src/common/`、全局主题或共享工具。
 - 多步骤或高风险修改先拆成短任务，逐项处理并维护当前状态。
@@ -102,7 +104,7 @@ node scripts/check-app-ready.mjs /prototypes/[原型目录]
 - `targetUrl`: 本次验收目标地址。
 - `errors`: 构建、运行时或页面加载错误列表。
 
-向用户请求验收或反馈时，预览链接使用 `targetUrl`，或按 `rules/requirements-alignment-guide.md` 的“预览链接口径”把 `/prototypes/<原型目录>` 补成完整 URL；`/prototypes/<原型目录>` 只作为脚本参数或运行时路径。
+向用户请求验收或反馈时使用 `targetUrl`；`/prototypes/<原型目录>` 只作为脚本参数或运行时路径。
 
 错误处理：
 
@@ -115,5 +117,6 @@ node scripts/check-app-ready.mjs /prototypes/[原型目录]
 - [ ] `index.tsx` 完整存在。
 - [ ] `index.tsx` 顶部有清晰的 `@name`。
 - [ ] 占位原型已更新为有意义的目录名和显示名。
+- [ ] 主规格已确认，并与当前原型保持一致。
 - [ ] 新增依赖已写入 `package.json`。
 - [ ] `check-app-ready.mjs` 原型验收通过。

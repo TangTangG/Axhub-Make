@@ -26,12 +26,21 @@ description: Use only when 用户明确要求把本地截图、设计稿或高�
 所有路径都以 client 包根目录为基准，文档里不要写本机绝对路径、平台路径或外层仓库路径。
 
 - 原型：`src/prototypes/<slug>/`
+- 主规格：`src/prototypes/<slug>/.spec/spec.html`
 - 最终素材：`src/prototypes/<slug>/assets/`
 - 最终素材清单：`src/prototypes/<slug>/assets/asset-manifest.json`
 - 临时文件：`.local/screenshot-to-prototype/<slug>/`
 - 候选矩阵：`.local/screenshot-to-prototype/<slug>/asset-sheet.png`
 - 候选切图：`.local/screenshot-to-prototype/<slug>/candidates/`
 - 候选清单：`.local/screenshot-to-prototype/<slug>/candidate-manifest.json`
+
+## 规格与评审（本技能特例）
+
+- 主规格强制使用 `.spec/spec.html`，从 HTML 模板创建，不提供 Markdown 选项。
+- 在 HTML 中先展示源截图，素材评审以逐项左右对照为主：左侧展示候选矩阵中的对应素材或候选切图，右侧展示最终裁切素材、重绘 SVG 或组件化结果；同项对齐并标注用途，后续实现采用右侧结果，不能只列文件路径。
+- 需求与设计完成第一轮对齐时必须确定 `DESIGN.md`。client 内没有符合需求的现成规范时主动创建；无论复用或新建，都把原文件路径和关键设计规范作为可评审内容直接呈现在 HTML 中。
+- 用户确认 HTML 主规格前不得开始实现；实现后同步规格中的素材、设计决策和实际结果。
+- 本节覆盖通用对齐规则中关于规格格式可选、不主动创建 `DESIGN.md` 以及主规格只引用设计基底的默认约定。
 
 ## 流程
 

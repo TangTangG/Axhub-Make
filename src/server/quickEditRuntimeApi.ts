@@ -22,6 +22,7 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
   const selectableTagNames = new Set(['A', 'BUTTON', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LABEL', 'LI', 'P', 'SPAN', 'STRONG', 'EM', 'SMALL', 'DIV']);
   const patches = new Map();
   let exportCorePromise = null;
+  let axureExportModulePromise = null;
   let active = false;
   let context = {};
   let selectedElement = null;
@@ -910,6 +911,18 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     return exportCorePromise;
   }
 
+  function loadAxureExportModule(moduleUrl) {
+    if (!axureExportModulePromise) {
+      axureExportModulePromise = import(moduleUrl).then((mod) => {
+        if (!mod || typeof mod.htmlToAxure !== 'function') {
+          throw new Error('Axure export runtime missing htmlToAxure');
+        }
+        return mod;
+      });
+    }
+    return axureExportModulePromise;
+  }
+
   async function buildFigmaClipboardPayload(exportCore) {
     if (
       typeof exportCore.captureDocumentForFigmaNew !== 'function'
@@ -1109,9 +1122,9 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
     };
     try {
       window.focus?.();
-      const exportCore = await loadExportCore();
+      const exportCore = await loadAxureExportModule(data.axureExportModuleUrl);
       if (!exportCore || typeof exportCore.htmlToAxure !== 'function') {
-        throw new Error('make-server export core missing htmlToAxure');
+        throw new Error('Axure export runtime missing htmlToAxure');
       }
       const payloadOptions = data && data.payload && typeof data.payload === 'object' ? data.payload : {};
       const options = { ...payloadOptions, ...data };
@@ -1267,7 +1280,6 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
       return;
     }
     if (data.type === 'axhub.quickEdit.export.axureJson') {
-      updateHostRuntimeOrigin(data);
       void exportAxureJson(data);
     }
   });

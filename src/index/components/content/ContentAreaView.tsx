@@ -40,7 +40,11 @@ import type {
     PreviewScaleMode,
     PreviewSinglePreset,
 } from '../../domains/device/preview-layout';
-import { DEVICE_PRESET_SIZES, resolvePreviewLayout } from '../../domains/device/preview-layout';
+import {
+    DEVICE_PRESET_SIZES,
+    resolvePreviewLayout,
+    resolveStablePreviewContainerSize,
+} from '../../domains/device/preview-layout';
 import type { ProjectRuntimeStatus } from '../../services/projectResources';
 import type { ExcalidrawPropertyPanelMode, ExcalidrawPropertyPanelPosition } from '../../utils/excalidrawUiMode';
 import type { CanvasElementContextInfo } from './canvas-embeds/AnnotationOverlay';
@@ -91,14 +95,12 @@ import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '..
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
 import { resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
-import { copyToClipboard } from '../../utils/clipboard';
 
 const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));
 
 const PREVIEW_DEVICE_SHELL_INSET = { width: 32, height: 32 } as const;
 const SPLIT_PREVIEW_HEADER_HEIGHT = 40;
 const SPLIT_PREVIEW_HORIZONTAL_INSET = 44;
-const COPY_START_PROMPT_TOOLTIP = '复制提示词给本地AI使用';
 const UNSPECIFIED_START_SETTING_VALUE = '__unspecified__';
 const PROTOTYPE_START_COUNT_OPTIONS = [1, 2, 3, 4] as const;
 const START_SETTINGS_SELECT_CONTENT_STYLE = { zIndex: 1400 } satisfies CSSProperties;
@@ -373,38 +375,6 @@ function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
     );
 }
 
-function StartSettingsCopyPromptButton({ onCopyPrompt }: { onCopyPrompt: () => void }) {
-    const [tooltipOpen, setTooltipOpen] = useState(false);
-
-    return (
-        <TooltipProvider delayDuration={150}>
-            <Tooltip open={tooltipOpen}>
-                <TooltipTrigger asChild>
-                    <button
-                        type="button"
-                        className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        aria-label={COPY_START_PROMPT_TOOLTIP}
-                        onPointerEnter={(event) => {
-                            if (event.pointerType === 'mouse') setTooltipOpen(true);
-                        }}
-                        onPointerLeave={() => setTooltipOpen(false)}
-                        onBlur={() => setTooltipOpen(false)}
-                        onClick={() => {
-                            setTooltipOpen(false);
-                            onCopyPrompt();
-                        }}
-                    >
-                        <Copy className="size-3.5" aria-hidden="true" />
-                    </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                    {COPY_START_PROMPT_TOOLTIP}
-                </TooltipContent>
-            </Tooltip>
-        </TooltipProvider>
-    );
-}
-
 const PROTOTYPE_START_FIELD_HINTS = {
     count: '选择后会按方案数量生成，并在最终提示词中加载本地 explore-options（多方案探索）技能提示。',
     theme: '选择一个设计系统后，原型会尽量沿用该资源的视觉风格和组件约束。',
@@ -516,12 +486,13 @@ interface ContentAreaProps {
     viewMode: ViewMode;
     setViewMode?: (mode: ViewMode) => void;
     onEnterSelectedPrototypePreview?: () => void;
-    contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+    contentMode?: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     docsItems?: ItemData[];
     sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;
     selectedDoc?: ItemData | null;
     selectedResourceFolder?: SelectedResourceFolder | null;
     selectedTemplate?: ItemData | null;
+    selectedPrototypeSpec?: ItemData | null;
     isDarkMode?: boolean;
     selectedTheme?: ThemeResourceItem | null;
     selectedDataTable?: DataTableResourceItem | null;
@@ -797,7 +768,6 @@ function PrototypeStartSettingsPopover({
     onCountChange,
     onThemeChange,
     onNeedsRequirementsAnalysisChange,
-    onCopyPrompt,
 }: {
     count?: number;
     selectedThemeName: string;
@@ -807,7 +777,6 @@ function PrototypeStartSettingsPopover({
     onCountChange: (count?: number) => void;
     onThemeChange: (themeName: string) => void;
     onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
-    onCopyPrompt?: () => void;
 }) {
     const hasCount = typeof count === 'number';
     const hasSelectedTheme = selectedThemeName !== NO_PROTOTYPE_THEME_VALUE;
@@ -832,12 +801,9 @@ function PrototypeStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                            <div className="text-sm font-medium text-foreground">原型设置</div>
-                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
-                        </div>
-                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
+                    <div className="min-w-0 space-y-1">
+                        <div className="text-sm font-medium text-foreground">原型设置</div>
+                        <div className="truncate text-xs text-muted-foreground">{summary}</div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -897,7 +863,6 @@ function ImageStartSettingsPopover({
     themes,
     onParamsChange,
     onThemeChange,
-    onCopyPrompt,
 }: {
     params: ImageStartParams;
     selectedThemeName: string;
@@ -905,7 +870,6 @@ function ImageStartSettingsPopover({
     themes?: ThemeResourceItem[];
     onParamsChange: (params: ImageStartParams) => void;
     onThemeChange: (themeName: string) => void;
-    onCopyPrompt?: () => void;
 }) {
     const sizeLabel = IMAGE_START_SIZE_OPTIONS.find((option) => option.value === params.size)?.label || params.size;
     const qualityLabel = IMAGE_START_QUALITY_OPTIONS.find((option) => option.value === params.quality)?.label || params.quality;
@@ -947,12 +911,9 @@ function ImageStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                            <div className="text-sm font-medium text-foreground">图片设置</div>
-                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
-                        </div>
-                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
+                    <div className="min-w-0 space-y-1">
+                        <div className="text-sm font-medium text-foreground">图片设置</div>
+                        <div className="truncate text-xs text-muted-foreground">{summary}</div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1087,7 +1048,6 @@ function DocumentStartSettingsPopover({
     onHtmlVisualSpecChange,
     onTemplateChange,
     onNeedsRequirementsAnalysisChange,
-    onCopyPrompt,
 }: {
     format: CanvasDocumentFormat | '';
     htmlVisualSpec: HtmlVisualSpecSkillId | '';
@@ -1100,7 +1060,6 @@ function DocumentStartSettingsPopover({
     onHtmlVisualSpecChange: (visualSpec: HtmlVisualSpecSkillId | '') => void;
     onTemplateChange: (templateName: string) => void;
     onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
-    onCopyPrompt?: () => void;
 }) {
     const formatLabel = DOCUMENT_START_FORMAT_OPTIONS.find((option) => option.value === format)?.label || '';
     const visualSpecOption = DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === htmlVisualSpec) || null;
@@ -1124,12 +1083,9 @@ function DocumentStartSettingsPopover({
             </PopoverTrigger>
             <PopoverContent align="start" side="top" className="z-[1300] w-[320px] p-3">
                 <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 space-y-1">
-                            <div className="text-sm font-medium text-foreground">文档设置</div>
-                            <div className="truncate text-xs text-muted-foreground">{summary}</div>
-                        </div>
-                        {onCopyPrompt ? <StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} /> : null}
+                    <div className="min-w-0 space-y-1">
+                        <div className="text-sm font-medium text-foreground">文档设置</div>
+                        <div className="truncate text-xs text-muted-foreground">{summary}</div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1435,17 +1391,6 @@ function StartGuide({
             thought: request.thought,
         });
     };
-    const handleCopyLocalAiStartPrompt = async (promptText: string) => {
-        const trimmedPrompt = promptText.trim();
-        try {
-            const { prompt } = buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement');
-            await copyToClipboard(prompt);
-            toast.success('提示词已复制到剪贴板');
-        } catch (error: any) {
-            toast.error(error?.message || '复制提示词失败');
-        }
-    };
-
     useEffect(() => {
         if ((availableScenes as readonly CanvasAiScene[]).includes(activeScene)) return;
         setActiveScene(START_GUIDE_DEFAULT_SCENE[kind]);
@@ -1854,7 +1799,7 @@ function StartGuide({
                                     localContextRefs: kind !== 'prototype' || activeScene === 'page' ? [] : [prototypeLocalContextRef],
                                 });
                             }}
-                            postSelectorActions={({ getPromptText }) =>
+                            postSelectorActions={() =>
                                 activeScene === 'page' ? (
                                     <PrototypeStartSettingsPopover
                                         count={prototypeGenerationCount}
@@ -1868,7 +1813,6 @@ function StartGuide({
                                             setSelectedThemeName(themeName);
                                         }}
                                         onNeedsRequirementsAnalysisChange={setPrototypeNeedsRequirementsAnalysis}
-                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
                                 ) : shouldUseImageStartSettings ? (
                                     <ImageStartSettingsPopover
@@ -1881,7 +1825,6 @@ function StartGuide({
                                             userSelectedThemeRef.current = true;
                                             setSelectedThemeName(themeName);
                                         }}
-                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
                                 ) : activeScene === 'document' ? (
                                     <DocumentStartSettingsPopover
@@ -1896,7 +1839,6 @@ function StartGuide({
                                         onHtmlVisualSpecChange={setDocumentHtmlVisualSpec}
                                         onTemplateChange={setSelectedDocumentTemplateName}
                                         onNeedsRequirementsAnalysisChange={setDocumentNeedsRequirementsAnalysis}
-                                        onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}
                                     />
                                 ) : null
                             }
@@ -1996,6 +1938,7 @@ export default function ContentArea({
     selectedDoc = null,
     selectedResourceFolder = null,
     selectedTemplate = null,
+    selectedPrototypeSpec = null,
     isDarkMode: _isDarkMode = false,
     selectedTheme = null,
     selectedDataTable = null,
@@ -2076,8 +2019,12 @@ export default function ContentArea({
     const [runtimeUnavailablePreviewPath, setRuntimeUnavailablePreviewPath] = useState<string | null>(null);
 
     const selectedResourceCanvas = selectedDoc?.openMode === 'canvas' ? selectedDoc : null;
-    const selectedMarkdownItem = contentMode === 'template' ? selectedTemplate : selectedDoc;
-    const markdownEmptyLabel = contentMode === 'template' ? '模板' : '资源';
+    const selectedMarkdownItem = contentMode === 'template'
+        ? selectedTemplate
+        : contentMode === 'prototype-spec'
+            ? selectedPrototypeSpec
+            : selectedDoc;
+    const markdownEmptyLabel = contentMode === 'template' ? '模板' : contentMode === 'prototype-spec' ? '规格' : '资源';
     const draftPrototypeStartItem = useMemo<ItemData>(() => ({
         name: 'prototype-start-draft',
         displayName: '新原型草稿',
@@ -2207,21 +2154,30 @@ export default function ContentArea({
         }
 
         const updateSize = () => {
-            setPreviewContainerSize({
-                width: Math.max(1, node.clientWidth - 48),
-                height: Math.max(1, node.clientHeight - 32),
-            });
+            setPreviewContainerSize((previous) => resolveStablePreviewContainerSize({
+                previous,
+                clientWidth: node.clientWidth,
+                clientHeight: node.clientHeight,
+                horizontalInset: 48,
+                verticalInset: 32,
+            }));
         };
 
         updateSize();
         const observer = new ResizeObserver(updateSize);
         observer.observe(node);
+        const animationFrameId = window.requestAnimationFrame(updateSize);
         window.addEventListener('resize', updateSize);
         return () => {
             observer.disconnect();
+            window.cancelAnimationFrame(animationFrameId);
             window.removeEventListener('resize', updateSize);
         };
-    }, [containerRef]);
+    }, [
+        containerRef,
+        previewConfig.previewMode,
+        previewConfig.singlePreset,
+    ]);
 
     const previewLayout = useMemo(() => resolvePreviewLayout({
         config: previewConfig,
@@ -2522,7 +2478,7 @@ export default function ContentArea({
         );
     }
 
-    if (contentMode === 'doc' || contentMode === 'template') {
+    if (contentMode === 'doc' || contentMode === 'template' || contentMode === 'prototype-spec') {
         if (contentMode === 'doc' && resourceStartDraftActive && !selectedDoc && !selectedResourceFolder) {
             return (
                 <StartGuide
@@ -2594,7 +2550,10 @@ export default function ContentArea({
             selectedMarkdownItem.filePath,
             selectedMarkdownItem.absoluteFilePath,
         ];
-        const markdownIframeUrl = resolveMarkdownPreviewIframeUrl(selectedMarkdownItem, contentMode);
+        const markdownIframeUrl = resolveMarkdownPreviewIframeUrl(
+            selectedMarkdownItem,
+            contentMode === 'template' ? 'template' : 'doc',
+        );
         const iframePreviewablePattern = /\.(md|html?|txt|csv|json|ya?ml|xml|svg)([?#/]|$)/i;
         const imagePattern = /\.(png|jpe?g|gif|webp|bmp|ico|avif)([?#/]|$)/i;
         const canPreviewInIframe = markdownIframeUrl.includes('/spec-template.html') || candidateFields.some(
@@ -2731,7 +2690,7 @@ export default function ContentArea({
             );
         }
 
-        const themePreviewUrl = selectedTheme.clientUrl || selectedTheme.previewUrl || '';
+        const themePreviewUrl = primaryIframeUrl;
         if (!themePreviewUrl) {
             return (
                 <div className="flex items-center justify-center h-full text-muted-foreground text-[12px]">

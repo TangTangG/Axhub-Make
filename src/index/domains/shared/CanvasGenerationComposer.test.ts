@@ -306,6 +306,11 @@ describe('CanvasGenerationComposer message extraction', () => {
       defaultModel: 'gpt-5.5',
       providerOptions: ['claude', 'codex', 'opencode'],
     });
+    expect(resolveCanvasAcpSelectorDefaults('acp:grok-build')).toEqual({
+      defaultProvider: 'grok-build',
+      defaultModel: 'grok-build',
+      providerOptions: ['claude', 'codex', 'opencode', 'grok-build'],
+    });
   });
 
   it('falls back to fixed ACP provider options when the runtime context omits providerOptions', async () => {
@@ -313,6 +318,7 @@ describe('CanvasGenerationComposer message extraction', () => {
 
     expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'codex')).toEqual(['claude', 'codex', 'opencode']);
     expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'gemini' as any)).toEqual(['claude', 'codex', 'opencode']);
+    expect(resolveCanvasAcpRuntimeProviderOptions(undefined, 'grok-build')).toEqual(['claude', 'codex', 'opencode', 'grok-build']);
   });
 
   it('builds project resource context from selected files and folders without expanding folders', async () => {

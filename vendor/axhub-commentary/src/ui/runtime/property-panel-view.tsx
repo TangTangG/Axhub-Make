@@ -134,6 +134,7 @@ const PROPERTY_PANEL_HELP_TOOLTIP =
   '可以直接把需求发给你正在用的 IDE 或本地 agent，也可以先在页面上批注，让它帮你生成或整理设计决策。';
 const SELECTION_MODE_TOGGLE_SHORTCUT_LABEL = 'Ctrl / Cmd + S';
 const PARENT_SELECT_SHORTCUT_LABEL = '↑';
+const PARENT_RETURN_SHORTCUT_LABEL = '↓';
 const PARENT_SELECT_INPUT_TOUCHED_ATTR = 'data-we-parent-select-input-touched';
 
 function mergeCommentarySkillOptions(
@@ -1740,7 +1741,8 @@ export const PropertyPanelView = React.forwardRef<
         };
 
   const showCopyPromptAction = options.showCopyPromptAction !== false;
-  const hasClearableEdits = modifiedCount + visibleTerminalTaskCount > 0;
+  const hasPrototypeClearableEdits = isHostToolbarMode && Boolean(options.hasPrototypeComments?.());
+  const hasClearableEdits = modifiedCount + visibleTerminalTaskCount > 0 || hasPrototypeClearableEdits;
   const clearAllEditsDisabled =
     actionBusy || !hasClearableEdits || !options.onClearEdits;
   const copyPromptDisabled = clearAllEditsDisabled || copyBlocked;
@@ -2880,9 +2882,9 @@ export const PropertyPanelView = React.forwardRef<
   );
   const closeToolbarButton = (
     <AgentToolbarIconButton
-      title={options.onRequestFullExit ? '完全退出 AI 编辑' : '关闭工具栏'}
+      title={options.onRequestFullExit ? '退出批注' : '关闭工具栏'}
       icon={<CloseToolIcon />}
-      ariaLabel={options.onRequestFullExit ? '完全退出 AI 编辑' : '关闭工具栏'}
+      ariaLabel={options.onRequestFullExit ? '退出批注' : '关闭工具栏'}
       awake={agentShellAwake}
       disabled={actionBusy}
       onClick={() => {
@@ -3114,9 +3116,10 @@ export const PropertyPanelView = React.forwardRef<
         case 'clear-edits':
           if (clearAllEditsDisabled || !options.onClearEdits) return false;
           await runAction(() =>
-            options.onClearEdits?.(
-              action.skipConfirm ? { skipConfirm: true } : undefined,
-            ),
+            options.onClearEdits?.({
+              ...(action.skipConfirm ? { skipConfirm: true } : {}),
+              ...(action.scope ? { scope: action.scope } : {}),
+            }),
           );
           return true;
         case 'toggle-property-panel': {
@@ -4074,16 +4077,12 @@ export const PropertyPanelView = React.forwardRef<
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
             {[
               {
-                keys: ['Enter', 'Esc'],
-                label: '保存并关闭气泡卡片',
-                desc: '在气泡卡片的输入框中按下，保存当前批注内容并关闭卡片',
-              },
-              {
                 keys: [
                   `${navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl'} + Enter`,
+                  'Esc',
                 ],
-                label: '快捷执行并关闭',
-                desc: '保存当前批注并立即发送给 AI 执行，同时关闭气泡卡片',
+                label: '保存并关闭气泡卡片',
+                desc: '保存当前批注内容并关闭卡片',
               },
               {
                 keys: [
@@ -4098,9 +4097,9 @@ export const PropertyPanelView = React.forwardRef<
                 desc: '关闭后页面点击恢复原生交互，再按一次重新开启元素选择',
               },
               {
-                keys: [PARENT_SELECT_SHORTCUT_LABEL],
-                label: '选择上级元素',
-                desc: '已有选中元素时，切换到当前元素的上一级',
+                keys: [PARENT_SELECT_SHORTCUT_LABEL, PARENT_RETURN_SHORTCUT_LABEL],
+                label: '选择上 / 下级元素',
+                desc: '↑ 切换到当前元素的上一级，↓ 返回刚才选中的下一级',
               },
             ].map((item) => (
               <div

@@ -329,21 +329,22 @@ function normalizePlaceholderGuide(value: unknown): PrototypePlaceholderGuide | 
     };
 }
 
-function normalizePrototypeRoutePages(value: unknown): { id: string; title: string }[] {
+function normalizePrototypeRoutePages(value: unknown): { id: string; title: string; group?: string }[] {
     if (!Array.isArray(value)) {
         return [];
     }
 
     return value
-        .map((page): { id: string; title: string } | null => {
+        .map((page): { id: string; title: string; group?: string } | null => {
             const raw = page && typeof page === 'object' && !Array.isArray(page)
                 ? page as Record<string, unknown>
                 : {};
             const id = normalizePageId(raw.id);
             const title = pickString(raw.title);
-            return id && title ? { id, title } : null;
+            const group = pickString(raw.group);
+            return id && title ? { id, title, ...(group ? { group } : {}) } : null;
         })
-        .filter((page): page is { id: string; title: string } => Boolean(page));
+        .filter((page): page is { id: string; title: string; group?: string } => Boolean(page));
 }
 
 function normalizePrototypeGenerationStatus(value: unknown): ItemData['generationStatus'] | undefined {

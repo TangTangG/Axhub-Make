@@ -145,6 +145,17 @@ export interface GitWorkspaceChangeGroup {
     items: GitWorkspaceChangeItem[];
 }
 
+export interface GitWorkspaceCommitSummary {
+    hash: string;
+    shortHash: string;
+    message: string;
+    fullMessage?: string;
+    author: string;
+    email?: string;
+    timestamp: number;
+    date: string;
+}
+
 export interface GitWorkspaceStatusResponse {
     available: boolean;
     gitAvailable?: boolean;
@@ -156,15 +167,8 @@ export interface GitWorkspaceStatusResponse {
     projectId?: string;
     projectRoot?: string;
     currentBranch?: string;
-    currentCommit?: {
-        hash: string;
-        shortHash: string;
-        message: string;
-        author: string;
-        email: string;
-        timestamp: number;
-        date: string;
-    } | null;
+    currentCommit?: GitWorkspaceCommitSummary | null;
+    recentCommits?: GitWorkspaceCommitSummary[];
     isHistoricalVersion?: boolean;
     hasChanges?: boolean;
     changedFilesCount?: number;
@@ -182,6 +186,12 @@ export interface GitWorkspaceStatusResponse {
         branch?: string;
         targetRef?: string;
         reason?: string;
+        localHead?: GitWorkspaceCommitSummary | null;
+        remoteHead?: GitWorkspaceCommitSummary | null;
+        aheadCount?: number;
+        behindCount?: number;
+        incomingCommits?: GitWorkspaceCommitSummary[];
+        outgoingCommits?: GitWorkspaceCommitSummary[];
         incoming: {
             totalFiles: number;
             groups: GitWorkspaceChangeGroup[];
@@ -448,6 +458,33 @@ export interface ReviewLanSubmitConfig {
     submitUrl: string;
 }
 
+export interface ReviewAxhubBinding {
+    pid: number;
+    path: string;
+    url: string;
+    projectId: string;
+    prototypeId: string;
+    publishedAt: string;
+}
+
+export interface ReviewAxhubConfig {
+    projectId: string;
+    prototypeId: string;
+    bound: boolean;
+    submitEnabled: boolean;
+    reviewReportCount: number;
+    binding?: ReviewAxhubBinding;
+}
+
+export interface ReviewAxhubSyncResult {
+    projectId: string;
+    prototypeId: string;
+    created: number;
+    updated: number;
+    unchanged: number;
+    changedReportIds: string[];
+}
+
 export interface ReviewReportScopeOptions {
     projectId?: string;
     prototypeId: string;
@@ -610,6 +647,8 @@ export interface CloudPublishLatestItem {
     target: CloudPublishTarget;
     deployedAt: string;
     path?: string;
+    axhubProjectId?: number;
+    axhubProjectPath?: string;
 }
 
 export interface CloudPublishingLatestResponse {
@@ -651,6 +690,15 @@ export interface AxhubHtmlProject {
     generateTime?: string;
     generateStatus?: number;
     htmlUsedSpace?: number;
+    reviewReportCount?: number;
+    reviewSubmitEnabled?: boolean;
+}
+
+export interface AxhubHostedReviewClearResult {
+    pid: number;
+    path: string;
+    deleted: number;
+    reviewReportCount: number;
 }
 
 export interface AxhubStatusResponse {
@@ -759,9 +807,21 @@ function buildProjectScopedUrl(path: string, options?: GetConfigOptions): string
         return path;
     }
 
-    const query = new URLSearchParams();
+    const [pathname, rawQuery = ''] = path.split('?');
+    const query = new URLSearchParams(rawQuery);
     query.set('projectId', projectId);
-    return `${path}?${query.toString()}`;
+    return `${pathname}?${query.toString()}`;
+}
+
+function getCurrentProjectIdFromUrl(): string {
+    if (typeof window === 'undefined') {
+        return '';
+    }
+    return new URLSearchParams(window.location.search).get('projectId')?.trim() || '';
+}
+
+function buildCurrentProjectScopedUrl(path: string): string {
+    return buildProjectScopedUrl(path, { projectId: getCurrentProjectIdFromUrl() });
 }
 
 function normalizeMakeApiOrigin(value: unknown): string {
@@ -1045,6 +1105,36 @@ export const apiService = {
         return readApiJsonResponse<ReviewLanSubmitConfig>(response, '更新局域网提交配置失败');
     },
 
+    async getReviewAxhubConfig(projectId?: string, prototypeId?: string): Promise<ReviewAxhubConfig> {
+        const query = new URLSearchParams();
+        if (projectId?.trim()) {
+            query.set('projectId', projectId.trim());
+        }
+        if (prototypeId?.trim()) {
+            query.set('prototypeId', prototypeId.trim());
+        }
+        const response = await fetch(buildMakeApiUrl(`/api/review-reports/axhub-config${query.toString() ? `?${query.toString()}` : ''}`), { cache: 'no-store' });
+        return readApiJsonResponse<ReviewAxhubConfig>(response, '加载 Axhub 提交配置失败');
+    },
+
+    async updateReviewAxhubConfig(payload: { projectId?: string; prototypeId: string; submitEnabled: boolean }): Promise<ReviewAxhubConfig> {
+        const response = await fetch(buildMakeApiUrl('/api/review-reports/axhub-config'), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<ReviewAxhubConfig>(response, '更新 Axhub 提交配置失败');
+    },
+
+    async syncReviewAxhubReports(payload: ReviewReportScopeOptions): Promise<ReviewAxhubSyncResult> {
+        const response = await fetch(buildMakeApiUrl('/api/review-reports/axhub-sync'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        return readApiJsonResponse<ReviewAxhubSyncResult>(response, '同步 Axhub 评审报告失败');
+    },
+
     async getAxureApiPreview(path: string): Promise<AxureApiPreviewResponse> {
         const response = await fetch('/api/axure-api-preview', {
             method: 'POST',
@@ -1104,9 +1194,11 @@ export const apiService = {
         return result;
     },
 
-    async getCloudPublishingLatest(path?: string): Promise<CloudPublishingLatestResponse> {
-        const latestQuery = path && path.trim();
-        const response = await fetch(`/api/cloud-publishing/latest${latestQuery ? `?path=${encodeURIComponent(latestQuery)}` : ''}`);
+    async getCloudPublishingLatest(path?: string, projectId?: string | null): Promise<CloudPublishingLatestResponse> {
+        const query = new URLSearchParams();
+        if (path?.trim()) query.set('path', path.trim());
+        if (projectId?.trim()) query.set('projectId', projectId.trim());
+        const response = await fetch(`/api/cloud-publishing/latest${query.size ? `?${query.toString()}` : ''}`);
         const result = await response.json().catch(() => ({}));
         if (!response.ok) {
             throw createCloudPublishingApiError(result, '加载最近发布地址失败');
@@ -1204,6 +1296,13 @@ export const apiService = {
             throw new Error(result?.error || '创建 Axhub HTML 项目失败');
         }
         return result;
+    },
+
+    async clearAxhubHtmlProjectReviewReports(pid: number): Promise<AxhubHostedReviewClearResult> {
+        const response = await fetch(`/api/axhub/html-projects/${encodeURIComponent(String(pid))}/review-reports`, {
+            method: 'DELETE',
+        });
+        return readApiJsonResponse<AxhubHostedReviewClearResult>(response, '清空 Axhub 评审报告失败');
     },
 
     async publishAxhubHtmlProject(payload: { pid: number; path: string; projectId?: string | null }): Promise<AxhubPublishResponse> {
@@ -1306,13 +1405,14 @@ export const apiService = {
         const query = new URLSearchParams();
         if (options.gitVersion) query.set('gitVersion', options.gitVersion);
         if (options.path) query.set('path', options.path);
-        const url = query.toString() ? `/api/git/workspace/status?${query.toString()}` : '/api/git/workspace/status';
+        const path = query.toString() ? `/api/git/workspace/status?${query.toString()}` : '/api/git/workspace/status';
+        const url = buildCurrentProjectScopedUrl(path);
         const response = await fetch(url, { cache: 'no-store' });
         return readApiJsonResponse<GitWorkspaceStatusResponse>(response, '加载版本状态失败');
     },
 
     async initGitWorkspace(): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/init', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/init'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -1321,7 +1421,7 @@ export const apiService = {
     },
 
     async commitGitWorkspace(message: string, options: { path?: string } = {}): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/commit', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/commit'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message, ...(options.path ? { path: options.path } : {}) }),
@@ -1330,7 +1430,7 @@ export const apiService = {
     },
 
     async switchGitWorkspaceBranch(branch: string): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/branch', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/branch'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ branch }),
@@ -1339,7 +1439,7 @@ export const apiService = {
     },
 
     async setGitWorkspaceRemote(payload: SetGitWorkspaceRemoteRequest): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/remote', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/remote'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -1348,7 +1448,7 @@ export const apiService = {
     },
 
     async fetchGitWorkspace(): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/fetch', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/fetch'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -1357,7 +1457,7 @@ export const apiService = {
     },
 
     async syncDownGitWorkspace(): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/sync-down', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/sync-down'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -1366,7 +1466,7 @@ export const apiService = {
     },
 
     async pushGitWorkspace(): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/push', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/push'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({}),
@@ -1375,7 +1475,7 @@ export const apiService = {
     },
 
     async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/create-remote-repository', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/create-remote-repository'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -1384,7 +1484,7 @@ export const apiService = {
     },
 
     async getGitWorkspacePrompt(payload: GetGitWorkspacePromptRequest): Promise<GitWorkspaceActionResponse> {
-        const response = await fetch('/api/git/workspace/prompt', {
+        const response = await fetch(buildCurrentProjectScopedUrl('/api/git/workspace/prompt'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),

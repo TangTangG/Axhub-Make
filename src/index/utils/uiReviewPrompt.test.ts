@@ -25,7 +25,7 @@ describe('ui review prompts', () => {
     expect(prompt).toContain('如果没有 DESIGN.md');
     expect(prompt).toContain('按常规设计评审执行');
     expect(prompt).toContain('src/prototypes/home/.spec/reviews/ui-review.md');
-    expect(prompt).toContain('client/src/resources/templates/ui-review-report-template.md');
+    expect(prompt).toContain('src/resources/templates/ui-review-report-template.md');
     expect(prompt).toContain('请先读取并套用报告模板');
     expect(prompt).toContain('细节以规则文档和报告模板为准');
     expect(prompt).toContain('输出 Markdown');
@@ -45,7 +45,7 @@ describe('ui review prompts', () => {
     expect(prompt).not.toContain('没有 DESIGN.md 时先停止');
   });
 
-  it('builds a requirements review prompt that treats the requirements spec as optional guidance', () => {
+  it('builds a requirements review prompt that prefers HTML main specs and follows linked subdocuments', () => {
     const reviewDocumentPath = resolveReviewDocumentPath(selectedItem, 'requirements');
     const prompt = buildReviewPrompt({
       selectedItem,
@@ -54,12 +54,12 @@ describe('ui review prompts', () => {
     });
 
     expect(prompt).toContain('rules/prototype-review-guide.md');
-    expect(prompt).toContain('优先读取需求规范文件');
-    expect(prompt).toContain('src/prototypes/home/.spec/requirements.md');
-    expect(prompt).toContain('如果没有该文件');
-    expect(prompt).toContain('按项目资料、.spec 决策和 src/resources 资料做常规需求评审');
+    expect(prompt).toContain('src/prototypes/home/.spec/spec.html');
+    expect(prompt).toContain('src/prototypes/home/.spec/spec.md');
+    expect(prompt).toContain('同时存在时以 HTML 为准');
+    expect(prompt).toContain('按主规格链接读取必要子文档');
     expect(prompt).toContain('src/prototypes/home/.spec/reviews/prototype-review.md');
-    expect(prompt).toContain('client/src/resources/templates/prototype-review-report-template.md');
+    expect(prompt).toContain('src/resources/templates/prototype-review-report-template.md');
     expect(prompt).toContain('请先读取并套用报告模板');
     expect(prompt).toContain('细节以规则文档和报告模板为准');
     expect(prompt).toContain('输出 Markdown');
@@ -99,6 +99,7 @@ describe('ui review prompts', () => {
     expect(uiTemplate).toContain('## 评分依据');
     expect(uiTemplate).toContain('成熟度档位');
     expect(uiTemplate).toContain('封顶规则');
+    expect(uiTemplate).toContain('没有 score 时说明不评分及原因');
     expect(uiTemplate).not.toMatch(/score:\s*\d/u);
     expect(uiTemplate).not.toContain('### P1 -');
     expect(uiTemplate).toContain('## P0-P3 优先级问题');
@@ -114,32 +115,33 @@ describe('ui review prompts', () => {
     expect(prototypeTemplate).toContain('## 评分依据');
     expect(prototypeTemplate).toContain('成熟度档位');
     expect(prototypeTemplate).toContain('封顶规则');
+    expect(prototypeTemplate).toContain('没有 score 时说明不评分及原因');
     expect(prototypeTemplate).not.toMatch(/score:\s*\d/u);
     expect(prototypeTemplate).not.toContain('### P1 -');
     expect(prototypeTemplate).toContain('## P0-P3 优先级问题');
     expect(prototypeTemplate).toContain('## 完整性与项目对齐');
   });
 
-  it('uses a maturity scoring rubric with caps instead of neutral middle scores', () => {
+  it('uses one shared maturity scoring rubric with domain-specific caps', () => {
+    const commonRule = readFileSync(resolve(__dirname, '../../../client/rules/review-common-guide.md'), 'utf8');
     const uiRule = readFileSync(resolve(__dirname, '../../../client/rules/ui-review-guide.md'), 'utf8');
     const prototypeRule = readFileSync(resolve(__dirname, '../../../client/rules/prototype-review-guide.md'), 'utf8');
 
-    expect(uiRule).not.toMatch(/score:\s*\d/u);
-    expect(uiRule).toContain('不要默认填写某个中庸分');
-    expect(uiRule).toContain('无法给出明确总分时，删除 score 行');
-    expect(uiRule).toContain('成熟度评分');
-    expect(uiRule).toContain('封顶规则');
-    expect(uiRule).toContain('有任何 `P0`，最高');
-    expect(uiRule).toContain('有 `2 个及以上 P1`，最高');
-    expect(uiRule).toContain('报告必须包含 `评分依据` 分组');
+    expect(commonRule).not.toMatch(/score:\s*\d/u);
+    expect(commonRule).toContain('不要默认填写某个中庸分');
+    expect(commonRule).toContain('无法给出明确总分时，删除 score 行');
+    expect(commonRule).toContain('成熟度评分');
+    expect(commonRule).toContain('封顶规则');
+    expect(commonRule).toContain('有任何 `P0`，最高');
+    expect(commonRule).toContain('有 `2 个及以上 P1`，最高');
+    expect(commonRule).toContain('报告必须包含 `评分依据` 分组');
 
-    expect(prototypeRule).not.toMatch(/score:\s*\d/u);
-    expect(prototypeRule).toContain('不要默认填写某个中庸分');
-    expect(prototypeRule).toContain('无法给出明确总分时，删除 score 行');
-    expect(prototypeRule).toContain('成熟度评分');
-    expect(prototypeRule).toContain('封顶规则');
-    expect(prototypeRule).toContain('有任何 `P0`，最高');
-    expect(prototypeRule).toContain('有 `2 个及以上 P1`，最高');
-    expect(prototypeRule).toContain('报告必须包含 `评分依据` 分组');
+    for (const domainRule of [uiRule, prototypeRule]) {
+      expect(domainRule).toContain('rules/review-common-guide.md');
+      expect(domainRule).not.toContain('不要默认填写某个中庸分');
+      expect(domainRule).not.toContain('有任何 `P0`，最高 59');
+    }
+    expect(uiRule).toContain('未检查移动端或关键响应式断点，最高 75');
+    expect(prototypeRule).toContain('缺少核心用户、主流程或成功标准且只能从源码推断，最高 72');
   });
 });

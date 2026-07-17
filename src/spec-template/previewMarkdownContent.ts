@@ -26,3 +26,78 @@ export function stripMarkdownPreviewFrontmatter(content: string): string {
 
   return source;
 }
+
+const PROTOTYPE_SPEC_CONTENT_PATH_RE = /^\/api\/projects\/[^/]+\/prototypes\/[^/]+\/spec\/content$/u;
+
+export function resolvePrototypeSpecDocumentLink(href: string, documentUrl: string): string | null {
+  const rawHref = String(href || '').trim();
+  if (!rawHref || rawHref.startsWith('#') || rawHref.startsWith('/') || /^[a-z][a-z0-9+.-]*:/iu.test(rawHref)) {
+    return null;
+  }
+  let currentUrl: URL;
+  try {
+    currentUrl = new URL(documentUrl, 'http://axhub.local');
+  } catch {
+    return null;
+  }
+  if (!PROTOTYPE_SPEC_CONTENT_PATH_RE.test(currentUrl.pathname)) return null;
+  const currentPath = String(currentUrl.searchParams.get('path') || '').trim().replace(/\\/gu, '/');
+  if (!currentPath) return null;
+
+  const hrefPath = rawHref.split('#', 1)[0].split('?', 1)[0].replace(/\\/gu, '/');
+  if (!/\.(?:html?|md)$/iu.test(hrefPath)) return null;
+  const baseSegments = currentPath.split('/').filter(Boolean).slice(0, -1);
+  for (const segment of hrefPath.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (baseSegments.length === 0) return null;
+      baseSegments.pop();
+      continue;
+    }
+    baseSegments.push(segment);
+  }
+  return baseSegments.length > 0 ? baseSegments.join('/') : null;
+}
+
+export function resolvePrototypeSpecResourceUrl(value: string, documentUrl: string): string | null {
+  const rawValue = String(value || '').trim();
+  if (!rawValue || rawValue.startsWith('#') || rawValue.startsWith('/') || /^[a-z][a-z0-9+.-]*:/iu.test(rawValue)) {
+    return null;
+  }
+  let currentUrl: URL;
+  try {
+    currentUrl = new URL(documentUrl, 'http://axhub.local');
+  } catch {
+    return null;
+  }
+  if (!PROTOTYPE_SPEC_CONTENT_PATH_RE.test(currentUrl.pathname)) return null;
+  const currentPath = String(currentUrl.searchParams.get('path') || '').trim().replace(/\\/gu, '/');
+  if (!currentPath) return null;
+
+  const hashIndex = rawValue.indexOf('#');
+  const hash = hashIndex >= 0 ? rawValue.slice(hashIndex) : '';
+  const withoutHash = hashIndex >= 0 ? rawValue.slice(0, hashIndex) : rawValue;
+  const queryIndex = withoutHash.indexOf('?');
+  const rawQuery = queryIndex >= 0 ? withoutHash.slice(queryIndex + 1) : '';
+  const resourcePath = (queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash).replace(/\\/gu, '/');
+  const baseSegments = currentPath.split('/').filter(Boolean).slice(0, -1);
+  for (const segment of resourcePath.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (baseSegments.length === 0) return null;
+      baseSegments.pop();
+      continue;
+    }
+    baseSegments.push(segment);
+  }
+  if (baseSegments.length === 0) return null;
+  const params = new URLSearchParams({ path: baseSegments.join('/') });
+  for (const [key, queryValue] of new URLSearchParams(rawQuery)) {
+    if (key !== 'path') params.append(key, queryValue);
+  }
+  return `${currentUrl.pathname}?${params.toString()}${hash}`;
+}
+
+export function resolvePrototypeSpecAssetUrl(src: string, documentUrl: string): string | null {
+  return resolvePrototypeSpecResourceUrl(src, documentUrl);
+}

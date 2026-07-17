@@ -20,10 +20,13 @@ interface UseIndexPagePresentationPropsBuilderParams {
         activeTab: 'prototypes';
         assistantVisible: boolean;
         isDarkMode: boolean;
-        contentMode: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+        contentMode: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
         docsItems?: any[];
         sidebarTrees?: any;
         selectedDoc: any;
+        selectedPrototypeSpec?: any;
+        prototypeSpecSupported?: boolean;
+        prototypeSpecLoading?: boolean;
         selectedResourceFolder?: any;
         selectedCanvas: any;
         canvasItems?: any[];
@@ -67,6 +70,8 @@ interface UseIndexPagePresentationPropsBuilderParams {
         handleCopyStartServerErrorPrompt?: () => void | Promise<void>;
         handleOpenIdeFile: () => void | Promise<void>;
         handleOpenSelectedDocInIDE: (itemOverride?: any, kindOverride?: 'doc' | 'template') => Promise<void>;
+        handleOpenPrototypeSpec: () => void | Promise<void>;
+        handlePrototypeSpecPreviewReady?: () => void;
         handleOpenSelectedThemeInIDE: (item?: any) => Promise<void>;
         handleOpenSelectedThemeDocInIDE: (item?: any) => Promise<void>;
         handleOpenSelectedDataTableInIDE: (item?: any) => Promise<void>;
@@ -136,6 +141,7 @@ export function useIndexPagePresentationPropsBuilder({
             reviewUploadLoading: preview.reviewUploadLoading,
             reviewError: preview.reviewError,
             reviewLanSubmitConfig: preview.reviewLanSubmitConfig,
+            reviewAxhubSubmitConfig: preview.reviewAxhubSubmitConfig,
             reviewPrompt: preview.reviewPrompt,
             reviewDocumentPath: preview.reviewDocumentPath,
             reviewPrompts: preview.reviewPrompts,
@@ -150,7 +156,12 @@ export function useIndexPagePresentationPropsBuilder({
             containerRef: preview.containerRef,
             previewIframeRef: preview.previewIframeRef,
             secondaryPreviewIframeRef: preview.secondaryPreviewIframeRef,
-            handlePreviewIframeLoad: preview.handlePreviewIframeLoad,
+            handlePreviewIframeLoad: () => {
+                preview.handlePreviewIframeLoad();
+                if (state.contentMode === 'prototype-spec') {
+                    actions.handlePrototypeSpecPreviewReady?.();
+                }
+            },
             currentDevice: preview.currentDevice,
             displaySize: preview.displaySize,
             scale: preview.scale,
@@ -164,6 +175,9 @@ export function useIndexPagePresentationPropsBuilder({
             docsItems: state.docsItems || [],
             sidebarTrees: state.sidebarTrees,
             selectedDoc: state.selectedDoc,
+            selectedPrototypeSpec: state.selectedPrototypeSpec,
+            prototypeSpecSupported: state.prototypeSpecSupported,
+            prototypeSpecLoading: state.prototypeSpecLoading,
             selectedResourceFolder: state.selectedResourceFolder,
             selectedCanvas: state.selectedCanvas,
             canvasItems: state.canvasItems || [],
@@ -225,6 +239,7 @@ export function useIndexPagePresentationPropsBuilder({
             handleRunReviewDirect: preview.handleRunReviewDirect,
             handleUploadReviewReport: preview.handleUploadReviewReport,
             handleReviewLanSubmitEnabledChange: preview.handleReviewLanSubmitEnabledChange,
+            handleReviewAxhubSubmitEnabledChange: preview.handleReviewAxhubSubmitEnabledChange,
             handleRunHostToolbarAction: preview.runHostToolbarAction,
             handleRunPrototypePanePromptAction: preview.runPrototypePanePromptAction,
             handleRunQuickEditSaveAction: preview.runQuickEditSaveAction,
@@ -250,7 +265,10 @@ export function useIndexPagePresentationPropsBuilder({
             handleQuickDownloadRuntimeCover: preview.handleQuickDownloadRuntimeCover,
             handleOpenAxureUsageGuide: preview.handleOpenAxureUsageGuide,
             handleOpenIdeFile: actions.handleOpenIdeFile,
-            handleOpenDocInIDE: actions.handleOpenSelectedDocInIDE,
+            handleOpenDocInIDE: state.contentMode === 'prototype-spec'
+                ? () => actions.handleOpenSelectedDocInIDE(state.selectedPrototypeSpec, 'doc')
+                : actions.handleOpenSelectedDocInIDE,
+            handleOpenPrototypeSpec: actions.handleOpenPrototypeSpec,
             handleOpenThemeInIDE: actions.handleOpenSelectedThemeInIDE,
             handleOpenThemeDocInIDE: actions.handleOpenSelectedThemeDocInIDE,
             handleOpenDataTableInIDE: actions.handleOpenSelectedDataTableInIDE,

@@ -5,6 +5,7 @@ import {
     Codex,
     Cursor,
     Microsoft,
+    OpenAI,
     OpenCode,
     Qoder,
     Trae,
@@ -77,7 +78,7 @@ interface OpenInDropdownProps {
 const LOCAL_APP_GROUP_HELP = [
     {
         title: '本地应用',
-        items: ['Codex', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
+        items: ['ChatGPT', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
     },
     {
         title: '本地 CLI',
@@ -192,7 +193,7 @@ export default function OpenInDropdown({
     };
 
     const getLocalAppIcon = (agent: LocalAppAgent) => {
-        if (agent === 'codex') return <Codex.Color size={14} />;
+        if (agent === 'codex') return <OpenAI size={14} />;
         if (agent === 'opencode') return <OpenCode size={14} />;
         return <SquareTerminal className="h-3.5 w-3.5" />;
     };
@@ -476,7 +477,7 @@ export default function OpenInDropdown({
                     </div>
 
                     <p className="mt-4 text-[12px] leading-5 text-muted-foreground">
-                        适用于 WorkBuddy、TRAE SOLO 等应用。
+                        适用于 WorkBuddy、TRAE WORK 等未在列表中显示或打开失败的应用。
                     </p>
 
                     <DialogFooter className="mt-5 flex flex-row justify-end gap-2 sm:space-x-0">

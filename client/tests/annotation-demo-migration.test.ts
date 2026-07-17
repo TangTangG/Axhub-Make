@@ -16,7 +16,7 @@ describe('annotation demo migration', () => {
     const viteConfig = fs.readFileSync(path.join(appRoot, 'vite.config.ts'), 'utf8');
     const tsconfig = JSON.parse(fs.readFileSync(path.join(appRoot, 'tsconfig.base.json'), 'utf8'));
 
-    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('1.0.15');
+    expect(packageJson.dependencies?.['@axhub/annotation']).toBe('1.0.16');
     expect(packageJson.dependencies).not.toHaveProperty('@axhub/play-client');
     expect(viteConfig).not.toContain("exclude: ['@axhub/annotation']");
     expect(viteConfig).not.toContain("include: [\n        '@ant-design/icons',\n        'antd',\n        'axhub-annotation',");
@@ -41,17 +41,16 @@ describe('annotation demo migration', () => {
   });
 
   it('locks the annotation runtime to the marker bridge capable published package in workspace lockfiles', () => {
-    const lockfilePaths = [
-      path.join(makeRoot, 'pnpm-lock.yaml'),
-      path.join(workspaceRoot, 'pnpm-lock.yaml'),
-    ].filter((lockfilePath) => fs.existsSync(lockfilePath));
-    expect(lockfilePaths).toContain(path.join(makeRoot, 'pnpm-lock.yaml'));
-    const lockfiles = lockfilePaths.map((lockfilePath) => fs.readFileSync(lockfilePath, 'utf8'));
+    const lockfiles = [
+      fs.readFileSync(path.join(workspaceRoot, 'pnpm-lock.yaml'), 'utf8'),
+      fs.readFileSync(path.join(makeRoot, 'pnpm-lock.yaml'), 'utf8'),
+    ];
 
     for (const lockfile of lockfiles) {
       expect(lockfile).toContain("'@axhub/annotation':");
-      expect(lockfile).toContain('specifier: 1.0.15');
-      expect(lockfile).toContain("'@axhub/annotation@1.0.15':");
+      expect(lockfile).toContain('specifier: 1.0.16');
+      expect(lockfile).toContain("'@axhub/annotation@1.0.16':");
+      expect(lockfile).not.toContain("'@axhub/annotation@1.0.15':");
       expect(lockfile).not.toContain("'@axhub/annotation@1.0.14':");
       expect(lockfile).not.toContain("'@axhub/annotation@1.0.10':");
       expect(lockfile).not.toContain("'@axhub/annotation@1.0.9':");

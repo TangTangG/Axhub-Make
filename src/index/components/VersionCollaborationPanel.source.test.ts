@@ -14,7 +14,61 @@ function readVersionManagerSource() {
   return readFileSync(resolve(__dirname, './VersionManager.tsx'), 'utf8');
 }
 
+function readVersionCardsSource() {
+  return readFileSync(resolve(__dirname, './VersionCards.tsx'), 'utf8');
+}
+
 describe('VersionCollaborationPanel source', () => {
+  it('exports shared flat version section, info, and commit row primitives', () => {
+    const cardsSource = readVersionCardsSource();
+
+    expect(cardsSource).toContain('export function VersionSection(');
+    expect(cardsSource).toContain('export function VersionInfoRow(');
+    expect(cardsSource).toContain('export function VersionInfoValue(');
+    expect(cardsSource).toContain('export function VersionCommitRow(');
+  });
+
+  it('composes the project version panel from shared flat primitives', () => {
+    const panelSource = readPanelSource();
+
+    expect(panelSource).toContain('VersionSection');
+    expect(panelSource).toContain('VersionInfoRow');
+    expect(panelSource).toContain('VersionInfoValue');
+    expect(panelSource).not.toContain('function SectionCard(');
+    expect(panelSource).not.toContain('function InfoRow(');
+    expect(panelSource).not.toContain('function InfoValue(');
+    expect(panelSource).not.toContain('<VersionCommitCard');
+  });
+
+  it('composes prototype version history from shared flat rows', () => {
+    const managerSource = readVersionManagerSource();
+    const localTabStart = managerSource.indexOf('<TabsContent value="local"');
+    const onlineTabStart = managerSource.indexOf('<TabsContent value="online"');
+    const localTabSource = managerSource.slice(localTabStart, onlineTabStart);
+
+    expect(managerSource).toContain('VersionSection');
+    expect(managerSource).toContain('VersionInfoRow');
+    expect(managerSource).toContain('VersionInfoValue');
+    expect(managerSource).toContain('VersionCommitRow');
+    expect(managerSource).not.toContain('function SectionCard(');
+    expect(managerSource).not.toContain('function InfoRow(');
+    expect(managerSource).not.toContain('function InfoValue(');
+    expect(localTabSource).not.toContain('<VersionCommitCard');
+    expect(localTabSource).toContain('className="divide-y divide-border/50"');
+  });
+
+  it('keeps shared version rows compact and aligned without timeline decoration', () => {
+    const cardsSource = readVersionCardsSource();
+    const rowStart = cardsSource.indexOf('export function VersionCommitRow(');
+    const changeCardStart = cardsSource.indexOf('export function VersionChangeCard(');
+    const rowSource = cardsSource.slice(rowStart, changeCardStart);
+
+    expect(rowSource).toContain("'grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3'");
+    expect(rowSource).not.toContain('rounded-full bg-primary');
+    expect(rowSource).not.toContain('first:pt-0');
+    expect(rowSource).not.toContain('last:pb-0');
+  });
+
   it('hides local change and commit cards when there are no local changes', () => {
     const source = readPanelSource();
     const localPanelStart = source.indexOf('{showLocalPanel ? (');
@@ -77,12 +131,15 @@ describe('VersionCollaborationPanel source', () => {
     expect(panelSource).not.toContain('GitBranch');
   });
 
-  it('labels collapsed change counts as remaining changes', () => {
+  it('caps the change preview without resize-observer layout feedback', () => {
     const panelSource = readPanelSource();
 
-    expect(panelSource).toContain('summaryNode.textContent = `+${Math.max(0, totalItemCount - visibleItemCount)} 变更`;');
+    expect(panelSource).toContain('const MAX_VISIBLE_CHANGE_ITEMS = 5;');
+    expect(panelSource).toContain('getVisibleChangeItems(items, MAX_VISIBLE_CHANGE_ITEMS)');
     expect(panelSource).toContain('+{visibleChangeItems.remainingCount} 变更');
-    expect(panelSource).not.toContain('summaryNode.textContent = `+${Math.max(0, totalItemCount - visibleItemCount)}`;');
+    expect(panelSource).not.toContain('ResizeObserver');
+    expect(panelSource).not.toContain('measureCandidateVisibleRows');
+    expect(panelSource).not.toContain('requestAnimationFrame');
   });
 
   it('renders historical versions as read-only local version snapshots', () => {
@@ -112,15 +169,34 @@ describe('VersionCollaborationPanel source', () => {
 
     const localInfoSource = panelSource.slice(localInfoStart, localInfoEnd);
 
-    expect(panelSource).toContain('function InfoValue(');
+    expect(panelSource).toContain('VersionInfoValue');
     expect(panelSource).toContain('function getWorkspaceVersionText(');
     expect(panelSource).toContain("if (!status) return '读取中';");
     expect(panelSource).toContain("return status.currentCommit?.shortHash || '版本号读取失败';");
     expect(localInfoSource).toContain('<StatusValue');
     expect(localInfoSource).toContain('<InfoValue contentClassName="font-mono">');
     expect(localInfoSource).toContain('getWorkspaceVersionText(status)');
+    expect(localInfoSource).not.toContain('<VersionCommitCard');
     expect(localInfoSource).not.toContain("|| '未检测'");
     expect(localInfoSource).not.toContain('rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium');
+  });
+
+  it('shows project history as shared flat version rows without duplicating the current hash field', () => {
+    const panelSource = readPanelSource();
+    const localPanelStart = panelSource.indexOf('{showLocalPanel ? (');
+    const onlinePanelStart = panelSource.indexOf('{showOnlinePanel ? (');
+    const localPanelSource = panelSource.slice(localPanelStart, onlinePanelStart);
+    const infoStart = localPanelSource.indexOf('<InfoRow label="状态">');
+    const historicalDetailsStart = localPanelSource.indexOf('{status?.isHistoricalVersion ? (', infoStart);
+    const currentInfoSource = localPanelSource.slice(infoStart, historicalDetailsStart);
+
+    expect(panelSource).toContain('VersionCommitRow');
+    expect(panelSource).toContain('const recentCommits = status?.recentCommits || [];');
+    expect(localPanelSource).toContain('<SectionCard title="历史版本" contentClassName="px-3.5 py-0">');
+    expect(localPanelSource).toContain('<VersionCommitRow');
+    expect(localPanelSource).toContain('index === 0 && !status?.hasChanges');
+    expect(currentInfoSource).not.toContain('<InfoRow label="版本">');
+    expect(currentInfoSource).not.toContain('getWorkspaceVersionText(status)');
   });
 
   it('generates version notes from an AI icon inside the workspace commit input', () => {
@@ -214,13 +290,28 @@ describe('VersionCollaborationPanel source', () => {
     expect(source).not.toContain('该版本没有原型文件');
   });
 
-  it('opens historical preview links through the current prototype runtime origin', () => {
+  it('probes historical preview entries and opens only versions that are already ready', () => {
     const source = readVersionManagerSource();
 
     expect(source).toContain('function resolvePrototypeVersionPreviewUrl(');
     expect(source).toContain('targetItem?.clientUrl || targetItem?.previewUrl');
     expect(source).toContain('new URL(value, runtimeOrigin).toString()');
-    expect(source).toContain("window.open(resolvePrototypeVersionPreviewUrl(item, data.prototypeUrl), '_blank', 'noopener,noreferrer')");
+    expect(source).toContain("import { probeGitVersionEntry } from './gitVersionPreview';");
+    expect(source).toContain('prototypeUrl?: string | null;');
+    expect(source).toContain('previewReady?: boolean;');
+    expect(source).toContain('probeGitVersionEntry({');
+    expect(source).toContain('if (commit.previewReady && commit.prototypeUrl) {');
+    expect(source).toContain("window.open(resolvePrototypeVersionPreviewUrl(item, commit.prototypeUrl), '_blank', 'noopener,noreferrer')");
+    expect(source).toContain("toast.info('正在准备历史版本预览，完成后请再次点击预览');");
+    expect(source).toContain('previewReady: true,');
+    expect(source).toContain("toast.success('历史版本已准备好，请再次点击预览');");
+
+    const buildRequestStart = source.indexOf("const response = await fetch('/api/git/build-version'");
+    const buildHandlerEnd = source.indexOf('const handleFetchRemote', buildRequestStart);
+    const buildRequestSource = source.slice(buildRequestStart, buildHandlerEnd);
+    expect(buildRequestStart).toBeGreaterThan(-1);
+    expect(buildHandlerEnd).toBeGreaterThan(buildRequestStart);
+    expect(buildRequestSource).not.toContain('window.open(');
   });
 
   it('generates version notes from an AI icon inside the prototype commit input', () => {
@@ -269,7 +360,8 @@ describe('VersionCollaborationPanel source', () => {
     expect(localTabSource).not.toContain('暂无版本历史');
   });
 
-  it('keeps prototype online tab minimal until remote sync is actionable', () => {
+  it('keeps online sync descriptions concise and folds prototype scope into the subtitle', () => {
+    const panelSource = readPanelSource();
     const source = readVersionManagerSource();
     const onlineTabStart = source.indexOf('<TabsContent value="online"');
     const onlineTabSource = source.slice(onlineTabStart);
@@ -283,7 +375,115 @@ describe('VersionCollaborationPanel source', () => {
     expect(onlineTabSource).toContain('{showOnlineContent ? (');
     expect(onlineTabSource).toContain('{showOnlineIncoming ? (');
     expect(onlineTabSource).toContain('{showOnlineOutgoing ? (');
+    expect(panelSource).toContain("description={`从线上 ${status?.remoteComparison?.branch || onlineBranchValue || '当前'} 同步到本地，涉及 ${incomingTotal} 个文件。`}");
+    expect(panelSource).toContain("description={`推送到线上 ${status?.remoteComparison?.branch || onlineBranchValue || '当前'}，涉及 ${outgoingTotal} 个文件。`}");
+    expect(onlineTabSource).toContain("description={`从线上 ${workspaceStatus?.remoteComparison?.branch || '当前'} 同步整个项目，当前原型涉及 ${incomingTotal} 个文件。`}");
+    expect(onlineTabSource).toContain("description={`推送整个项目到线上 ${workspaceStatus?.remoteComparison?.branch || '当前'}，当前原型涉及 ${outgoingTotal} 个文件。`}");
+    expect(onlineTabSource).not.toContain('note=');
+    expect(onlineTabSource).not.toContain('仅显示当前原型相关变更，实际会同步整个项目。');
+    expect(panelSource).not.toContain('同步下来后，本地将更新到线上');
+    expect(panelSource).not.toContain('推送上去后，线上');
+    expect(onlineTabSource).not.toContain('同步下来后，当前原型将更新到线上');
+    expect(onlineTabSource).not.toContain('推送上去后，线上');
     expect(onlineTabSource).not.toContain("getPrototypeOnlineChangeText(incomingTotal, '当前原型有线上更新', '当前原型暂无线上更新')");
     expect(onlineTabSource).not.toContain("getPrototypeOnlineChangeText(outgoingTotal, '当前原型待同步到在线', '当前原型暂无待同步内容')");
+  });
+
+  it('keeps both sync directions visible in shared online repository tabs', () => {
+    const cardsSource = readVersionCardsSource();
+    const panelSource = readPanelSource();
+    const managerSource = readVersionManagerSource();
+
+    expect(cardsSource).toContain('export function VersionSyncTabs(');
+    expect(cardsSource).toContain('<Tabs defaultValue="incoming"');
+    expect(cardsSource).toContain('<TabsTrigger value="incoming"');
+    expect(cardsSource).toContain('同步下来');
+    expect(cardsSource).toContain('<TabsTrigger value="outgoing"');
+    expect(cardsSource).toContain('推送上去');
+    expect(cardsSource).toContain('暂无线上更新');
+    expect(cardsSource).toContain('暂无待推送内容');
+    expect(panelSource).toContain('<VersionSyncTabs');
+    expect(managerSource).toContain('<VersionSyncTabs');
+    expect(panelSource).toContain('incoming={incomingChangeItems.length > 0 ? (');
+    expect(panelSource).toContain('outgoing={outgoingChangeItems.length > 0 ? (');
+    expect(managerSource).toContain('incoming={showOnlineIncoming ? (');
+    expect(managerSource).toContain('outgoing={showOnlineOutgoing ? (');
+    expect(panelSource).toContain('推送上去');
+    expect(managerSource).toContain('推送上去');
+  });
+
+  it('uses shared version cards for project sync cards and prototype history', () => {
+    const panelSource = readPanelSource();
+    const managerSource = readVersionManagerSource();
+
+    expect(panelSource).toContain("from './VersionCards';");
+    expect(managerSource).toContain("from './VersionCards';");
+    expect(panelSource).not.toContain('<VersionCommitCard');
+    expect(panelSource).toContain('<VersionChangeCard');
+    expect(managerSource).toContain('<VersionCommitRow');
+    expect(managerSource).not.toContain('<VersionCommitCard');
+    expect(managerSource).toContain('<VersionChangeCard');
+    expect(panelSource).toContain('recentCommits={incomingRecentCommits}');
+    expect(panelSource).toContain('recentCommits={outgoingRecentCommits}');
+    expect(managerSource).toContain('recentCommits={incomingRecentCommits}');
+    expect(managerSource).toContain('recentCommits={outgoingRecentCommits}');
+  });
+
+  it('keeps full version log tooltip readable and focused on log text', () => {
+    const source = readVersionCardsSource();
+    const tooltipStart = source.indexOf('function VersionLogTooltipButton');
+    const commitCardStart = source.indexOf('export function VersionCommitCard');
+    const tooltipSource = source.slice(tooltipStart, commitCardStart);
+
+    expect(tooltipSource).toContain('bg-background text-foreground border border-border shadow-lg');
+    expect(tooltipSource).toContain('arrowClassName="bg-background fill-background"');
+    expect(tooltipSource).toContain("const logText = commit.fullMessage || commit.message || '无更新说明';");
+    expect(tooltipSource).toContain('{logText}');
+    expect(tooltipSource).not.toContain('<code');
+    expect(tooltipSource).not.toContain("commit.author || 'Unknown'");
+    expect(tooltipSource).not.toContain('formatVersionCommitTimestamp(commit.timestamp, commit.date)');
+  });
+
+  it('keeps online information card focused on connection fields instead of version compare cards', () => {
+    const source = readPanelSource();
+    const infoStart = source.indexOf('const renderOnlineInfoCard = () => (');
+    const infoEnd = source.indexOf('    return (', infoStart);
+    const infoSource = source.slice(infoStart, infoEnd);
+
+    expect(infoSource).toContain('<InfoRow label="状态">');
+    expect(infoSource).toContain('<InfoRow label="线上分支">');
+    expect(infoSource).toContain('<InfoRow label="仓库">');
+    expect(infoSource).not.toContain('<VersionCommitCard');
+    expect(infoSource).not.toContain('localHeadCommit');
+    expect(infoSource).not.toContain('remoteHeadCommit');
+  });
+
+  it('does not show zero-version titles when only file differences are known', () => {
+    const cardsSource = readVersionCardsSource();
+    const panelSource = readPanelSource();
+    const managerSource = readVersionManagerSource();
+    const changeCardStart = cardsSource.indexOf('export function VersionChangeCard');
+    const changeCardSource = cardsSource.slice(changeCardStart);
+
+    expect(cardsSource).toContain('export function getVersionChangeTitle(');
+    expect(cardsSource).toContain("return kind === 'incoming' ? '线上有更新' : '本地待同步';");
+    expect(changeCardSource).not.toContain('版本明细');
+    expect(changeCardSource).toContain('影响资源');
+    expect(changeCardSource).toContain('divide-y divide-border/50');
+    expect(changeCardSource).not.toContain('<VersionCommitCard');
+    expect(panelSource).toContain("getVersionChangeTitle('incoming', behindCount)");
+    expect(panelSource).toContain("getVersionChangeTitle('outgoing', aheadCount)");
+    expect(managerSource).toContain("getVersionChangeTitle('incoming', behindCount)");
+    expect(managerSource).toContain("getVersionChangeTitle('outgoing', aheadCount)");
+    expect(cardsSource).not.toContain('allCommits: VersionCardCommit[];');
+    expect(cardsSource).not.toContain('<VersionLogTooltipButton commits={allCommits} />');
+    expect(panelSource).not.toContain('allCommits={incomingAllCommits}');
+    expect(panelSource).not.toContain('allCommits={outgoingAllCommits}');
+    expect(managerSource).not.toContain('allCommits={incomingAllCommits}');
+    expect(managerSource).not.toContain('allCommits={outgoingAllCommits}');
+    expect(panelSource).not.toContain('title={`线上领先 ${behindCount} 个版本`}');
+    expect(panelSource).not.toContain('title={`本地领先 ${aheadCount} 个版本`}');
+    expect(managerSource).not.toContain('title={`线上领先 ${behindCount} 个版本`}');
+    expect(managerSource).not.toContain('title={`本地领先 ${aheadCount} 个版本`}');
   });
 });

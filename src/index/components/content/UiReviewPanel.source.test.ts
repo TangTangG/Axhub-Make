@@ -18,10 +18,18 @@ describe('UiReviewPanel source', () => {
   it('renders a report list, markdown detail, and bottom review actions without type filters', () => {
     const source = readUiReviewPanelSource();
     const promptSource = readUiReviewPromptSource();
+    const humanReviewStart = source.indexOf('<TabsContent value="human-review"');
+    const humanReviewSource = source.slice(
+      humanReviewStart,
+      source.indexOf('</TabsContent>', humanReviewStart),
+    );
 
     expect(source).toContain('reports: ReviewReportSummary[];');
     expect(source).toContain('selectedReport: ReviewReportDetail | null;');
     expect(source).toContain('lanSubmitConfig?: ReviewLanSubmitConfig | null;');
+    expect(source).toContain('axhubSubmitConfig?: ReviewAxhubConfig | null;');
+    expect(source).not.toContain('feishuConfig');
+    expect(source).not.toContain('ReviewFeishuConfig');
     expect(source).toContain('reviewPrompts?: Partial<Record<ReviewKind, string>>;');
     expect(source).toContain('reviewDocumentPaths?: Partial<Record<ReviewKind, string>>;');
     expect(source).toContain('onSelectReport: (report: ReviewReportSummary) => void;');
@@ -32,10 +40,15 @@ describe('UiReviewPanel source', () => {
     expect(source).toContain('onRunReviewDirect: (kind: ReviewKind) => Promise<boolean | void> | boolean | void;');
     expect(source).toContain('onUploadReport: (files: File[], meta: { title?: string; reviewer?: string }) => void | Promise<void>;');
     expect(source).toContain('onLanSubmitEnabledChange: (enabled: boolean) => void | Promise<void>;');
-    expect(source).toContain('function normalizeReviewScore');
+    expect(source).toContain('onAxhubSubmitEnabledChange: (enabled: boolean) => void | Promise<void>;');
+    expect(source).not.toContain('onFeishu');
+    expect(source).toContain("import { getReviewScoreTone, normalizeReviewScore } from './reviewScore';");
     expect(source).toContain('function ReviewScoreBadge');
     expect(source).toContain('report.score');
     expect(source).toContain('{score}分');
+    expect(source).toContain('const scoreTone = getReviewScoreTone(score);');
+    expect(source).toContain('conic-gradient(${scoreTone}');
+    expect(source).not.toContain('conic-gradient(rgb(16 185 129)');
     expect(source).toContain('暂无评审报告');
     expect(source).toContain('directExecuteLabel="AI 执行"');
     expect(source).toContain('webExecuteLabel="网页中 AI 执行"');
@@ -43,8 +56,29 @@ describe('UiReviewPanel source', () => {
     expect(source).toContain('提交报告');
     expect(source).toContain('上传报告');
     expect(source).toContain('局域网提交');
+    expect(source).toContain('Axhub 提交');
     expect(source).toContain('技能提交');
-    expect(source).toContain('lanSubmitConfig?.lanSubmitEnabled === true ? (');
+    expect(source).not.toContain('获取飞书');
+    expect(source).toContain("import { Checkbox } from '@/components/ui/checkbox';");
+    expect(source).not.toContain("import { Switch } from '@/components/ui/switch';");
+    expect(source.match(/<Checkbox/gu)).toHaveLength(2);
+    expect(source).toContain('提交方式');
+    expect(source).not.toContain('飞书提交');
+    expect(source).not.toContain('飞书评审');
+    expect(source).toMatch(/import \{[^}]*ListChecks[^}]*\} from 'lucide-react';/u);
+    expect(source).toContain('<ListChecks className="h-4 w-4 shrink-0 text-muted-foreground" />');
+    expect(humanReviewSource.match(/className="flex h-8 items-center justify-between gap-2 px-2"/gu)).toHaveLength(2);
+    expect(humanReviewSource.match(/className="flex min-w-0 items-center gap-2 text-\[12px\] font-medium text-foreground"/gu)).toHaveLength(2);
+    expect(humanReviewSource).toContain('className="flex shrink-0 items-center gap-3 text-[12px] font-medium text-foreground"');
+    expect(source).toContain('onCheckedChange={(checked) => { void handleLanSubmitToggle(checked === true); }}');
+    expect(source).toContain('lanSubmitPending');
+    expect(source).toContain('axhubSubmitPending');
+    expect(source).toContain('id="review-axhub-submit"');
+    expect(source).toContain('disabled={axhubSubmitPending || axhubSubmitConfig?.bound !== true}');
+    expect(source).toContain('重新发布到 Axhub 后可开启');
+    expect(source).not.toContain('获取 Axhub');
+    expect(source).not.toContain('feishuSubmitPending');
+    expect(source).toContain('lanSubmitConfig?.lanSubmitEnabled === true || axhubSubmitConfig?.submitEnabled === true ? (');
     expect(source).toContain('INSTALL_REVIEW_REPORT_SUBMIT_SKILL_PROMPT');
     expect(source).toContain('https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-prototype-context/SKILL.md');
     expect(source).toContain('$axhub-prototype-context');
@@ -85,7 +119,8 @@ describe('UiReviewPanel source', () => {
     expect(source).toContain("kind: 'requirements'");
     expect(source).toContain("label: '需求评审'");
     expect(source).toContain('DESIGN.md');
-    expect(source).toContain('.spec/requirements.md');
+    expect(source).toContain('.spec/spec.html');
+    expect(source).toContain('.spec/spec.md');
     expect(source).not.toContain('当前原型的评审报告按时间倒序展示。');
     expect(source).not.toContain('标题可选');
     expect(source).not.toContain('评审方');
@@ -142,7 +177,9 @@ describe('UiReviewPanel source', () => {
     expect(promptSource).toContain('rules/ui-review-guide.md');
     expect(promptSource).toContain('rules/prototype-review-guide.md');
     expect(promptSource).toContain('优先读取当前原型附近的 DESIGN.md');
-    expect(promptSource).toContain('src/prototypes/<prototype-id>/.spec/requirements.md');
+    expect(promptSource).toContain('<prototype-spec-root>/spec.html');
+    expect(promptSource).toContain('<prototype-spec-root>/spec.md');
+    expect(promptSource).toContain("'src/prototypes/<prototype-id>/.spec'");
     expect(promptSource).toContain('细节以规则文档和报告模板为准');
     expect(promptSource).toContain('输出 Markdown');
     expect(promptSource).not.toContain('不要输出 JSON');

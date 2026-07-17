@@ -21,7 +21,7 @@ During project exploration, also look for existing documentation:
 
 - `AGENTS.md`、`README.md`、`rules/`
 - `src/resources/`
-- `src/prototypes/<prototype-id>/.spec/`
+- 原型主规格：遵循 `rules/requirements-alignment-guide.md`
 - `.axhub/make/project.json`
 
 ## 探索过程
@@ -46,20 +46,20 @@ When the user states how something works, check whether the prototype, resources
 
 Do not update files after every question.
 
-Update the exploration snapshot only at these checkpoints:
+Update the current main spec only at these checkpoints:
 
 - after every 10 answered questions;
 - when the user asks to pause, stop, summarize, or proceed to implementation;
 - when the exploration naturally ends;
 - when a major irreversible decision is confirmed and waiting would risk losing the decision.
 
-Use Markdown. Keep it lean and decision-focused. Record only confirmed decisions, explicit user choices, unresolved open questions, and important assumptions.
+Keep it lean and decision-focused. Preserve the selected HTML or Markdown format. Record only confirmed decisions, explicit user choices, unresolved open questions, and important assumptions.
 
 ### Long-session reminder
 
 Keep a rough count of answered questions in this exploration session.
 
-At every 50 answered questions, remind the user that the exploration has reached another 50-question checkpoint. Ask whether they want to continue exploring, pause and record the current snapshot, or enter wrap-up.
+At every 50 answered questions, remind the user that the exploration has reached another 50-question checkpoint. Ask whether they want to continue exploring, pause and update the current main spec, or enter wrap-up.
 
 If the user wants to stop, switch to wrap-up mode:
 
@@ -72,13 +72,9 @@ If the user says to stop immediately, skip the final questions and record the cu
 
 ## 存储位置
 
-All written exploration and requirements snapshot files must live under the target prototype's `.spec/` directory:
+原型主规格的路径、格式、确认门槛和同步规则统一遵循 `rules/requirements-alignment-guide.md`。本技能只按上述节奏记录已确认的需求。
 
-```text
-src/prototypes/<prototype-id>/.spec/YYYY-MM-DD-<topic>.md
-```
-
-If no target prototype is identified, do not write a file yet. Ask the user to choose the prototype, or first create / identify the target prototype and then write into its `.spec/` directory.
+If no target prototype is identified, do not write a file yet. Ask the user to choose or create the target prototype.
 
 Do not write confirmed exploration docs under root `docs/`, `src/resources/requirements/`, or `.axhub/make/`.
 Do not create `.axhub/make/exploration/`, `sessions/<session-id>.json`, or `index.json` for this workflow.

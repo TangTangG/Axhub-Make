@@ -2,10 +2,10 @@ import type { ItemData } from '../types';
 
 export const UI_REVIEW_RULE_PATH = 'rules/ui-review-guide.md';
 export const UI_REVIEW_FILE_NAME = 'ui-review.md';
-export const UI_REVIEW_REPORT_TEMPLATE_PATH = 'client/src/resources/templates/ui-review-report-template.md';
+export const UI_REVIEW_REPORT_TEMPLATE_PATH = 'src/resources/templates/ui-review-report-template.md';
 export const PROTOTYPE_REVIEW_RULE_PATH = 'rules/prototype-review-guide.md';
 export const PROTOTYPE_REVIEW_FILE_NAME = 'prototype-review.md';
-export const PROTOTYPE_REVIEW_REPORT_TEMPLATE_PATH = 'client/src/resources/templates/prototype-review-report-template.md';
+export const PROTOTYPE_REVIEW_REPORT_TEMPLATE_PATH = 'src/resources/templates/prototype-review-report-template.md';
 
 export type ReviewKind = 'design' | 'requirements';
 
@@ -45,7 +45,7 @@ export const REVIEW_KIND_CONFIGS: Record<ReviewKind, ReviewKindConfig> = {
         fallbackPath: `src/prototypes/<prototype-id>/.spec/reviews/${PROTOTYPE_REVIEW_FILE_NAME}`,
         targetDescription: '当前原型执行原型评审 / 需求评审',
         emptyDescription: '发起评审后，AI 会检查原型需求是否完整，并整理出遗漏、冲突和风险。',
-        requiredBasis: '优先读取需求规范文件 src/prototypes/<prototype-id>/.spec/requirements.md；如果没有该文件，则按项目资料、.spec 决策和 src/resources 资料做常规需求评审。',
+        requiredBasis: '依次读取原型主规格 <prototype-spec-root>/spec.html、<prototype-spec-root>/spec.md，同时存在时以 HTML 为准；再按主规格链接读取必要子文档。',
     },
 };
 
@@ -76,17 +76,17 @@ export function resolveReviewDocumentPath(
     return prototypeId ? `src/prototypes/${prototypeId}/.spec/reviews/${config.fileName}` : '';
 }
 
-export function resolveRequirementsSpecPath(
+export function resolvePrototypeSpecRoot(
     selectedItem: Pick<ItemData, 'absoluteFilePath' | 'filePath' | 'name' | 'resourceId'> | null | undefined,
 ): string {
     const explicitSourcePath = normalizePath(selectedItem?.absoluteFilePath || selectedItem?.filePath);
     const sourceBasePath = stripIndexFilePath(explicitSourcePath);
     if (sourceBasePath) {
-        return `${sourceBasePath}/.spec/requirements.md`;
+        return `${sourceBasePath}/.spec`;
     }
 
     const prototypeId = normalizePath(selectedItem?.resourceId || selectedItem?.name);
-    return prototypeId ? `src/prototypes/${prototypeId}/.spec/requirements.md` : 'src/prototypes/<prototype-id>/.spec/requirements.md';
+    return prototypeId ? `src/prototypes/${prototypeId}/.spec` : 'src/prototypes/<prototype-id>/.spec';
 }
 
 export function buildUiReviewPrompt(params: {
@@ -107,7 +107,7 @@ export function buildReviewPrompt(params: {
     const sourcePath = normalizePath(selectedItem?.filePath || selectedItem?.absoluteFilePath);
     const reviewDocumentPath = normalizePath(params.reviewDocumentPath || resolveReviewDocumentPath(selectedItem, config.kind));
     const requiredBasis = config.kind === 'requirements'
-        ? config.requiredBasis.replace('src/prototypes/<prototype-id>/.spec/requirements.md', resolveRequirementsSpecPath(selectedItem))
+        ? config.requiredBasis.replaceAll('<prototype-spec-root>', resolvePrototypeSpecRoot(selectedItem))
         : config.requiredBasis;
 
     return [

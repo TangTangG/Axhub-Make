@@ -95,6 +95,14 @@ function readMarkdownDescription(filePath: string): string {
   }
 }
 
+function getResourceTitleFromRelativePath(relativePath: string, ext: string): string {
+  const fileName = relativePath.split('/').filter(Boolean).pop() || relativePath;
+  if (ext && fileName.toLowerCase().endsWith(ext.toLowerCase())) {
+    return fileName.slice(0, fileName.length - ext.length);
+  }
+  return fileName.replace(/\.[^.]+$/u, '');
+}
+
 export function scanResourceFiles(projectRoot: string): ResourceFile[] {
   const resourcesDir = getResourcesDir(projectRoot);
   if (!fs.existsSync(resourcesDir)) {
@@ -109,6 +117,12 @@ export function scanResourceFiles(projectRoot: string): ResourceFile[] {
       const relativePath = path.relative(resourcesDir, fullPath).split(path.sep).join('/');
       if (isIgnoredResourceRelativePath(relativePath)) continue;
       if (entry.isDirectory()) {
+        if (entry.name.endsWith('.assets')) {
+          const htmlSibling = path.join(dir, `${entry.name.slice(0, -'.assets'.length)}.html`);
+          if (fs.existsSync(htmlSibling) && fs.statSync(htmlSibling).isFile()) {
+            continue;
+          }
+        }
         walk(fullPath);
         continue;
       }
@@ -124,9 +138,10 @@ export function scanResourceFiles(projectRoot: string): ResourceFile[] {
       }
       const ext = getResourceFileExt(entry.name);
       const openMode = getResourceOpenMode(entry.name);
+      const fallbackTitle = getResourceTitleFromRelativePath(relativePath, ext);
       const title = ext === '.md'
-        ? readMarkdownTitle(fullPath) || relativePath.replace(/\.[^.]+$/u, '')
-        : relativePath.replace(/\.[^.]+$/u, '');
+        ? readMarkdownTitle(fullPath) || fallbackTitle
+        : fallbackTitle;
       const id = ext === '.md' ? relativePath.replace(/\.[^.]+$/u, '') : relativePath;
       files.push({
         id,

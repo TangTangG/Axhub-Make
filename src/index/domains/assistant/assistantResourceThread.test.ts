@@ -94,7 +94,7 @@ describe('assistant resource thread storage', () => {
 
   it('resolves prototype scoped ACP conversation stores under .spec/acp', () => {
     expect(resolvePrototypeConversationStorePath({
-      projectPath: '/Users/me/project',
+      projectPath: '/tmp/axhub-project',
       resourcePath: 'src/resources/flows/login.excalidraw',
     })).toBe('');
 
@@ -104,7 +104,7 @@ describe('assistant resource thread storage', () => {
     })).toBe('C:/work/project/src/prototypes/checkout/.spec/acp/conversations.json');
 
     expect(resolvePrototypeConversationStorePath({
-      projectPath: '/Users/me/project',
+      projectPath: '/tmp/axhub-project',
       resourcePath: 'src/themes/brand/theme.json',
     })).toBe('');
   });

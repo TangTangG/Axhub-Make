@@ -23,7 +23,12 @@ function stripFinalPathExtension(value: string): string {
 
 function getDocsResourcePath(value: string): string {
     const normalized = normalizeTreeKey(value);
-    return normalized.startsWith('docs/') ? normalized.slice('docs/'.length) : normalized;
+    for (const prefix of ['src/resources/', 'docs/']) {
+        if (normalized.startsWith(prefix)) {
+            return normalized.slice(prefix.length);
+        }
+    }
+    return normalized;
 }
 
 function isIgnoredDocsResourcePath(value: string): boolean {
@@ -56,7 +61,10 @@ function isGeneratedRepeatedThemeTitle(title: string, item: ItemData): boolean {
 }
 
 function getItemResourceName(tab: SidebarTreeTab, item: ItemData): string {
-    return normalizeTreeKey(tab === 'docs' ? (item.filePath || item.name) : item.name);
+    if (tab === 'docs') {
+        return getDocsResourcePath(item.filePath || item.name);
+    }
+    return normalizeTreeKey(item.name);
 }
 
 function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: string): string {
@@ -267,11 +275,21 @@ function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: 
         return null;
     }
 
+    const resolveFilesystemTitle = (value: string): string => {
+        const normalized = normalizeTreeKey(value);
+        const fileName = normalized.split('/').filter(Boolean).pop() || normalized;
+        return stripFinalPathExtension(fileName) || fileName || normalized;
+    };
+    const trimmedTitle = String(title || '').trim();
+    const filesystemTitle = trimmedTitle.includes('/') || trimmedTitle.includes('\\')
+        ? resolveFilesystemTitle(trimmedTitle)
+        : trimmedTitle || resolveFilesystemTitle(nodePath) || toGeneratedTitle(nodePath);
+
     return {
         ...node,
         id: node.id || `item:docs:${nodePath}`,
         kind: 'item',
-        title: title || toGeneratedTitle(nodePath),
+        title: filesystemTitle,
         itemKey,
         path: nodePath,
     };
@@ -316,10 +334,6 @@ function resolveSidebarTreeItemEntry(
 
     return {
         ...extensionlessMatch,
-        item: {
-            ...extensionlessMatch.item,
-            name: getItemNameFromKey(tab, itemKey),
-        },
         itemKey,
     };
 }

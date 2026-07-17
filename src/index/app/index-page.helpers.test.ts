@@ -6,6 +6,7 @@ import {
     getAssistantAutoOpenDismissed,
     getAssistantAutoOpenPanelMode,
     formatThrownError,
+    findResourceItemByPathOrName,
     isHtmlCommentableResource,
     isDocumentCommentableResource,
     isMarkdownEditableResource,
@@ -190,12 +191,70 @@ describe('index page helpers', () => {
             },
         ], 'make-project');
 
-        expect(image.name).toBe('image-2.png');
+        expect(image.name).toBe('素材/image-2.png');
+        expect(image.resourceId).toBe('素材/image-2.png');
         expect(image.displayName).toBe('image-2');
         expect(image.specUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.previewUrl).toBe('/api/docs/%E7%B4%A0%E6%9D%90%2Fimage-2.png?projectId=make-project');
         expect(image.absoluteFilePath).toBe('/workspace/content/docs/素材/image-2.png');
         expect(image.fileSize).toBe(22937);
+    });
+
+    it('uses the relative resource path as the identity for nested image resources from the docs list', () => {
+        const [image] = normalizeDocsItems([
+            {
+                name: 'fabu.png',
+                displayName: 'fabu',
+                path: 'new-folder/fabu.png',
+                absoluteFilePath: '/workspace/src/resources/new-folder/fabu.png',
+                fileSize: 442175,
+            },
+        ], 'make-project');
+
+        expect(image.name).toBe('new-folder/fabu.png');
+        expect(image.resourceId).toBe('new-folder/fabu.png');
+        expect(image.displayName).toBe('fabu');
+        expect(image.specUrl).toBe('/api/docs/new-folder%2Ffabu.png?projectId=make-project');
+        expect(image.previewUrl).toBe('/api/docs/new-folder%2Ffabu.png?projectId=make-project');
+        expect(image.filePath).toBe('new-folder/fabu.png');
+    });
+
+    it('uses project-scoped docs file URLs for nested markdown resources from the docs list', () => {
+        const [doc] = normalizeDocsItems([
+            {
+                name: 'fabu.md',
+                displayName: 'fabu',
+                path: 'new-folder/fabu.md',
+                absoluteFilePath: '/workspace/src/resources/new-folder/fabu.md',
+                fileSize: 128,
+            },
+        ], 'make-project');
+
+        expect(doc.name).toBe('new-folder/fabu.md');
+        expect(doc.resourceId).toBe('new-folder/fabu.md');
+        expect(doc.displayName).toBe('fabu');
+        expect(doc.specUrl).toBe('/api/docs/new-folder%2Ffabu.md?projectId=make-project');
+        expect(doc.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fdocs%2Fnew-folder%252Ffabu.md%3FprojectId%3Dmake-project');
+        expect(doc.filePath).toBe('new-folder/fabu.md');
+    });
+
+    it('matches renamed nested resources by path before falling back to basename', () => {
+        const docs = normalizeDocsItems([
+            {
+                name: 'overview.md',
+                displayName: 'Overview',
+                path: 'overview.md',
+                absoluteFilePath: '/workspace/src/resources/overview.md',
+            },
+            {
+                name: 'fabu.png',
+                displayName: 'fabu',
+                path: 'new-folder/fabu.png',
+                absoluteFilePath: '/workspace/src/resources/new-folder/fabu.png',
+            },
+        ], 'make-project');
+
+        expect(findResourceItemByPathOrName(docs, 'new-folder/fabu.png', 'fabu.png')).toBe(docs[1]);
     });
 
     it('infers canvas open mode for Excalidraw files from refreshed docs lists', () => {

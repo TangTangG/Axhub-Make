@@ -7,7 +7,6 @@ import { getRequestUrl, readJsonBody, sendJson, sendText } from './http.ts';
 import type { ManagementApiOptions } from './managementApi.ts';
 import { normalizeProjectResourcePath } from './managementApi.resourceLookup.ts';
 import {
-  createReviewSubmitInjectionOptions,
   resolvePrototypeIdForReviewSubmit,
 } from './reviewLanSubmitConfig.ts';
 import {
@@ -18,7 +17,7 @@ import {
   type AxhubPublishFile,
   type AxhubPublishResponse,
 } from './axhubAuthClient.ts';
-import type { ProjectMetadata } from './projectCore/index.ts';
+import { createProjectCommunicationStore, type ProjectMetadata } from './projectCore/index.ts';
 
 interface AxhubPublishContext {
   project: {
@@ -162,9 +161,10 @@ export async function publishAxhubHtmlTarget(params: {
   options: ManagementApiOptions;
   pid: number;
   files: Array<{ path: string; contentType: string; body: Buffer }>;
+  reviewContext?: { projectId: string; prototypeId: string };
 }) {
   const client = createClient(params.options);
-  const result = await client.publishHtmlProject(params.pid, normalizeFilesForAxhub(params.files));
+  const result = await client.publishHtmlProject(params.pid, normalizeFilesForAxhub(params.files), params.reviewContext);
   return normalizeAxhubPublishResultUrl(result, client.getActiveBaseUrl());
 }
 
@@ -209,18 +209,14 @@ async function buildPublishFiles(params: {
     group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
     includeSource: projectConfig?.cloudPublishing?.publishSettings?.includeSource === true,
     mediaRoot: params.handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
-    reviewSubmit: reviewSubmitPrototypeId
-      ? createReviewSubmitInjectionOptions({
-        projectRoot: context.project.root,
-        projectId: context.project.id,
-        prototypeId: reviewSubmitPrototypeId,
-        makeOrigin: params.options.origin,
-      })
-      : undefined,
   });
   return {
     files,
     normalizedTargetPath,
+    context,
+    reviewContext: reviewSubmitPrototypeId
+      ? { projectId: context.project.id, prototypeId: reviewSubmitPrototypeId }
+      : undefined,
   };
 }
 
@@ -349,6 +345,19 @@ export function handleAxhubApi(
     return true;
   }
 
+  const reviewReportsMatch = pathname.match(/^\/api\/axhub\/html-projects\/(\d+)\/review-reports$/u);
+  if (reviewReportsMatch) {
+    if (req.method !== 'DELETE') {
+      sendJson(res, { error: 'Method not allowed' }, { status: 405 });
+      return true;
+    }
+    const pid = Number(reviewReportsMatch[1]);
+    client.clearHtmlProjectReviewReports(pid)
+      .then((result) => sendJson(res, result))
+      .catch((error) => sendError(res, error, '清空 Axhub 评审报告失败'));
+    return true;
+  }
+
   if (pathname === '/api/axhub/publish') {
     if (req.method !== 'POST') {
       sendJson(res, { error: 'Method not allowed' }, { status: 405 });
@@ -365,8 +374,26 @@ export function handleAxhubApi(
         }
         const built = await buildPublishFiles({ req, res, options, handlers, body });
         if (!built) return;
-        const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files));
+        const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext);
         const result = normalizeAxhubPublishResultUrl(rawResult, client.getActiveBaseUrl());
+        const communicationStore = createProjectCommunicationStore(built.context.project.root);
+        communicationStore.ensureDirectories();
+        communicationStore.appendExportRecord({
+          projectId: built.context.project.id,
+          resourceId: built.reviewContext?.prototypeId || built.normalizedTargetPath,
+          resourceType: built.reviewContext ? 'prototype' : 'resource',
+          operationType: 'cloud.publish.axhub',
+          status: 'success',
+          timestamp: result.generateTime,
+          metadata: {
+            path: built.normalizedTargetPath,
+            url: result.url,
+            axhubProjectId: result.pid,
+            axhubProjectPath: result.path,
+            htmlUsedSpace: result.htmlUsedSpace,
+            prototypeId: built.reviewContext?.prototypeId,
+          },
+        });
         sendJson(res, {
           url: result.url,
           project: result,

@@ -253,6 +253,7 @@ describe('ACP chat runner', () => {
     ['acp:qoder', 'qoder'],
     ['acp:codebuddy', 'codebuddy'],
     ['acp:reasonix', 'reasonix'],
+    ['acp:grok-build', 'grok-build'],
   ])('normalizes prompt client %s to ACP provider %s', async (promptClient, provider) => {
     const mod = await loadRunnerModule();
     const fetchImpl = vi.fn(async () => createSseResponse([

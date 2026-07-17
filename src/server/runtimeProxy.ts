@@ -9,7 +9,7 @@ import type { Duplex } from 'node:stream';
 import {
   appendSearchParamsToModuleSpecifiersInCode,
   type ModuleSpecifierSearchParam,
-} from './moduleSpecifierQuery.ts';
+} from '../../client/vite-plugins/utils/moduleSpecifierQuery.ts';
 import { isPathInside, resolveComparableProjectRoot, resolveProjectRoot } from './projectCore/index.ts';
 
 const RUNTIME_API_PREFIXES = [

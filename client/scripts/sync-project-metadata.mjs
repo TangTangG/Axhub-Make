@@ -294,8 +294,9 @@ function extractHashRouteFromCall(callExpression) {
     }
     const id = normalizePageId(getLiteralPropertyValue(element, 'id'));
     const title = stringValue(getLiteralPropertyValue(element, 'title'));
+    const group = stringValue(getLiteralPropertyValue(element, 'group'));
     if (id && title) {
-      pages.push({ id, title });
+      pages.push({ id, title, ...(group ? { group } : {}) });
     }
   }
   if (!pages.length) {

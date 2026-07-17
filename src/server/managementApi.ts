@@ -49,9 +49,11 @@ import { handleGitApi, type GitWorkspaceCommandExecutor } from './managementApi.
 import { handleLegacyDocsApi } from './managementApi.legacyDocs.ts';
 import { handleLegacyWebSocketApi } from './managementApi.legacyWebSocket.ts';
 import { handleProjectRegistryApi } from './managementApi.projectRegistry.ts';
+import { handleAxhubReviewReportsApi } from './managementApi.axhubReviewReports.ts';
 import { handleReviewReportsApi } from './managementApi.reviewReports.ts';
 import { handlePrototypeAnnotationApi } from './managementApi.prototypeAnnotation.ts';
 import { handlePrototypeCommentsApi } from './managementApi.prototypeComments.ts';
+import { handlePrototypeSpecApi } from './managementApi.prototypeSpec.ts';
 import {
   handleCreatePlaceholderPrototype,
   handlePrototypeUploadApi,
@@ -64,6 +66,8 @@ import { handleTemplateLibraryApi } from './managementApi.templateLibrary.ts';
 import { handleThemeLibraryApi } from './managementApi.themeLibrary.ts';
 import { handleWorkspaceApi, SIDEBAR_TREE_VERSION } from './managementApi.workspace.ts';
 import { handleMediaApi } from './mediaApi.ts';
+import { handleHtmlReviewArtifactsApi } from './htmlReviewArtifacts.ts';
+import { handleHtmlResourceEditingApi } from './htmlResourceEditing.ts';
 import { handleQuickEditRuntimeApi } from './quickEditRuntimeApi.ts';
 import { hasFigmaMakeArtifactCapability } from './exportMakeArtifacts.ts';
 import { getCanvasBridgeHub } from './canvasBridge.ts';
@@ -1037,10 +1041,7 @@ function createUnavailableProjectResourcesPayload(
       id: project.id,
       name: project.name,
     },
-    resources: {
-      ...createEmptyProjectResources(),
-      docs: [],
-    },
+    resources: createEmptyProjectResources(),
     navigation: {
       prototypes: [],
     },
@@ -1254,6 +1255,12 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (handlePrototypeSpecApi(req, res, options, pathname, {
+    resolveProjectContext,
+  })) {
+    return true;
+  }
+
   if (handleProjectApi(req, res, options, pathname)) {
     return true;
   }
@@ -1332,6 +1339,13 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     return true;
   }
 
+  if (handleAxhubReviewReportsApi(req, res, options, pathname, url, {
+    resolveProjectContext,
+    createProjectContextFromBody,
+  })) {
+    return true;
+  }
+
   if (handleReviewReportsApi(req, res, options, pathname, url, {
     resolveProjectContext,
     createProjectContextFromBody,
@@ -1387,6 +1401,9 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     getCanvasBridgeHub().configureProjectRoot(activeProjectContextForBridge.project.root);
   }
 
+  if (await handleHtmlResourceEditingApi(req, res, activeProjectRoot, pathname)) return true;
+  if (await handleHtmlReviewArtifactsApi(req, res, activeProjectRoot, pathname)) return true;
+
   if (handleLegacyDocsApi(req, res, options, activeProjectRoot, pathname, url, {
     getActiveProjectContext,
   })) return true;
@@ -1415,14 +1432,6 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
   })) return true;
 
   if (handleAiArtifactHistoryApi(req, res, requestContext, pathname)) return true;
-
-  if (handleReviewReportsApi(req, res, options, pathname, url, {
-    resolveProjectContext,
-    createProjectContextFromBody,
-    createProjectContextFromMultipartParts,
-    readMultipartParts,
-    readProjectConfig,
-  })) return true;
 
   if (handleCloudPublishingApi(req, res, options, pathname, {
     resolveProjectContext,

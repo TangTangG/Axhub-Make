@@ -11,11 +11,24 @@ export function normalizeTextForEditorInput(value: string): string {
     .trim();
 }
 
+function hasOnlyEditableCaretBreaks(element: HTMLElement): boolean {
+  const contentEditable = element.getAttribute('contenteditable');
+  if (
+    contentEditable !== '' &&
+    contentEditable !== 'true' &&
+    contentEditable !== 'plaintext-only'
+  ) {
+    return false;
+  }
+  if ((element.textContent ?? '') !== '') return false;
+  return Array.from(element.children).every((child) => child.tagName === 'BR');
+}
+
 export function isEditableTextTarget(element: Element | null): element is HTMLElement {
   if (!(element instanceof HTMLElement)) return false;
   if (element instanceof HTMLInputElement) return false;
   if (element instanceof HTMLTextAreaElement) return false;
-  if (element.childElementCount > 0) return false;
+  if (element.childElementCount > 0 && !hasOnlyEditableCaretBreaks(element)) return false;
   return true;
 }
 
@@ -42,7 +55,7 @@ export function createTextSessionService(options: {
       return false;
     }
 
-    if (liveBeforeText !== nextText) {
+    if (liveBeforeText !== nextText || (nextText === '' && element.childElementCount > 0)) {
       element.textContent = nextText;
     }
     state.transactionManager?.recordText(element, beforeText, nextText);

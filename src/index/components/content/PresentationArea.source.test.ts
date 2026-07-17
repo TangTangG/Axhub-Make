@@ -6,6 +6,10 @@ function readPresentationAreaSource() {
   return readFileSync(resolve(__dirname, './PresentationArea.tsx'), 'utf8');
 }
 
+function readPresentationPropsBuilderSource() {
+  return readFileSync(resolve(__dirname, '../../app/hooks/useIndexPagePresentationPropsBuilder.ts'), 'utf8');
+}
+
 describe('PresentationArea resource folder source', () => {
   it('hides the presentation toolbar while previewing a resource folder', () => {
     const source = readPresentationAreaSource();
@@ -78,6 +82,7 @@ describe('PresentationArea resource folder source', () => {
 
   it('passes review report list state into the review layout without panel close or zoom wiring', () => {
     const source = readPresentationAreaSource();
+    const propsBuilderSource = readPresentationPropsBuilderSource();
     const reviewPanelSource = source.slice(
       source.indexOf('{shouldShowAssistantPanel ? ('),
       source.indexOf('</div>', source.indexOf('{shouldShowAssistantPanel ? (')),
@@ -92,6 +97,9 @@ describe('PresentationArea resource folder source', () => {
     expect(reviewPanelSource).toContain('reviewPrompts={props.reviewPrompts}');
     expect(reviewPanelSource).toContain('reviewDocumentPaths={props.reviewDocumentPaths}');
     expect(reviewPanelSource).toContain('lanSubmitConfig={props.reviewLanSubmitConfig}');
+    expect(reviewPanelSource).toContain('axhubSubmitConfig={props.reviewAxhubSubmitConfig}');
+    expect(reviewPanelSource).not.toContain('feishuConfig');
+    expect(reviewPanelSource).not.toContain('Feishu');
     expect(reviewPanelSource).toContain('onExecutePrompt={props.onExecutePrompt}');
     expect(reviewPanelSource).toContain('onSelectReport={(report) => props.handleSelectReviewReport?.(report)}');
     expect(reviewPanelSource).toContain('onBackToList={() => props.handleBackToReviewList?.()}');
@@ -101,6 +109,11 @@ describe('PresentationArea resource folder source', () => {
     expect(reviewPanelSource).toContain('onRunReviewDirect={(kind) => props.handleRunReviewDirect?.(kind)}');
     expect(reviewPanelSource).toContain('onUploadReport={(files, meta) => props.handleUploadReviewReport?.(files, meta)}');
     expect(reviewPanelSource).toContain('onLanSubmitEnabledChange={(enabled) => props.handleReviewLanSubmitEnabledChange?.(enabled)}');
+    expect(reviewPanelSource).toContain('onAxhubSubmitEnabledChange={(enabled) => props.handleReviewAxhubSubmitEnabledChange?.(enabled)}');
+    expect(propsBuilderSource).toContain('reviewAxhubSubmitConfig: preview.reviewAxhubSubmitConfig');
+    expect(propsBuilderSource).toContain('handleReviewAxhubSubmitEnabledChange: preview.handleReviewAxhubSubmitEnabledChange');
+    expect(propsBuilderSource).not.toContain('reviewFeishu');
+    expect(propsBuilderSource).not.toContain('ReviewFeishu');
     expect(reviewPanelSource).not.toContain('onClose');
     expect(reviewPanelSource).not.toContain('handleReviewPanelToggle');
     expect(reviewPanelSource).not.toContain('reviewPageZoomEnabled');

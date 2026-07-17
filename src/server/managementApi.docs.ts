@@ -629,7 +629,7 @@ export function handleProjectDocsApi(
       })) {
         return true;
       }
-      if (sendHtmlDocumentPreview(req, res, docPath)) {
+      if (sendHtmlDocumentPreview(req, res, docPath, { documentName: docName, projectId })) {
         return true;
       }
       if (!sendFile(res, docPath)) {

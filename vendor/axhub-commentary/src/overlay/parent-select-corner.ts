@@ -5,13 +5,14 @@ import { Disposer } from '../utils/disposables';
 export interface ParentSelectCornerOptions {
   container: HTMLElement;
   getParentCandidate: (current: Element) => Element | null;
-  onSelectParent: (parent: Element) => void;
+  onNavigate: (target: Element) => boolean;
 }
 
 export interface ParentSelectCornerController {
   setTarget(target: Element | null): void;
   setSelectionRect(rect: ViewportRect | null): void;
   selectParent(): boolean;
+  selectPrevious(): boolean;
   dispose(): void;
 }
 
@@ -41,6 +42,8 @@ export function createParentSelectCorner(
   let currentTarget: Element | null = null;
   let selectionRect: ViewportRect | null = null;
   let parentCandidate: Element | null = null;
+  const selectionHistory: Element[] = [];
+  let expectedNavigationTarget: Element | null = null;
 
   const button = document.createElement('button');
   button.type = 'button';
@@ -88,15 +91,46 @@ export function createParentSelectCorner(
     button.dataset.hidden = 'false';
   }
 
+  function navigateTo(target: Element): boolean {
+    expectedNavigationTarget = target;
+    const accepted = options.onNavigate(target);
+    if (!accepted) {
+      expectedNavigationTarget = null;
+    }
+    return accepted;
+  }
+
   function selectParentCandidate(): boolean {
+    const current = currentTarget;
     const parent = parentCandidate;
-    if (!parent || !parent.isConnected) return false;
-    options.onSelectParent(parent);
+    if (!current || !current.isConnected || !parent || !parent.isConnected) return false;
+    if (!navigateTo(parent)) return false;
+    selectionHistory.push(current);
     return true;
+  }
+
+  function selectPreviousTarget(): boolean {
+    while (selectionHistory.length > 0) {
+      const previous = selectionHistory.at(-1);
+      if (!previous?.isConnected) {
+        selectionHistory.pop();
+        continue;
+      }
+      if (!navigateTo(previous)) return false;
+      selectionHistory.pop();
+      return true;
+    }
+    return false;
   }
 
   return {
     setTarget(target: Element | null) {
+      const targetChanged = target !== currentTarget;
+      const isExpectedNavigation = target !== null && target === expectedNavigationTarget;
+      if (targetChanged && !isExpectedNavigation) {
+        selectionHistory.length = 0;
+      }
+      expectedNavigationTarget = null;
       currentTarget = target;
       syncVisibility();
     },
@@ -108,7 +142,12 @@ export function createParentSelectCorner(
       syncVisibility();
       return selectParentCandidate();
     },
+    selectPrevious() {
+      return selectPreviousTarget();
+    },
     dispose() {
+      selectionHistory.length = 0;
+      expectedNavigationTarget = null;
       disposer.dispose();
     },
   };

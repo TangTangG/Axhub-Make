@@ -38,7 +38,7 @@ export interface ItemData {
     placeholderGuide?: PrototypePlaceholderGuide;
     generationStatus?: 'waiting';
     isReference?: boolean;
-    pages?: { id: string; title: string }[];
+    pages?: { id: string; title: string; group?: string }[];
     defaultPageId?: string;
 }
 
@@ -64,7 +64,8 @@ export type AcpPromptClient =
     | 'acp:opencode'
     | 'acp:qoder'
     | 'acp:codebuddy'
-    | 'acp:reasonix';
+    | 'acp:reasonix'
+    | 'acp:grok-build';
 export type LocalPromptClient = 'local:cursor' | 'local:qoder';
 export type PromptClient = AcpPromptClient | LocalPromptClient;
 export type PromptClientPreference = PromptClient | null;

@@ -33,15 +33,16 @@ const canvasFigSyncBundleEntry = path.join(makeServerRoot, 'node_modules/axhub-e
 const bundledCanvasFigSyncPath = path.join(tmpDir, 'canvas-fig-sync.mjs');
 const makeClientTemplateSourceDir = path.join(makeServerRoot, 'client');
 const makeClientTemplatePackageJsonPath = path.join(makeClientTemplateSourceDir, 'package.json');
+const makeClientTemplateContentManifestFileName = 'template-manifest.json';
 const makeClientTemplateSourcePath = path.join(makeServerRoot, 'src/common/makeClientTemplate.ts');
 const makeClientTemplateReleaseNotesFileName = 'RELEASE_NOTES.md';
 const makeClientTemplateZipName = 'axhub-make-client-template.zip';
 const makeClientTemplateLatestManifestName = 'axhub-make-client-template.latest.json';
 const makeClientTemplateLatestManifestGiteeTagName = 'make-client-template-latest';
 const makeClientTemplatePackageManager = 'pnpm@10.20.0';
-const makeClientTemplateExactDependencies = new Map([
-  ['@axhub/annotation', '1.0.15'],
-  ['lucide-react', '0.562.0'],
+const makeClientTemplateRequiredExactDependencies = new Set([
+  '@axhub/annotation',
+  'lucide-react',
 ]);
 const makeClientTemplateExactDevDependencies = new Map([
   ['react', '18.2.0'],
@@ -67,8 +68,8 @@ const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
 const npmPackageUnpackedSizeLimit = 80 * 1024 * 1024;
 const npmPackageEntryCountLimit = 750;
 const requiredNpmBin = {
-  'axhub-make': './bin/cli.mjs',
   make: './bin/cli.mjs',
+  'axhub-make': './bin/cli.mjs',
   'make-server': './bin/cli.mjs',
 };
 const disallowedDependencyFields = [
@@ -88,6 +89,7 @@ const requiredNpmPackageFiles = [
   'dist/server/converters/v0-converter.mjs',
   'dist/admin/index.html',
   'dist/admin/assets/favicon.ico',
+  'dist/admin/assets/axure-export-runtime.js',
   'dist/admin/auto-debug-client.js',
   'scripts/canvas-fig-sync.mjs',
 ];
@@ -178,40 +180,6 @@ const templateCopyIgnoredFiles = new Set([
   'entries.json',
   'sidebar-tree.json',
 ]);
-const templateCopyIgnoredAxhubMakeNames = new Set([
-  'edit-history',
-  'exports',
-  'sessions',
-]);
-const templateCopyAllowedAxhubMakeFiles = new Set([
-  '.axhub/make/client.json',
-  '.axhub/make/axhub.config.json',
-  '.axhub/make/README.md',
-  '.axhub/make/sidebar-tree.json',
-]);
-const makeClientTemplateDefaultPrototypes = new Set([
-  'annotation-demo',
-  'beginner-guide',
-  'touch-and-talk-annotation-demo',
-]);
-const makeClientTemplateDefaultPrototypeItemKeys = new Set(
-  Array.from(makeClientTemplateDefaultPrototypes, (id) => `prototypes/${id}`),
-);
-const makeClientTemplateAllowedResourceFiles = new Set([
-  'src/resources/.gitkeep',
-  'src/resources/README.md',
-  'src/resources/templates/prd-template.md',
-  'src/resources/templates/prototype-review-report-template.md',
-  'src/resources/templates/ui-review-report-template.md',
-]);
-const makeClientTemplateIgnoredLocalThemes = new Set([
-  'trae',
-  'whop',
-]);
-const makeClientTemplateIgnoredThemeItemKeys = new Set(
-  Array.from(makeClientTemplateIgnoredLocalThemes, (id) => `themes/${id}`),
-);
-
 const executableTargets = [
   { id: 'macos-arm64', bunTarget: 'bun-darwin-arm64', executableName: 'axhub-make' },
   { id: 'macos-x64', bunTarget: 'bun-darwin-x64', executableName: 'axhub-make' },
@@ -471,41 +439,18 @@ function assertNoLocalMachinePathsInTarGz(tarballPath, label) {
   }
 }
 
-function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
+function shouldSkipTemplateSafetyEntry(entryName, relativePath = entryName) {
   const normalizedRelativePath = relativePath.split(path.sep).join('/');
-  if (normalizedRelativePath === '.axhub' || normalizedRelativePath === '.axhub/make') {
-    return false;
-  }
   if (normalizedRelativePath.startsWith('.axhub/')) {
-    if (normalizedRelativePath.startsWith('.axhub/make/')) {
-      return !templateCopyAllowedAxhubMakeFiles.has(normalizedRelativePath);
-    }
     return true;
   }
   if (templateCopyIgnoredNames.has(entryName) || templateCopyIgnoredFiles.has(entryName)) {
-    return true;
-  }
-  const prototypeMatch = normalizedRelativePath.match(/^src\/prototypes\/([^/]+)(?:\/|$)/u);
-  if (prototypeMatch && !makeClientTemplateDefaultPrototypes.has(prototypeMatch[1])) {
-    return true;
-  }
-  if (normalizedRelativePath === 'src/resources' || normalizedRelativePath === 'src/resources/templates') {
-    return false;
-  }
-  if (normalizedRelativePath.startsWith('src/resources/')) {
-    return !makeClientTemplateAllowedResourceFiles.has(normalizedRelativePath);
-  }
-  const themeMatch = normalizedRelativePath.match(/^src\/themes\/([^/]+)(?:\/|$)/u);
-  if (themeMatch && makeClientTemplateIgnoredLocalThemes.has(themeMatch[1])) {
     return true;
   }
   if (entryName.endsWith('.tsbuildinfo')) {
     return true;
   }
   if (/\.test\.[^/]+$/u.test(entryName)) {
-    return true;
-  }
-  if (normalizedRelativePath === 'scripts/subset-beginner-guide-fonts.mjs') {
     return true;
   }
   if (/^src\/prototypes\/[^/]+\/\.spec\/acp(?:\/|$)/u.test(normalizedRelativePath)) {
@@ -517,15 +462,6 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   if (/^src\/prototypes\/[^/]+\/\.spec\/reviews\/config\.json$/u.test(normalizedRelativePath)) {
     return true;
   }
-  if (/^src\/prototypes\/[^/]+\/canvas\.excalidraw$/u.test(normalizedRelativePath)) {
-    return true;
-  }
-  if (/^src\/prototypes\/[^/]+\/canvas-assets(?:\/|$)/u.test(normalizedRelativePath)) {
-    return true;
-  }
-  if (/\.(?:otf|ttf)$/iu.test(entryName)) {
-    return true;
-  }
   if (/^\.env\./u.test(entryName)) {
     return true;
   }
@@ -535,7 +471,212 @@ function shouldSkipTemplateZipEntry(entryName, relativePath = entryName) {
   return false;
 }
 
-function pruneMakeClientTemplateSidebarItems(items) {
+function normalizeTemplateManifestPath(value, label) {
+  if (typeof value !== 'string') {
+    throw new Error(`${label} must be a string`);
+  }
+  const normalized = value.replace(/\\/gu, '/').replace(/^\.\//u, '');
+  if (
+    !normalized
+    || normalized.includes('\0')
+    || normalized.startsWith('/')
+    || /^[A-Za-z]:\//u.test(normalized)
+    || normalized.split('/').some((part) => !part || part === '.' || part === '..')
+  ) {
+    throw new Error(`${label} must be a safe relative path: ${value}`);
+  }
+  return normalized;
+}
+
+function compileTemplateManifestRules(value, label) {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+  return value.map((rule, index) => {
+    const ruleLabel = `${label}[${index}]`;
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      throw new Error(`${ruleLabel} must be an object`);
+    }
+    if (rule.action !== 'include' && rule.action !== 'exclude') {
+      throw new Error(`${ruleLabel}.action must be include or exclude`);
+    }
+    if (typeof rule.pattern !== 'string' || !rule.pattern) {
+      throw new Error(`${ruleLabel}.pattern must be a non-empty string`);
+    }
+    if (typeof rule.description !== 'string' || !rule.description.trim()) {
+      throw new Error(`${ruleLabel}.description must be a non-empty string`);
+    }
+    let regex;
+    try {
+      regex = new RegExp(rule.pattern, 'u');
+    } catch (error) {
+      throw new Error(`${ruleLabel}.pattern is not a valid regular expression: ${error.message}`);
+    }
+    return {
+      action: rule.action,
+      pattern: rule.pattern,
+      description: rule.description.trim(),
+      required: rule.required === true,
+      regex,
+    };
+  });
+}
+
+function normalizeTemplateManifestPathList(value, label) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array`);
+  }
+  return value.map((entry, index) => normalizeTemplateManifestPath(entry, `${label}[${index}]`));
+}
+
+function loadMakeClientTemplateContentManifest(sourceClientDir) {
+  const manifestPath = path.join(sourceClientDir, makeClientTemplateContentManifestFileName);
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Make client template content manifest is required: ${manifestPath}`);
+  }
+  const manifest = readJson(manifestPath);
+  if (manifest?.schemaVersion !== 1) {
+    throw new Error(`Unsupported Make client template content manifest schema: ${manifest?.schemaVersion}`);
+  }
+  if (!manifest.runtime || typeof manifest.runtime !== 'object' || Array.isArray(manifest.runtime)) {
+    throw new Error('template-manifest runtime must be an object');
+  }
+  const runtime = {
+    files: normalizeTemplateManifestPathList(manifest.runtime.files, 'runtime.files'),
+    directories: normalizeTemplateManifestPathList(manifest.runtime.directories, 'runtime.directories'),
+    fileRules: compileTemplateManifestRules(manifest.runtime.fileRules, 'runtime.fileRules'),
+  };
+  if (!manifest.makeMetadata || typeof manifest.makeMetadata !== 'object' || Array.isArray(manifest.makeMetadata)) {
+    throw new Error('template-manifest makeMetadata must be an object');
+  }
+  const makeMetadata = {
+    seedDirectory: normalizeTemplateManifestPath(manifest.makeMetadata.seedDirectory, 'makeMetadata.seedDirectory'),
+    outputDirectory: normalizeTemplateManifestPath(manifest.makeMetadata.outputDirectory, 'makeMetadata.outputDirectory'),
+    files: [],
+  };
+  if (makeMetadata.outputDirectory !== '.axhub/make') {
+    throw new Error('makeMetadata.outputDirectory must be .axhub/make');
+  }
+  if (!Array.isArray(manifest.makeMetadata.files)) {
+    throw new Error('makeMetadata.files must be an array');
+  }
+  const metadataStrategies = new Set(['copy', 'sanitize', 'filter']);
+  makeMetadata.files = manifest.makeMetadata.files.map((file, index) => {
+    const fileLabel = `makeMetadata.files[${index}]`;
+    if (!file || typeof file !== 'object' || Array.isArray(file)) {
+      throw new Error(`${fileLabel} must be an object`);
+    }
+    if (!metadataStrategies.has(file.strategy)) {
+      throw new Error(`${fileLabel}.strategy must be copy, sanitize, or filter`);
+    }
+    if (typeof file.description !== 'string' || !file.description.trim()) {
+      throw new Error(`${fileLabel}.description must be a non-empty string`);
+    }
+    return {
+      path: normalizeTemplateManifestPath(file.path, `${fileLabel}.path`),
+      strategy: file.strategy,
+      description: file.description.trim(),
+    };
+  });
+  if (!Array.isArray(manifest.prototypes) || manifest.prototypes.length === 0) {
+    throw new Error('template-manifest prototypes must be a non-empty array');
+  }
+  const prototypeIds = new Set();
+  const prototypes = manifest.prototypes.map((prototype, index) => {
+    const prototypeLabel = `prototypes[${index}]`;
+    const id = String(prototype?.id || '');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id)) {
+      throw new Error(`${prototypeLabel}.id must use lowercase letters, numbers, and hyphens`);
+    }
+    if (prototypeIds.has(id)) {
+      throw new Error(`Duplicate prototype id in template-manifest: ${id}`);
+    }
+    prototypeIds.add(id);
+    return {
+      id,
+      fileRules: compileTemplateManifestRules(prototype.fileRules, `${prototypeLabel}.fileRules`),
+    };
+  });
+  if (!manifest.themes || typeof manifest.themes !== 'object' || Array.isArray(manifest.themes)) {
+    throw new Error('template-manifest themes must be an object');
+  }
+  const themeRules = compileTemplateManifestRules(manifest.themes.idRules, 'themes.idRules');
+  if (themeRules.some((rule) => rule.action !== 'exclude')) {
+    throw new Error('themes.idRules only supports exclusions because themes are included by default');
+  }
+  if (!manifest.resources || typeof manifest.resources !== 'object' || Array.isArray(manifest.resources)) {
+    throw new Error('template-manifest resources must be an object');
+  }
+  return {
+    runtime,
+    makeMetadata,
+    prototypes,
+    themeRules,
+    resourceFiles: normalizeTemplateManifestPathList(manifest.resources.files, 'resources.files'),
+  };
+}
+
+export function listAllowedMakeClientTemplateMetadataEntries({
+  sourceClientDir = makeClientTemplateSourceDir,
+} = {}) {
+  const { makeMetadata } = loadMakeClientTemplateContentManifest(sourceClientDir);
+  return makeMetadata.files
+    .map((file) => `${makeMetadata.outputDirectory}/${file.path}`);
+}
+
+function isIncludedByTemplateRules(defaultIncluded, relativePath, rules) {
+  const includedByRule = rules.some((rule) => rule.action === 'include' && rule.regex.test(relativePath));
+  const excludedByRule = rules.some((rule) => rule.action === 'exclude' && rule.regex.test(relativePath));
+  return (defaultIncluded || includedByRule) && !excludedByRule;
+}
+
+function walkTemplateSourceFiles(rootDir, currentDir = rootDir, relativeDir = '') {
+  const files = [];
+  for (const entry of fs.readdirSync(currentDir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+    const fullPath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkTemplateSourceFiles(rootDir, fullPath, relativePath));
+    } else if (entry.isFile()) {
+      files.push({ fullPath, relativePath });
+    }
+  }
+  return files;
+}
+
+function addTemplateSourceFile(entries, sourceClientDir, relativeSourcePath, relativeOutputPath = relativeSourcePath) {
+  const sourcePath = path.join(sourceClientDir, ...relativeSourcePath.split('/'));
+  if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+    throw new Error(`Make client template source file is missing: ${relativeSourcePath}`);
+  }
+  const outputPath = relativeOutputPath.split(path.sep).join('/');
+  if (shouldSkipTemplateSafetyEntry(path.posix.basename(outputPath), outputPath)) {
+    return;
+  }
+  entries[outputPath] = new Uint8Array(fs.readFileSync(sourcePath));
+}
+
+function addTemplateSourceDirectory(entries, sourceClientDir, relativeDirectory, rules = []) {
+  const directoryPath = path.join(sourceClientDir, ...relativeDirectory.split('/'));
+  if (!fs.existsSync(directoryPath) || !fs.statSync(directoryPath).isDirectory()) {
+    throw new Error(`Make client template source directory is missing: ${relativeDirectory}`);
+  }
+  for (const file of walkTemplateSourceFiles(directoryPath)) {
+    const outputPath = `${relativeDirectory}/${file.relativePath}`;
+    if (!isIncludedByTemplateRules(true, outputPath, rules)) {
+      continue;
+    }
+    if (shouldSkipTemplateSafetyEntry(path.posix.basename(outputPath), outputPath)) {
+      continue;
+    }
+    entries[outputPath] = new Uint8Array(fs.readFileSync(file.fullPath));
+  }
+}
+
+function pruneMakeClientTemplateSidebarItems(items, allowedItemKeys) {
   if (!Array.isArray(items)) {
     return [];
   }
@@ -547,7 +688,7 @@ function pruneMakeClientTemplateSidebarItems(items) {
       if (item.kind === 'folder') {
         return {
           ...item,
-          children: pruneMakeClientTemplateSidebarItems(item.children),
+          children: pruneMakeClientTemplateSidebarItems(item.children, allowedItemKeys),
         };
       }
       return item;
@@ -559,49 +700,146 @@ function pruneMakeClientTemplateSidebarItems(items) {
       if (item.kind === 'folder') {
         return Array.isArray(item.children) && item.children.length > 0;
       }
-      return !makeClientTemplateIgnoredThemeItemKeys.has(String(item.itemKey || ''));
+      return allowedItemKeys.has(String(item.itemKey || ''));
     });
 }
 
-function createTemplateZipEntryBytes(relativePath, fullPath) {
-  const normalizedRelativePath = relativePath.split(path.sep).join('/');
-  const source = fs.readFileSync(fullPath);
-  if (normalizedRelativePath === '.axhub/make/sidebar-tree.json') {
-    const tree = JSON.parse(source.toString('utf8'));
-    tree.prototypes = (Array.isArray(tree.prototypes) ? tree.prototypes : [])
-      .filter((item) => makeClientTemplateDefaultPrototypeItemKeys.has(String(item?.itemKey || '')));
-    tree.themesTree = pruneMakeClientTemplateSidebarItems(tree.themesTree);
-    return Buffer.from(`${JSON.stringify(tree, null, 2)}\n`, 'utf8');
+function collectMakeClientTemplateSidebarItemKeys(items, keys = new Set()) {
+  if (!Array.isArray(items)) {
+    return keys;
   }
-  if (normalizedRelativePath === '.axhub/make/axhub.config.json') {
-    const config = JSON.parse(source.toString('utf8'));
-    if (config.server && typeof config.server === 'object') {
-      delete config.server.lanHost;
+  for (const item of items) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue;
     }
-    if (config.cloudPublishing && typeof config.cloudPublishing === 'object') {
-      delete config.cloudPublishing.s3;
+    if (item.kind === 'folder') {
+      collectMakeClientTemplateSidebarItemKeys(item.children, keys);
+    } else if (typeof item.itemKey === 'string') {
+      keys.add(item.itemKey);
     }
-    return Buffer.from(`${JSON.stringify(config, null, 2)}\n`, 'utf8');
   }
-  return source;
+  return keys;
 }
 
-function buildTemplateZippable(sourceDir, currentDir = sourceDir, relativeDir = '') {
+function createFilteredMakeClientTemplateSidebar(source, prototypeIds, themeIds) {
+  const tree = JSON.parse(source.toString('utf8'));
+  const allowedPrototypeKeys = new Set(Array.from(prototypeIds, (id) => `prototypes/${id}`));
+  const allowedThemeKeys = new Set(Array.from(themeIds, (id) => `themes/${id}`));
+  const seedPrototypeKeys = new Set(
+    (Array.isArray(tree.prototypes) ? tree.prototypes : [])
+      .map((item) => String(item?.itemKey || ''))
+      .filter(Boolean),
+  );
+  const seedThemeKeys = collectMakeClientTemplateSidebarItemKeys(tree.themesTree);
+  const seedThemeIds = new Set(
+    (Array.isArray(tree.themes) ? tree.themes : [])
+      .map((id) => String(id || ''))
+      .filter(Boolean),
+  );
+  const missingPrototypeKeys = Array.from(allowedPrototypeKeys).filter((itemKey) => !seedPrototypeKeys.has(itemKey));
+  const missingThemeKeys = Array.from(allowedThemeKeys).filter((itemKey) => !seedThemeKeys.has(itemKey));
+  const missingThemeIds = Array.from(themeIds).filter((id) => !seedThemeIds.has(id));
+  if (missingPrototypeKeys.length > 0) {
+    throw new Error(`Template sidebar seed is missing prototypes: ${missingPrototypeKeys.join(', ')}`);
+  }
+  if (missingThemeKeys.length > 0) {
+    throw new Error(`Template sidebar seed is missing themes: ${missingThemeKeys.join(', ')}`);
+  }
+  if (missingThemeIds.length > 0) {
+    throw new Error(`Template sidebar seed themes list is missing themes: ${missingThemeIds.join(', ')}`);
+  }
+  tree.prototypes = (Array.isArray(tree.prototypes) ? tree.prototypes : [])
+    .filter((item) => allowedPrototypeKeys.has(String(item?.itemKey || '')));
+  tree.themesTree = pruneMakeClientTemplateSidebarItems(tree.themesTree, allowedThemeKeys);
+  if (Array.isArray(tree.themes)) {
+    tree.themes = tree.themes.filter((id) => themeIds.has(String(id || '')));
+  }
+  return Buffer.from(`${JSON.stringify(tree, null, 2)}\n`, 'utf8');
+}
+
+function createSanitizedMakeClientTemplateConfig(source) {
+  const config = JSON.parse(source.toString('utf8'));
+  if (config.server && typeof config.server === 'object') {
+    delete config.server.lanHost;
+  }
+  if (config.cloudPublishing && typeof config.cloudPublishing === 'object') {
+    delete config.cloudPublishing.s3;
+  }
+  return Buffer.from(`${JSON.stringify(config, null, 2)}\n`, 'utf8');
+}
+
+function addMakeClientTemplateMetadata(entries, sourceClientDir, metadata, prototypeIds, themeIds) {
+  for (const file of metadata.files) {
+    const seedRelativePath = `${metadata.seedDirectory}/${file.path}`;
+    const seedPath = path.join(sourceClientDir, ...seedRelativePath.split('/'));
+    if (!fs.existsSync(seedPath) || !fs.statSync(seedPath).isFile()) {
+      throw new Error(`Make client template metadata seed file is missing: ${seedRelativePath}`);
+    }
+    const source = fs.readFileSync(seedPath);
+    let output = source;
+    if (file.strategy === 'sanitize') {
+      output = createSanitizedMakeClientTemplateConfig(source);
+    } else if (file.strategy === 'filter') {
+      output = createFilteredMakeClientTemplateSidebar(source, prototypeIds, themeIds);
+    }
+    const outputPath = `${metadata.outputDirectory}/${file.path}`;
+    entries[outputPath] = new Uint8Array(output);
+  }
+}
+
+function buildTemplateZippable(sourceClientDir) {
+  const manifest = loadMakeClientTemplateContentManifest(sourceClientDir);
   const entries = {};
-  for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
-    const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
-    if (shouldSkipTemplateZipEntry(entry.name, relativePath)) {
-      continue;
+  for (const relativePath of manifest.runtime.files) {
+    addTemplateSourceFile(entries, sourceClientDir, relativePath);
+  }
+  for (const relativeDirectory of manifest.runtime.directories) {
+    addTemplateSourceDirectory(entries, sourceClientDir, relativeDirectory, manifest.runtime.fileRules);
+  }
+  const prototypeIds = new Set();
+  for (const prototype of manifest.prototypes) {
+    prototypeIds.add(prototype.id);
+    const prototypeDirectory = `src/prototypes/${prototype.id}`;
+    const prototypeRoot = path.join(sourceClientDir, ...prototypeDirectory.split('/'));
+    if (!fs.existsSync(prototypeRoot) || !fs.statSync(prototypeRoot).isDirectory()) {
+      throw new Error(`Make client template prototype is missing: ${prototype.id}`);
     }
-    const fullPath = path.join(currentDir, entry.name);
-    if (entry.isDirectory()) {
-      Object.assign(entries, buildTemplateZippable(sourceDir, fullPath, relativePath));
-      continue;
+    const files = walkTemplateSourceFiles(prototypeRoot);
+    for (const requiredRule of prototype.fileRules.filter((rule) => rule.required)) {
+      if (!files.some((file) => requiredRule.regex.test(file.relativePath))) {
+        throw new Error(`Required prototype file rule did not match ${prototype.id}: ${requiredRule.pattern}`);
+      }
     }
-    if (entry.isFile()) {
-      entries[relativePath.split(path.sep).join('/')] = new Uint8Array(createTemplateZipEntryBytes(relativePath, fullPath));
+    for (const file of files) {
+      const defaultIncluded = !file.relativePath.startsWith('.spec/')
+        || file.relativePath === '.spec/spec.md'
+        || file.relativePath === '.spec/spec.html';
+      if (!isIncludedByTemplateRules(defaultIncluded, file.relativePath, prototype.fileRules)) {
+        continue;
+      }
+      const outputPath = `${prototypeDirectory}/${file.relativePath}`;
+      if (shouldSkipTemplateSafetyEntry(path.posix.basename(outputPath), outputPath)) {
+        continue;
+      }
+      entries[outputPath] = new Uint8Array(fs.readFileSync(file.fullPath));
     }
   }
+  const themesRoot = path.join(sourceClientDir, 'src/themes');
+  if (!fs.existsSync(themesRoot) || !fs.statSync(themesRoot).isDirectory()) {
+    throw new Error('Make client template themes directory is missing: src/themes');
+  }
+  const themeIds = new Set();
+  for (const entry of fs.readdirSync(themesRoot, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory() || !isIncludedByTemplateRules(true, entry.name, manifest.themeRules)) {
+      continue;
+    }
+    themeIds.add(entry.name);
+    addTemplateSourceDirectory(entries, sourceClientDir, `src/themes/${entry.name}`);
+  }
+  for (const relativePath of manifest.resourceFiles) {
+    addTemplateSourceFile(entries, sourceClientDir, relativePath);
+  }
+  addMakeClientTemplateMetadata(entries, sourceClientDir, manifest.makeMetadata, prototypeIds, themeIds);
   return entries;
 }
 
@@ -618,9 +856,10 @@ export function createMakeClientTemplatePackageJson(sourcePackageJson) {
       .filter(([name]) => !makeClientTemplateIgnoredDevDependencies.has(name)),
   );
 
-  for (const [name, version] of makeClientTemplateExactDependencies) {
-    if (packageJson.dependencies?.[name]) {
-      packageJson.dependencies[name] = version;
+  for (const name of makeClientTemplateRequiredExactDependencies) {
+    const version = packageJson.dependencies?.[name];
+    if (version && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
+      throw new Error(`Make client template dependency ${name} must use an exact version, got ${version}`);
     }
   }
   for (const [name, version] of makeClientTemplateExactDevDependencies) {
@@ -877,6 +1116,7 @@ function parseArgs(args) {
     testLocal: false,
     skipNpm: false,
     skipGithub: false,
+    confirmPublish: false,
     templateOnly: false,
     templateVersion: '',
     npmTag: 'beta',
@@ -908,6 +1148,8 @@ function parseArgs(args) {
       options.skipNpm = true;
     } else if (arg === '--skip-github') {
       options.skipGithub = true;
+    } else if (arg === '--confirm-publish') {
+      options.confirmPublish = true;
     } else if (arg === '--template-only') {
       options.templateOnly = true;
     } else if (arg === '--template-version') {
@@ -942,6 +1184,7 @@ Options:
   --test-local               Test previously prepared local artifacts only.
   --skip-npm                 Skip npm publish in release mode.
   --skip-github              Skip GitHub Release creation in release mode.
+  --confirm-publish          Confirm external npm/GitHub publishing after reviewing prepared artifacts.
   -h, --help                 Show this help message.
 `);
 }
@@ -1001,10 +1244,10 @@ function assertPackageJsonShape(packageJson) {
       throw new Error(`npm package bin.${binName} must point to ${target}`);
     }
   }
-  const actualBinNames = Object.keys(packageJson.bin || {}).sort();
-  const expectedBinNames = Object.keys(requiredNpmBin).sort();
+  const actualBinNames = Object.keys(packageJson.bin || {});
+  const expectedBinNames = Object.keys(requiredNpmBin);
   if (JSON.stringify(actualBinNames) !== JSON.stringify(expectedBinNames)) {
-    throw new Error(`npm package bin aliases must be exactly ${expectedBinNames.join(', ')}`);
+    throw new Error(`npm package bin aliases must be exactly ${expectedBinNames.join(', ')} in that order`);
   }
 }
 
@@ -1439,7 +1682,7 @@ function installedBinPath(tempInstallDir, binName) {
 }
 
 export function createNpmExecSmokeArgs(tarballPath) {
-  return ['exec', '--yes', '--package', tarballPath, '--', 'make', '--help'];
+  return ['exec', '--yes', tarballPath, '--', '--help'];
 }
 
 function findFreePort() {
@@ -1594,9 +1837,10 @@ async function testPreparedTemplateArtifacts(options = {}) {
   if (entries.some((entry) => entry.startsWith('node_modules/') || entry.startsWith('dist/'))) {
     throw new Error('Make client template zip includes local runtime artifacts');
   }
+  const allowedAxhubMakeEntries = new Set(listAllowedMakeClientTemplateMetadataEntries());
   const disallowedAxhubMakeEntries = entries.filter((entry) => (
     entry.startsWith('.axhub/make/')
-    && !templateCopyAllowedAxhubMakeFiles.has(entry)
+    && !allowedAxhubMakeEntries.has(entry)
   ));
   if (disallowedAxhubMakeEntries.length > 0) {
     throw new Error(`Make client template zip includes local Make runtime metadata: ${disallowedAxhubMakeEntries.slice(0, 5).join(', ')}`);
@@ -1662,6 +1906,12 @@ export function publishTemplateCommands(manifest, options) {
   return { releaseArgs };
 }
 
+export function assertExternalPublishConfirmed(options = {}) {
+  if (!options.confirmPublish) {
+    throw new Error('External publishing requires human confirmation. Re-run with --confirm-publish after reviewing the prepared artifacts.');
+  }
+}
+
 function runRelease(manifest, options) {
   if (!options.skipGithub && !options.githubRepo) {
     throw new Error('Missing --github-repo OWNER/REPO for GitHub Release. Use --skip-github to publish npm only.');
@@ -1674,6 +1924,10 @@ function runRelease(manifest, options) {
     if (!options.skipNpm) console.log(quoteCommand('npm', npmArgs));
     if (!options.skipGithub) console.log(quoteCommand('gh', releaseArgs));
     return;
+  }
+
+  if (!options.skipNpm || !options.skipGithub) {
+    assertExternalPublishConfirmed(options);
   }
 
   if (!options.skipNpm) {
@@ -1699,6 +1953,10 @@ function runTemplateRelease(manifest, options) {
     logStep('Dry-run template release commands');
     if (!options.skipGithub) console.log(quoteCommand('gh', releaseArgs));
     return;
+  }
+
+  if (!options.skipGithub) {
+    assertExternalPublishConfirmed(options);
   }
 
   if (!options.skipGithub) {

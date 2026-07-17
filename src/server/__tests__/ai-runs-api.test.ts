@@ -184,6 +184,138 @@ afterEach(async () => {
 });
 
 describe('AI runs API', () => {
+  it('blocks prototype Agent runs until the target prototype has a main spec', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-prototype-spec-required-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-prototype-spec-required', name: 'Prototype Spec Required' },
+      resources: {
+        prototypes: [{
+          id: 'home',
+          name: 'home',
+          title: 'Home',
+          clientUrl: 'http://localhost:3000/home',
+          filePath: 'src/prototypes/home/index.tsx',
+        }],
+        themes: [],
+      },
+    });
+    const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
+    fs.mkdirSync(prototypeDir, { recursive: true });
+    fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Home() { return null; }\n', 'utf8');
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'prototype',
+          targetPath: 'prototypes/home',
+          prompt: '更新首页',
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: 'PROTOTYPE_SPEC_REQUIRED',
+        action: 'open-prototype-spec',
+        prototypeId: 'home',
+      });
+      expect(acp.requests).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('applies the prototype spec gate to source-file target paths', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-prototype-spec-source-path-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-prototype-spec-source-path', name: 'Prototype Spec Source Path' },
+      resources: {
+        prototypes: [{
+          id: 'home',
+          name: 'home',
+          title: 'Home',
+          clientUrl: 'http://localhost:3000/home',
+          filePath: 'src/prototypes/home/index.tsx',
+        }],
+        themes: [],
+      },
+    });
+    const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
+    fs.mkdirSync(prototypeDir, { recursive: true });
+    fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Home() { return null; }\n', 'utf8');
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'prototype',
+          targetPath: 'src/prototypes/home/index.tsx',
+          prompt: '更新首页',
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: 'PROTOTYPE_SPEC_REQUIRED',
+        prototypeId: 'home',
+      });
+      expect(acp.requests).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('adds the preferred main spec to allowed prototype Agent prompts', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-prototype-spec-prompt-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-prototype-spec-prompt', name: 'Prototype Spec Prompt' },
+      resources: {
+        prototypes: [{
+          id: 'home',
+          name: 'home',
+          title: 'Home',
+          clientUrl: 'http://localhost:3000/home',
+          filePath: 'src/prototypes/home/index.tsx',
+        }],
+        themes: [],
+      },
+    });
+    const prototypeDir = path.join(projectRoot, 'src/prototypes/home');
+    fs.mkdirSync(path.join(prototypeDir, '.spec'), { recursive: true });
+    fs.writeFileSync(path.join(prototypeDir, 'index.tsx'), 'export default function Home() { return null; }\n', 'utf8');
+    fs.writeFileSync(path.join(prototypeDir, '.spec/spec.md'), '# Markdown\n', 'utf8');
+    fs.writeFileSync(path.join(prototypeDir, '.spec/spec.html'), '<h1>HTML</h1>\n', 'utf8');
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'prototype',
+          targetPath: 'prototypes/home',
+          prompt: '更新首页',
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(acp.requests[0].body.messages[0].parts[0].text).toContain(
+        'src/prototypes/home/.spec/spec.html',
+      );
+      expect(acp.requests[0].body.messages[0].parts[0].text).toContain('同步更新规格文档');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('returns a structured open-settings run error when ACP runtime is unavailable', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-runtime-unavailable-');
     writeProjectMetadata(projectRoot, {

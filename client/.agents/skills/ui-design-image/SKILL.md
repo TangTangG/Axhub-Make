@@ -12,20 +12,20 @@ description: Use when 为 Axhub Make client 项目生成 UI 设计图、高保�
 1. 如果可用，优先使用 ACP UI 图片 MCP：
    - 工具名称：`acp-ui-image-generation/generate_image`
    - 或使用当前环境中暴露的等价图片生成 MCP 工具。
-2. 仅当需要回退到系统 `imagegen` 技能或直接图片 API 时，才读取 Axhub Make 图片配置：
-   - 优先读取 `<AXHUB_MAKE_HOME_DIR or user home>/.axhub/make/server.config.json`。
-   - 再回退到项目内 `.axhub/make/axhub.config.json`。
+2. ACP UI 图片 MCP 和等价工具不可用时，读取 Axhub Make 服务端图片配置：
+   - 只读取 `<AXHUB_MAKE_HOME_DIR or user home>/.axhub/make/server.config.json`。
+   - 跳过项目内 `.axhub/make/axhub.config.json`；该文件不承载图片生成配置。
    - 使用 `ai.imageGeneration.baseUrl`、`ai.imageGeneration.apiKey` 和 `ai.imageGeneration.model`。
-3. 如果 Make 配置缺失或不完整，再读取本地 Codex 配置/认证路径：
+3. 如果服务端配置缺失或不完整，再读取本地 Codex 配置/认证路径：
    - 始终检查 `CODEX_HOME`，然后检查用户 home 下的 `.codex`。
    - Windows 还要检查 AppData/ProgramData 下的 Codex 配置目录。
    - macOS/Linux 还要检查 XDG Codex 配置目录。
    - 从 `config.toml` 读取 provider `base_url`；从 `auth.json` 读取 API key。
-4. 将所有非空值作为 Image Gen provider settings（`baseUrl`、`apiKey`、`model`）传入，然后继续遵循系统 `imagegen` 技能。
+4. 配置完整时，直接以 `baseUrl`、`apiKey`、`model` 作为 Image Gen provider settings 执行；现有配置即授权使用该 provider/model，不再追加 CLI/API 确认，其他生成规则继续遵循系统 `imagegen` 技能。
 5. 如果当前 MCP、工具或 API 不支持单次生成多张图片，而用户需要多张图片，应发起多次生成请求，不要把需求降级成只生成一张。
 6. 生成派生产物时（例如基于现有图片/原型做变体、扩图、局部重绘、风格迁移、素材补图或素材拆分），必须把原图或相关原型截图作为参考图传给图片生成工具；传参使用本地文件路径，不要只在提示词里文字描述，也不要传远程 URL。如果当前只有页面或预览链接，先导出真实运行截图到本地，再把该本地路径传入。
 
-如果没有项目配置或本地配置，则回退到系统 `imagegen` 的默认行为。
+如果没有服务端配置或本地配置，则回退到系统 `imagegen` 的默认行为。
 
 提示词应聚焦 UI 设计用途：目标画面、输出角色、尺寸/比例、视觉风格、精确文案、透明背景需求，以及输出保存位置。
 

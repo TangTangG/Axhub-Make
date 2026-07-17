@@ -1967,6 +1967,7 @@ const CANVAS_ACP_PROVIDER_LABELS: Record<AcpProviderKey, string> = {
   qoder: 'Qoder',
   codebuddy: 'CodeBuddy',
   reasonix: 'Reasonix',
+  'grok-build': 'Grok Build',
 };
 
 const CANVAS_ACP_PROVIDER_ORDER = [
@@ -1977,6 +1978,7 @@ const CANVAS_ACP_PROVIDER_ORDER = [
   'qoder',
   'codebuddy',
   'reasonix',
+  'grok-build',
 ] as const satisfies readonly AcpProviderKey[];
 
 const CANVAS_ACP_PROVIDER_OPTIONS = CANVAS_ACP_PROVIDER_ORDER.map((provider) => ({

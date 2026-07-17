@@ -18,7 +18,7 @@ describe('SettingsDialog source', () => {
   it('can open directly on the AI settings tab', () => {
     const source = readSource();
 
-    expect(source).toContain("export type SettingsDialogInitialTab = 'project' | 'update' | 'ai';");
+    expect(source).toContain("export type SettingsDialogInitialTab = 'project' | 'update' | 'ai' | 'network';");
     expect(source).toContain('initialTab?: SettingsDialogInitialTab;');
     expect(source).toContain('initialAcpRuntime?: AssistantRuntimeResponse | null;');
     expect(source).toContain('initialAcpFailureSource?: string;');
@@ -34,16 +34,18 @@ describe('SettingsDialog source', () => {
 
     expect(source).toContain("from '@/components/ui/tabs'");
     expect(source).toContain('<Tabs value={activeTab} onValueChange={handleTabValueChange} className="flex h-full flex-col"');
-    expect(source).toContain('<SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置</SheetTitle>');
+    expect(source).toContain('<SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置 / 网络配置</SheetTitle>');
     expect(source).toContain('<SheetHeader className="border-b px-5 py-3.5">');
     expect(source).toContain('<div className="flex items-center justify-between gap-3">');
-    expect(source).toContain('grid-cols-3');
+    expect(source).toContain('grid-cols-4');
     expect(source).toContain('<TabsTrigger value="project"');
     expect(source).toContain('项目设置');
     expect(source).toContain('<TabsTrigger value="update"');
     expect(source).toContain('项目更新');
     expect(source).toContain('<TabsTrigger value="ai"');
     expect(source).toContain('AI 设置');
+    expect(source).toContain('<TabsTrigger value="network"');
+    expect(source).toContain('网络配置');
     expect(source).not.toContain('<SheetTitle className="m-0 text-[14px] font-medium leading-none">项目设置</SheetTitle>');
     expect(source).not.toContain('<div className="border-b px-5 py-3">');
   });
@@ -58,26 +60,61 @@ describe('SettingsDialog source', () => {
 
   it('exposes local and LAN share settings without the legacy allow-LAN switch', () => {
     const source = readSource();
+    const handleSaveSource = source.slice(
+      source.indexOf('const handleSave = async () => {'),
+      source.indexOf('\n    return (', source.indexOf('const handleSave = async () => {')),
+    );
+    const projectTabSource = source.slice(
+      source.indexOf('<TabsContent value="project"'),
+      source.indexOf('<TabsContent value="update"'),
+    );
+    const aiTabSource = source.slice(
+      source.indexOf('<TabsContent value="ai"'),
+      source.indexOf('<TabsContent value="network"'),
+    );
+    const networkTabSource = source.slice(
+      source.indexOf('<TabsContent value="network"'),
+      source.indexOf('<SheetFooter'),
+    );
 
+    expect(source).toContain("import { Switch } from '@/components/ui/switch';");
     expect(source).toContain('lanHost: string;');
+    expect(source).toContain('skipLanPreviewAuth?: boolean;');
+    expect(source).toContain('skipLanPreviewAuth: boolean;');
     expect(source).toContain('availableLANHosts?: string[];');
     expect(source).toContain('lanHost: config.server.lanHost || config.availableLANHosts?.[0] ||');
+    expect(source).toContain('skipLanPreviewAuth: config.server.skipLanPreviewAuth === true');
     expect(source).toContain('const [availableLANHosts, setAvailableLANHosts] = useState<string[]>([]);');
     expect(source).toContain('setAvailableLANHosts(Array.isArray(config.availableLANHosts) ? config.availableLANHosts : []);');
     expect(source).toContain('lanHost: formState.lanHost.trim()');
+    expect(source).toContain('skipLanPreviewAuth: formState.skipLanPreviewAuth');
     expect(source).toContain('window.__AXHUB_SHARE_HOSTS__ = {');
-    expect(source).toContain('本地地址');
-    expect(source).toContain('局域网地址');
-    expect(source).toContain('availableLANHosts.slice(0, 4).map');
-    expect(source).toContain("onClick={() => updateField('lanHost', host)}");
-    expect(source).toContain('rounded-full border border-border bg-muted/40');
-    expect(source).toContain("updateField('lanHost'");
-    expect(source).toContain('局域网访问密码');
-    expect(source).toContain('全局二维码');
+    expect(projectTabSource).not.toContain('本地地址');
+    expect(projectTabSource).not.toContain('局域网地址');
+    expect(projectTabSource).not.toContain('局域网访问密码');
+    expect(projectTabSource).not.toContain('全局二维码');
+    expect(aiTabSource).not.toContain('本地地址');
+    expect(aiTabSource).not.toContain('局域网地址');
+    expect(networkTabSource).toContain('网络配置');
+    expect(networkTabSource).toContain('配置服务监听地址与网络访问范围。');
+    expect(networkTabSource).toContain('本地地址');
+    expect(networkTabSource).toContain('局域网地址');
+    expect(networkTabSource).toContain('availableLANHosts.slice(0, 4).map');
+    expect(networkTabSource).toContain("onClick={() => updateField('lanHost', host)}");
+    expect(networkTabSource).toContain('rounded-full border border-border bg-muted/40');
+    expect(networkTabSource).toContain("updateField('lanHost'");
+    expect(networkTabSource).toContain('局域网访问密码');
+    expect(networkTabSource).toContain('全局二维码');
     expect(source).toContain('apiService.getLanAccessStatus');
     expect(source).toContain('apiService.setLanAccessPassword');
     expect(source).toContain('apiService.clearLanAccessPassword');
     expect(source).toContain('apiService.createLanAccessShareUrl');
+    expect(networkTabSource).toContain('预览免验证');
+    expect(networkTabSource).toContain('开启后，局域网可直接访问当前项目预览；管理端和 API 仍需验证。');
+    expect(networkTabSource).toContain('checked={formState.skipLanPreviewAuth}');
+    expect(networkTabSource).toContain("onCheckedChange={(checked) => updateField('skipLanPreviewAuth', checked === true)}");
+    expect(handleSaveSource).toContain('await loadConfig();');
+    expect(source).not.toContain('服务配置');
     expect(source).not.toContain('allowLAN: boolean;');
     expect(source).not.toContain('formState.allowLAN');
     expect(source).not.toContain('允许局域网访问');
@@ -90,6 +127,7 @@ describe('SettingsDialog source', () => {
     const projectIndex = source.indexOf('<TabsTrigger value="project"');
     const updateIndex = source.indexOf('<TabsTrigger value="update"');
     const aiIndex = source.indexOf('<TabsTrigger value="ai"');
+    const networkIndex = source.indexOf('<TabsTrigger value="network"');
     const updateTabSource = source.slice(
       source.indexOf('<TabsContent value="update"'),
       source.indexOf('<TabsContent value="ai"'),
@@ -98,6 +136,7 @@ describe('SettingsDialog source', () => {
     expect(projectIndex).toBeGreaterThan(-1);
     expect(updateIndex).toBeGreaterThan(projectIndex);
     expect(aiIndex).toBeGreaterThan(updateIndex);
+    expect(networkIndex).toBeGreaterThan(aiIndex);
     expect(source).toContain('MakeClientUpdateStatus');
     expect(source).toContain('MakeClientUpdateApplyResult');
     expect(source).toContain('makeClientUpdateStatus');
@@ -272,8 +311,8 @@ describe('SettingsDialog source', () => {
     expect(panelSource).toContain('renderOnlineRemoteSetupCard()');
     expect(panelSource).toContain('renderOnlineInfoCard()');
     expect(panelSource).toContain('线上分支');
-    expect(panelSource).toContain('线上有更新');
-    expect(panelSource).toContain('本地待同步');
+    expect(panelSource).toContain("getVersionChangeTitle('incoming', behindCount)");
+    expect(panelSource).toContain("getVersionChangeTitle('outgoing', aheadCount)");
     expect(panelSource).toContain('incomingChangeItems.length > 0 ? (');
     expect(panelSource).toContain('outgoingChangeItems.length > 0 ? (');
     expect(panelSource).toContain('hasConfiguredRemote ? (');
@@ -299,22 +338,18 @@ describe('SettingsDialog source', () => {
     expect(panelSource).not.toContain('CHANGE_GROUP_PLACEHOLDER');
     expect(panelSource).not.toContain('remote.provider');
     expect(panelSource).not.toContain('remoteProvider');
-    expect(panelSource).toContain('MAX_VISIBLE_CHANGE_ITEM_ROWS');
+    expect(panelSource).toContain('MAX_VISIBLE_CHANGE_ITEMS');
     expect(panelSource).toContain('getVisibleChangeItems');
     expect(panelSource).toContain('remainingCount');
     expect(panelSource).toContain('查看更多');
     expect(panelSource).toContain('+{visibleChangeItems.remainingCount}');
-    expect(panelSource).toContain('getVisibleChangeItems(items, visibleItemCount)');
-    expect(panelSource).toContain('data-change-item-measure-list');
-    expect(panelSource).toContain('data-change-item-measure-chip');
-    expect(panelSource).toContain('data-change-item-measure-summary');
-    expect(panelSource).toContain('measureCandidateVisibleRows');
-    expect(panelSource).toContain('const listContainerRef = useRef<HTMLDivElement | null>(null);');
-    expect(panelSource).toContain('const visibleItemCountRef = useRef(items.length);');
-    expect(panelSource).toContain('if (visibleItemCountRef.current !== nextVisibleItemCount)');
-    expect(panelSource).toContain('observer?.observe(listContainer);');
-    expect(panelSource).not.toContain('observer?.observe(measureList);');
-    expect(panelSource).toContain('pointer-events-none absolute left-0 top-0 flex h-0 w-full flex-wrap items-center gap-1.5 overflow-hidden opacity-0');
+    expect(panelSource).toContain('getVisibleChangeItems(items, MAX_VISIBLE_CHANGE_ITEMS)');
+    expect(panelSource).not.toContain('data-change-item-measure-list');
+    expect(panelSource).not.toContain('data-change-item-measure-chip');
+    expect(panelSource).not.toContain('data-change-item-measure-summary');
+    expect(panelSource).not.toContain('measureCandidateVisibleRows');
+    expect(panelSource).not.toContain('ResizeObserver');
+    expect(panelSource).not.toContain('requestAnimationFrame');
     expect(panelSource).toContain('flex flex-wrap items-center gap-1.5 overflow-hidden');
     expect(panelSource).not.toContain('留空时使用当前分支');
     expect(panelSource).not.toContain('placeholder={status?.currentBranch || \'main\'}');
@@ -388,13 +423,13 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('provider: option.provider');
     expect(source).toContain('label: option.label');
     expect(source).toContain('versionKey: option.provider');
-    for (const provider of ['claude', 'codex', 'opencode', 'cursor', 'qoder', 'codebuddy', 'reasonix']) {
+    for (const provider of ['claude', 'codex', 'opencode', 'cursor', 'qoder', 'codebuddy', 'reasonix', 'grok-build']) {
       expect(acpConfigSource).toContain(`provider: '${provider}'`);
       expect(acpConfigSource).toContain(`client: 'acp:${provider}'`);
     }
     expect(acpConfigSource).not.toContain("provider: 'gemini'");
     expect(acpConfigSource).not.toContain("client: 'acp:gemini'");
-    for (const label of ['Claude Code', 'Codex CLI', 'OpenCode', 'Cursor CLI', 'Qoder CLI', 'CodeBuddy CLI', 'Reasonix CLI']) {
+    for (const label of ['Claude Code', 'Codex CLI', 'OpenCode', 'Cursor CLI', 'Qoder CLI', 'CodeBuddy CLI', 'Reasonix CLI', 'Grok Build']) {
       expect(acpConfigSource).toContain(`label: '${label}'`);
     }
     expect(acpConfigSource).not.toContain("label: 'Gemini CLI'");
@@ -448,7 +483,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const aiTabSource = source.slice(
       source.indexOf('<TabsContent value="ai"'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('AssistantRuntimeResponse');
@@ -520,7 +555,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const aiTabSource = source.slice(
       source.indexOf('<TabsContent value="ai"'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('function resolveLocalAcpRepairCommand(runtime: AssistantRuntimeResponse | null): string');
@@ -628,6 +663,9 @@ describe('SettingsDialog source', () => {
     );
 
     expect(source).toContain('const isAgentProviderMissing = (provider: AcpProviderKey): boolean =>');
+    expect(source).toContain('supportsNpxFallback: option.supportsNpxFallback === true');
+    expect(source).toContain('const providerSupportsNpxFallback = (provider: AcpProviderKey): boolean =>');
+    expect(source).toContain("versions[provider]?.status === 'missing' && !providerSupportsNpxFallback(provider)");
     expect(source).toContain('const allLocalAiAgentOptionsDisabled =');
     expect(source).toContain('未检测到可用的本地 AI Agent，暂时无法设置。请先安装后刷新版本检测。');
     expect(aiAgentHeaderSource).toContain('allLocalAiAgentOptionsDisabled');
@@ -704,6 +742,7 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('Qoder');
     expect(source).toContain('CodeBuddy');
     expect(source).toContain('DeepSeek');
+    expect(source).toContain('Grok');
     expect(source).toContain("if (provider === 'codex') return <Codex.Color size={16} />;");
     expect(source).not.toContain('GeminiCLI');
     expect(source).not.toContain("if (provider === 'gemini') return");
@@ -713,6 +752,7 @@ describe('SettingsDialog source', () => {
     expect(source).toContain("if (provider === 'qoder') return <Qoder.Color size={16} />;");
     expect(source).toContain("if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;");
     expect(source).toContain("if (provider === 'reasonix') return <DeepSeek.Color size={16} />;");
+    expect(source).toContain("if (provider === 'grok-build') return <Grok size={16} />;");
     expect(source).toContain('getAgentProviderIcon(option.provider)');
     expect(source).toContain('defaultPromptClient: null');
     expect(source).not.toContain('Bot');
@@ -782,7 +822,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
     const footerSource = source.slice(source.indexOf('<SheetFooter'));
 
@@ -807,7 +847,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(source).toContain('setAiImageConfigLastTest(normalizeAiImageConfigLastTest(config.ai?.imageGeneration?.lastTest));');
@@ -834,7 +874,7 @@ describe('SettingsDialog source', () => {
     const source = readSource();
     const imageSectionSource = source.slice(
       source.indexOf('图片生成 AI'),
-      source.indexOf('<SheetFooter'),
+      source.indexOf('<TabsContent value="network"'),
     );
 
     expect(imageSectionSource).toContain('data-ai-image-config-actions');

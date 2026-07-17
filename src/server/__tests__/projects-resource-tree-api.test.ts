@@ -133,7 +133,9 @@ describe('make-server resource sidebar filesystem tree API', () => {
     const resourcesDir = path.join(projectRoot, 'src/resources');
     fs.mkdirSync(path.join(resourcesDir, 'flows'), { recursive: true });
     fs.mkdirSync(path.join(resourcesDir, 'assets'), { recursive: true });
+    fs.mkdirSync(path.join(resourcesDir, 'new-folder'), { recursive: true });
     fs.writeFileSync(path.join(resourcesDir, 'brief.md'), '# Brief\n', 'utf8');
+    fs.writeFileSync(path.join(resourcesDir, 'new-folder/fabu.md'), 'Nested markdown body.\n', 'utf8');
     fs.writeFileSync(path.join(resourcesDir, 'flows/app.excalidraw'), '{"type":"excalidraw"}\n', 'utf8');
     fs.writeFileSync(path.join(resourcesDir, 'flows/chart.drawio'), '<mxfile />\n', 'utf8');
     fs.writeFileSync(path.join(resourcesDir, 'assets/logo.png'), 'png', 'utf8');
@@ -154,9 +156,18 @@ describe('make-server resource sidebar filesystem tree API', () => {
         expect.objectContaining({
           path: 'brief.md',
           name: 'brief',
+          title: 'Brief',
           ext: '.md',
           openMode: 'document',
           absoluteFilePath: path.join(resourcesDir, 'brief.md'),
+        }),
+        expect.objectContaining({
+          path: 'new-folder/fabu.md',
+          name: 'new-folder/fabu',
+          title: 'fabu',
+          ext: '.md',
+          openMode: 'document',
+          absoluteFilePath: path.join(resourcesDir, 'new-folder/fabu.md'),
         }),
         expect.objectContaining({
           path: 'flows/app.excalidraw',
@@ -401,6 +412,64 @@ describe('make-server resource sidebar filesystem tree API', () => {
       expect(fs.existsSync(path.join(projectRoot, 'src/resources/templates/prd-template.md'))).toBe(false);
       expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/prd-template.md'), 'utf8')).toBe('# PRD\n');
       expect(findNode(body.tree, (node) => node.itemKey === 'docs/archive/prd-template.md')).toBeTruthy();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports a name conflict when moving a resource file into a folder with the same file name', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'default-resource-conflict-client', 'Default Resource Conflict Client');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'default-resource-conflict-client', name: 'Default Resource Conflict Client' },
+      resources: {
+        prototypes: [],
+        docs: [],
+        themes: [],
+        data: [],
+        templates: [],
+      },
+      navigation: { prototypes: [], docs: [] },
+      orders: { themes: [], data: [], templates: [] },
+      resourceWriteTargets: {},
+    });
+    fs.mkdirSync(path.join(projectRoot, 'src/resources/archive'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/notes.md'), '# Root notes\n', 'utf8');
+    fs.writeFileSync(path.join(projectRoot, 'src/resources/archive/notes.md'), '# Archived notes\n', 'utf8');
+
+    const server = await startTestServer(projectRoot);
+    try {
+      const current = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`).then((response) => response.json());
+      const archive = findNode(current.tree, (node) => node.folderPath === 'archive');
+      const rootNotes = findNode(current.tree, (node) => node.itemKey === 'docs/notes.md');
+      expect(archive).toBeTruthy();
+      expect(rootNotes).toBeTruthy();
+
+      const update = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tree: [
+            {
+              ...archive,
+              children: [
+                ...(archive.children || []),
+                rootNotes,
+              ],
+            },
+          ],
+        }),
+      });
+      const body = await update.json();
+
+      expect(update.status).toBe(409);
+      expect(body).toEqual({
+        error: '目标文件夹中已存在同名资源：archive/notes.md',
+        code: 'RESOURCE_NAME_CONFLICT',
+        path: 'archive/notes.md',
+      });
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/notes.md'), 'utf8')).toBe('# Root notes\n');
+      expect(fs.readFileSync(path.join(projectRoot, 'src/resources/archive/notes.md'), 'utf8')).toBe('# Archived notes\n');
     } finally {
       await server.close();
     }

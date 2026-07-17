@@ -11,6 +11,7 @@ export type ServerPromptClientPreference =
   | 'acp:qoder'
   | 'acp:codebuddy'
   | 'acp:reasonix'
+  | 'acp:grok-build'
   | 'manual';
 export type ServerDefaultPromptClientPreference = ServerPromptClientPreference | null;
 export type ServerAnnotationPromptClientPreference = Exclude<ServerPromptClientPreference, 'manual'> | null;
@@ -249,6 +250,7 @@ const PROMPT_CLIENT_VALUES = new Set<ServerPromptClientPreference>([
   'acp:qoder',
   'acp:codebuddy',
   'acp:reasonix',
+  'acp:grok-build',
   'manual',
 ]);
 
@@ -264,6 +266,7 @@ const LEGACY_PROMPT_CLIENT_VALUES: Record<string, ServerPromptClientPreference> 
   qoder: 'acp:qoder',
   codebuddy: 'acp:codebuddy',
   reasonix: 'acp:reasonix',
+  'grok-build': 'acp:grok-build',
 };
 
 const IDE_VALUES = new Set<ServerIDEPreference>([

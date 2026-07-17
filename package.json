@@ -1,12 +1,12 @@
 {
   "name": "@axhub/make",
-  "version": "0.6.6-beta.0",
+  "version": "0.6.7",
   "description": "Axhub Make management server and admin UI",
   "private": true,
   "type": "module",
   "bin": {
-    "axhub-make": "./bin/cli.mjs",
     "make": "./bin/cli.mjs",
+    "axhub-make": "./bin/cli.mjs",
     "make-server": "./bin/cli.mjs"
   },
   "files": [
@@ -18,6 +18,7 @@
     "!src/server/**/__tests__",
     "!src/server/**/__tests__/**",
     "src/common/makeClientTemplate.ts",
+    "client/vite-plugins/annotationSourceMarkdown.ts",
     "client/vite-plugins/canvasHotUpdateFilter.ts",
     "client/vite-plugins/clientPreviewPlugin.ts",
     "client/vite-plugins/utils/moduleSpecifierQuery.ts",
@@ -40,8 +41,8 @@
     "make-server:dev:local-axhub": "pnpm server:dev:local-axhub",
     "make-server:dev:online-axhub": "pnpm server:dev:online-axhub",
     "admin:dev": "pnpm vendor:sync && vite",
-    "build": "pnpm vendor:sync && vite build && pnpm --filter @axhub/make-client build",
-    "admin:build": "pnpm vendor:sync && vite build",
+    "build": "pnpm vendor:sync && vite build && vite build --config vite.axure-export.config.ts && pnpm --filter @axhub/make-client build",
+    "admin:build": "pnpm vendor:sync && vite build && vite build --config vite.axure-export.config.ts",
     "server:build": "pnpm vendor:sync && tsc --noEmit -p tsconfig.node.json",
     "client:typecheck": "pnpm --filter @axhub/make-client typecheck",
     "client:build": "pnpm --filter @axhub/make-client build",
@@ -121,6 +122,7 @@
     "motion": "^12.38.0",
     "overlayscrollbars": "^2.15.1",
     "overlayscrollbars-react": "^0.5.6",
+    "parse5": "7.3.0",
     "papaparse": "^5.5.3",
     "radix-ui": "^1.4.3",
     "re-resizable": "^6.11.2",

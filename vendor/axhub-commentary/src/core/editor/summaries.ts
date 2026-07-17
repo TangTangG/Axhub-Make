@@ -4,6 +4,7 @@ import type {
   CommentaryHostResource,
   CommentaryModifiedElementSummary,
   CommentaryStyleChangeSet,
+  CommentaryTargetedTextChange,
   CommentaryTextChange,
   PrototypeEditCommentEntry,
   PrototypeEditCommentImageEntry,
@@ -33,6 +34,7 @@ import {
   resolveAnnotationElementIdentity,
   resolveAnnotationNodeIdFromLocator,
 } from './annotation-target';
+import { resolveCommentaryDiagramTarget } from '../../review/diagram-target';
 
 type ResolvedPromptContext = {
   workspacePaths: string[];
@@ -696,6 +698,24 @@ export function createEditorSummariesService(options: {
     return out;
   }
 
+  function collectTargetedTextChanges(): CommentaryTargetedTextChange[] {
+    return aggregateTransactionsByElement(getActiveTransactions()).flatMap((summary) => {
+      const textChange = summary.netEffect.textChange;
+      if (!textChange) return [];
+
+      const before = normalizeInlineText(textChange.before);
+      const after = normalizeInlineText(textChange.after);
+      if (before === after) return [];
+
+      return [{
+        elementKey: summary.elementKey,
+        locator: summary.netEffect.locator,
+        before,
+        after,
+      }];
+    });
+  }
+
   function collectStyleCss(): string {
     const summaries = aggregateTransactionsByElement(getActiveTransactions());
     const rules: string[] = [];
@@ -802,7 +822,16 @@ export function createEditorSummariesService(options: {
     } = {},
   ): ElementSnapshot {
     const element = tryLocateElement(locator);
-    const currentText = readElementText(element) || formatTextFallback(options.fallbackText);
+    const isReferenceOnlyDiagram = (() => {
+      try {
+        return Boolean(resolveCommentaryDiagramTarget(element));
+      } catch {
+        return false;
+      }
+    })();
+    const currentText = isReferenceOnlyDiagram
+      ? ''
+      : readElementText(element) || formatTextFallback(options.fallbackText);
 
     return {
       tagName: inferTagName(locator, options.fallbackLabel ?? ''),
@@ -1118,7 +1147,9 @@ export function createEditorSummariesService(options: {
     );
     const currentPageScope = resolveCurrentPageScope();
     const hasCurrentPageRuntimeItems =
-      summaries.length > 0 || noteOnlyMetas.length > 0 || moveSummaries.length > 0;
+      summaries.length > 0
+      || noteOnlyMetas.length > 0
+      || moveSummaries.length > 0;
     const effectivePersistedCommentMetas = hasCurrentPageRuntimeItems
       ? persistedCommentMetas.filter((meta) => !isPersistedCurrentPageMeta(meta, currentPageScope))
       : persistedCommentMetas;
@@ -1321,7 +1352,11 @@ export function createEditorSummariesService(options: {
   }): string {
     const { summaries, commentOnlyMetas, moveSummaries } = params;
     const mode = params.mode ?? 'initial';
-    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0) return '';
+    if (
+      summaries.length === 0
+      && commentOnlyMetas.length === 0
+      && moveSummaries.length === 0
+    ) return '';
 
     const currentFilePath = resolveCurrentFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
@@ -1460,7 +1495,6 @@ export function createEditorSummariesService(options: {
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
       .filter((summary) => summary.elementKey === normalizedElementKey)
       .map(({ elementKey: _elementKey, ...summary }) => summary);
-
     return buildSaveRunPromptFromParts({
       mode: 'initial',
       summaries,
@@ -1482,7 +1516,6 @@ export function createEditorSummariesService(options: {
     const moveSummaries = collectMoveSummariesWithKeys(undoStack)
       .filter((summary) => summary.elementKey === elementKey)
       .map(({ elementKey: _elementKey, ...summary }) => summary);
-
     return buildSaveRunPromptFromParts({
       mode: 'append',
       summaries,
@@ -1561,6 +1594,7 @@ export function createEditorSummariesService(options: {
     formatSelectorPath,
     formatElementLabelFromLocator,
     collectTextChanges,
+    collectTargetedTextChanges,
     collectStyleCss,
     collectStyleChanges,
     collectMoveSummaries,

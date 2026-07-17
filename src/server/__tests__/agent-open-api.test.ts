@@ -264,6 +264,7 @@ describe('make-server agent open API', () => {
           '@qoder-ai/qodercli': '0.2.16',
           '@tencent-ai/codebuddy-code': '2.45.0',
           reasonix: '1.9.1',
+          '@xai-official/grok': '0.2.94',
         };
         return new Response(JSON.stringify({ version: versions[packageName] }), {
           status: 200,
@@ -281,6 +282,7 @@ describe('make-server agent open API', () => {
         if (command === 'qodercli') return { command, escapedCommand: 'qodercli --version', stdout: 'qodercli 0.2.15\n', stderr: '' };
         if (command === 'codebuddy') return { command, escapedCommand: 'codebuddy --version', stdout: 'CodeBuddy Code 2.44.0\n', stderr: '' };
         if (command === 'reasonix') throw Object.assign(new Error('unknown flag: --version'), { code: 'EXIT_CODE' });
+        if (command === 'grok') return { command, escapedCommand: 'grok --version', stdout: 'grok 0.2.93\n', stderr: '' };
       }
       if (command === 'reasonix' && args[0] === 'version') {
         return { command, escapedCommand: 'reasonix version', stdout: 'Reasonix CLI v1.8.0\n', stderr: '' };
@@ -314,6 +316,7 @@ describe('make-server agent open API', () => {
           qoder: { status: 'installed', version: '0.2.15' },
           codebuddy: { status: 'installed', version: '2.44.0' },
           reasonix: { status: 'installed', version: '1.8.0' },
+          'grok-build': { status: 'installed', version: '0.2.93' },
         },
         latestAgents: {
           codex: { status: 'installed', version: '1.3.0', packageName: '@openai/codex' },
@@ -323,6 +326,7 @@ describe('make-server agent open API', () => {
           qoder: { status: 'installed', version: '0.2.16', packageName: '@qoder-ai/qodercli' },
           codebuddy: { status: 'installed', version: '2.45.0', packageName: '@tencent-ai/codebuddy-code' },
           reasonix: { status: 'installed', version: '1.9.1', packageName: 'reasonix' },
+          'grok-build': { status: 'installed', version: '0.2.94', packageName: '@xai-official/grok' },
         },
       });
       expect(body.agents.codex.checkedAt).toEqual(expect.any(String));
@@ -335,12 +339,14 @@ describe('make-server agent open API', () => {
       expect(runLocalCommandMock).toHaveBeenCalledWith('codebuddy', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['--version'], expect.any(Object));
       expect(runLocalCommandMock).toHaveBeenCalledWith('reasonix', ['version'], expect.any(Object));
+      expect(runLocalCommandMock).toHaveBeenCalledWith('grok', ['--version'], expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40openai%2Fcodex/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40anthropic-ai%2Fclaude-code/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/opencode-ai/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40tencent-ai%2Fcodebuddy-code/latest', expect.any(Object));
       expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/reasonix/latest', expect.any(Object));
+      expect(fetchMock).toHaveBeenCalledWith('https://registry.npmjs.org/%40xai-official%2Fgrok/latest', expect.any(Object));
     } finally {
       await server.close();
     }
@@ -398,6 +404,31 @@ describe('make-server agent open API', () => {
         })
         .filter((url) => url.startsWith('https://registry.npmjs.org/'));
       expect(registryCalls).toEqual(['https://registry.npmjs.org/%40qoder-ai%2Fqodercli/latest']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reports a local AI agent probe error as unknown instead of missing', async () => {
+    const projectRoot = createTempRoot();
+    writeProjectMetadata(projectRoot);
+    runLocalCommandMock.mockRejectedValue(Object.assign(new Error('permission denied'), { code: 'EACCES' }));
+
+    const server = await startTestServer(projectRoot);
+
+    try {
+      const response = await fetch(`${server.origin}/api/agent/versions?agent=cursor`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.agents).toEqual({
+        cursor: expect.objectContaining({
+          status: 'unknown',
+          command: 'agent',
+          reason: 'permission denied',
+        }),
+      });
+      expect(body.latestAgents).toEqual({});
     } finally {
       await server.close();
     }

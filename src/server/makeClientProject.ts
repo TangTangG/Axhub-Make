@@ -230,6 +230,7 @@ const SKIP_AUTO_START_SERVER_ENV = 'AXHUB_MAKE_SKIP_AUTO_START_SERVER';
 const MAKE_CLIENT_RUNTIME_HEARTBEAT_MAX_AGE_MS = 15_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS = 3 * 60_000;
 const DEFAULT_MAKE_CLIENT_TEMPLATE_MANIFEST_TIMEOUT_MS = 15_000;
+const DEFAULT_MAKE_CLIENT_GIT_CLONE_TIMEOUT_MS = 60_000;
 const DEFAULT_MAKE_CLIENT_INSTALL_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_TIMEOUT_MS = 60_000;
 const DEFAULT_MAKE_CLIENT_DEV_POLL_INTERVAL_MS = 250;
@@ -963,6 +964,14 @@ async function readTemplateZipWithCache(
 function commandErrorMessage(error: unknown): string {
   const looseError = error as { stderr?: unknown; stdout?: unknown; message?: unknown } | null;
   return String(looseError?.stderr || looseError?.stdout || looseError?.message || 'Command failed').trim();
+}
+
+function nonInteractiveGitEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    GIT_TERMINAL_PROMPT: '0',
+    GCM_INTERACTIVE: 'never',
+  };
 }
 
 function shouldLogMakeClientProgress(): boolean {
@@ -2620,7 +2629,8 @@ export async function cloneMakeClientProject(
         await runCommand('git', ['clone', gitUrl, projectRoot], {
           cwd: parentRoot,
           maxBuffer: 1024 * 1024 * 20,
-          timeoutMs: DEFAULT_MAKE_CLIENT_TEMPLATE_TIMEOUT_MS,
+          timeoutMs: DEFAULT_MAKE_CLIENT_GIT_CLONE_TIMEOUT_MS,
+          env: nonInteractiveGitEnv(),
         });
         clonedProject = true;
       } catch (error) {

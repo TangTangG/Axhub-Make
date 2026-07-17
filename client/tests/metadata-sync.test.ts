@@ -276,7 +276,7 @@ export default function EditedPrototype() {
 
       export const route = defineHashPageRoute([
         { id: 'dashboard', title: '工作台' },
-        { id: 'orders-list', title: '订单列表' },
+        { id: 'orders-list', title: '订单列表', group: '订单管理' },
       ], { defaultPageId: 'dashboard' });
     `);
 
@@ -288,7 +288,7 @@ export default function EditedPrototype() {
     expect(prototype).toMatchObject({
       pages: [
         { id: 'dashboard', title: '工作台' },
-        { id: 'orders-list', title: '订单列表' },
+        { id: 'orders-list', title: '订单列表', group: '订单管理' },
       ],
       defaultPageId: 'dashboard',
     });

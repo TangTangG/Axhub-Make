@@ -20,12 +20,24 @@ import {
   createPrototypeCommentsPersistenceAdapter,
   readHostToolbarModeFromSearch,
   resolveHostResourceContextFromLocation,
+  withTemporaryStyleHackComment,
 } from './webEditorV2Integration';
 
 beforeEach(() => {
   mocked.createCommentary.mockReset();
   mocked.getGlobalCommentaryTweakProtocol.mockReset();
   vi.unstubAllGlobals();
+});
+
+describe('temporary prototype style hack comment', () => {
+  it('only treats the canonical leading header as already wrapped', () => {
+    const css = '.label::after { content: "AXHUB TEMPORARY STYLE HACK"; }';
+
+    const wrapped = withTemporaryStyleHackComment(css);
+
+    expect(wrapped).toMatch(/^\/\*\n \* AXHUB TEMPORARY STYLE HACK/u);
+    expect(wrapped).toContain(css);
+  });
 });
 
 describe('createWebEditorV2Controller launch options', () => {
@@ -3289,7 +3301,7 @@ describe('createWebEditorV2Controller', () => {
       confirm: vi.fn(() => true),
       alert: vi.fn(),
     });
-    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       if (input === '/api/assistant/runtime?autoStart=false') {
         return {
           ok: true,
@@ -3321,7 +3333,8 @@ describe('createWebEditorV2Controller', () => {
         };
       }
       throw new Error(`Unexpected fetch: ${input}`);
-    }) as typeof fetch);
+    });
+    vi.stubGlobal('fetch', fetchMock as typeof fetch);
 
     const controller = createWebEditorV2Controller();
 
@@ -3338,6 +3351,11 @@ describe('createWebEditorV2Controller', () => {
     expect(getStyleChanges).toHaveBeenCalledTimes(1);
     expect(acknowledgeSavedTextChanges).toHaveBeenCalledTimes(1);
     expect(acknowledgeSavedStyleChanges).toHaveBeenCalledTimes(2);
+    const hackSaveCall = fetchMock.mock.calls.find(([input]) => input === '/api/hack-css/save');
+    const hackSaveBody = JSON.parse(String(hackSaveCall?.[1]?.body ?? '{}'));
+    expect(hackSaveBody.content).toContain('AXHUB TEMPORARY STYLE HACK');
+    expect(hackSaveBody.content).toContain('临时覆盖样式，不是最终实现');
+    expect(hackSaveBody.content.match(/\.card \{ color: red; \}/gu)).toHaveLength(1);
     expect(controller.getStatus()).toEqual({
       active: true,
       undoCount: 2,

@@ -2,8 +2,8 @@ packages:
   - '.'
   - 'client'
 allowBuilds:
-  esbuild: true
-  msw: true
-  sharp: true
+  esbuild: set this to true or false
+  msw: set this to true or false
+  sharp: set this to true or false
 minimumReleaseAgeExclude:
   - '@axhub/commentary-react@1.0.0'

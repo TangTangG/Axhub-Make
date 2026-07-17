@@ -1,5 +1,6 @@
 import type {
   ElementLocator,
+  CommentaryClearEditsScope,
   CommentaryHostResource,
   PrototypeEditCommentEntry,
   PrototypeEditCommentImageEntry,
@@ -678,9 +679,24 @@ export function createPersistenceService(options: {
   function buildAdapterDocument(
     entries: CachedChangeEntry[],
     reason: PrototypeEditCommentsWriteReason = 'changes',
+    clearScope: CommentaryClearEditsScope = 'page',
   ): PrototypeEditCommentsDocument | null {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
+    if (reason === 'clear' && clearScope === 'prototype') {
+      return {
+        schemaVersion: 1,
+        kind: 'prototype-edit-comments',
+        resource: {
+          id: scope.prototypeId,
+          targetPath: scope.targetPath,
+          filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`,
+        },
+        comments: [],
+        tasks: {},
+        images: [],
+      };
+    }
     const currentPageScope = resolveCurrentPageScope();
     const currentComments = entries.map((entry) =>
       withCurrentPageScope(cacheEntryToCommentEntry(entry)),
@@ -815,11 +831,12 @@ export function createPersistenceService(options: {
   function writeAdapterDocument(
     entries: CachedChangeEntry[],
     reason: PrototypeEditCommentsWriteReason,
+    clearScope: CommentaryClearEditsScope = 'page',
   ): void {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document = buildAdapterDocument(entries, reason);
+    const document = buildAdapterDocument(entries, reason, clearScope);
     if (!document) return;
     lastAdapterDocument = document;
     preserveMissingCurrentScopeRecordsOnNextWrite = false;
@@ -1149,9 +1166,13 @@ export function createPersistenceService(options: {
     writeAgentTaskStates(normalizedScopeKey, readAgentTaskStates(normalizedScopeKey));
   }
 
-  function writeCache(entries: CachedChangeEntry[], reason: PrototypeEditCommentsWriteReason = 'changes'): void {
+  function writeCache(
+    entries: CachedChangeEntry[],
+    reason: PrototypeEditCommentsWriteReason = 'changes',
+    clearScope: CommentaryClearEditsScope = 'page',
+  ): void {
     writeLocalCache(entries);
-    writeAdapterDocument(entries, reason);
+    writeAdapterDocument(entries, reason, clearScope);
   }
 
   function buildCacheEntriesFromTransactions(): CachedChangeEntry[] {
@@ -1607,8 +1628,8 @@ export function createPersistenceService(options: {
     writeCache(nextEntries);
   }
 
-  function clearStorage(): void {
-    writeCache([], 'clear');
+  function clearStorage(scope: CommentaryClearEditsScope = 'page'): void {
+    writeCache([], 'clear', scope);
   }
 
   return {

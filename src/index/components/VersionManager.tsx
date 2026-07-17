@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { AlertTriangle, Eye, GitCommit, Loader2, RefreshCw, RotateCcw, Sparkles, Upload, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Download, Eye, GitCommit, Loader2, RefreshCw, RotateCcw, Sparkles, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -12,12 +12,22 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
 import { apiService, type GitWorkspaceStatusResponse } from '../services/api';
 import { generateGitCommitMessage } from '../domains/ai-generation/gitCommitMessageGeneration';
 import { ItemData } from '../types';
 import { getGitVersionUnavailableState, type GitVersionUnavailableState } from '../utils/gitVersionErrors';
 import { useAppDialog } from './dialogs/AppDialogProvider';
+import { probeGitVersionEntry } from './gitVersionPreview';
+import {
+    VersionChangeCard,
+    VersionCommitRow,
+    VersionInfoRow,
+    VersionInfoValue,
+    VersionSection,
+    VersionSyncTabs,
+    getVersionChangeTitle,
+    type VersionCardCommit,
+} from './VersionCards';
 
 interface VersionManagerProps {
     visible: boolean;
@@ -32,66 +42,15 @@ interface CommitItem {
     author: string;
     timestamp: number;
     hasPrototype?: boolean;
+    prototypeUrl?: string | null;
+    previewReady?: boolean;
 }
 
-type PrototypeVersionAction = 'load' | 'commit' | 'fetch' | 'push';
+type PrototypeVersionAction = 'load' | 'commit' | 'fetch' | 'sync-down' | 'push';
 
-function SectionCard({
-    title,
-    actions,
-    children,
-}: {
-    title: string;
-    actions?: ReactNode;
-    children: ReactNode;
-}) {
-    return (
-        <section className="rounded-md border border-border bg-background p-3.5">
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h3>
-                {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-            </div>
-            {children}
-        </section>
-    );
-}
-
-function InfoRow({
-    label,
-    children,
-}: {
-    label: string;
-    children: ReactNode;
-}) {
-    return (
-        <div className="grid min-h-8 grid-cols-[88px_minmax(0,1fr)] items-center gap-2 text-xs">
-            <span className="whitespace-nowrap text-muted-foreground">{label}</span>
-            <div className="min-w-0 text-foreground">{children}</div>
-        </div>
-    );
-}
-
-function InfoValue({
-    children,
-    className,
-    title,
-}: {
-    children: ReactNode;
-    className?: string;
-    title?: string;
-}) {
-    return (
-        <div
-            className={cn(
-                'flex h-8 min-w-0 items-center rounded-md border border-border/70 bg-muted/30 px-2.5 text-xs font-medium text-foreground',
-                className,
-            )}
-            title={title}
-        >
-            <span className="min-w-0 truncate">{children}</span>
-        </div>
-    );
-}
+const SectionCard = VersionSection;
+const InfoRow = VersionInfoRow;
+const InfoValue = VersionInfoValue;
 
 function getPrototypeLocalStatusText(options: {
     loading: boolean;
@@ -158,33 +117,6 @@ function resolvePrototypeVersionPreviewUrl(targetItem: ItemData | null, prototyp
     return value;
 }
 
-function formatCommitTimestamp(timestamp: number) {
-    const d = new Date(timestamp);
-    const pad2 = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-}
-
-function timeAgo(timestamp: number) {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-
-    let interval = seconds / 31536000;
-    if (interval > 1) return Math.floor(interval) + ' 年前';
-
-    interval = seconds / 2592000;
-    if (interval > 1) return Math.floor(interval) + ' 个月前';
-
-    interval = seconds / 86400;
-    if (interval > 1) return Math.floor(interval) + ' 天前';
-
-    interval = seconds / 3600;
-    if (interval > 1) return Math.floor(interval) + ' 小时前';
-
-    interval = seconds / 60;
-    if (interval > 1) return Math.floor(interval) + ' 分钟前';
-
-    return '刚刚';
-}
-
 export default function VersionManager({
     visible,
     onCancel,
@@ -208,6 +140,12 @@ export default function VersionManager({
     const hasConfiguredRemote = Boolean(workspaceStatus?.remote?.url);
     const incomingTotal = workspaceStatus?.remoteComparison?.incoming.totalFiles || 0;
     const outgoingTotal = workspaceStatus?.remoteComparison?.outgoing.totalFiles || 0;
+    const incomingAllCommits: VersionCardCommit[] = workspaceStatus?.remoteComparison?.incomingCommits || [];
+    const incomingRecentCommits = incomingAllCommits.slice(0, 2);
+    const outgoingAllCommits: VersionCardCommit[] = workspaceStatus?.remoteComparison?.outgoingCommits || [];
+    const outgoingRecentCommits = outgoingAllCommits.slice(0, 2);
+    const behindCount = workspaceStatus?.remoteComparison?.behindCount || incomingAllCommits.length;
+    const aheadCount = workspaceStatus?.remoteComparison?.aheadCount || outgoingAllCommits.length;
     const hasLoadedLocalHistory = loadedHistoryPath === targetPath;
     const hasLoadedWorkspaceStatus = Boolean(workspaceStatus);
     const showLocalSetupHint = hasLoadedLocalHistory && Boolean(gitUnavailableState);
@@ -237,9 +175,17 @@ export default function VersionManager({
 
             if (response.ok) {
                 setGitUnavailableState(getGitVersionUnavailableState(data));
-                setCommits(Array.isArray(data.commits)
+                const historyCommits = Array.isArray(data.commits)
                     ? data.commits.filter((commit: CommitItem) => commit.hasPrototype !== false)
-                    : []);
+                    : [];
+                setCommits(await Promise.all(historyCommits.map(async (commit: CommitItem) => ({
+                    ...commit,
+                    previewReady: Boolean(commit.prototypeUrl) && await probeGitVersionEntry({
+                        commitHash: commit.hash,
+                        targetPath,
+                        projectId: data.projectId,
+                    }),
+                }))));
                 setHasUncommitted(Boolean(data.hasUncommitted));
             } else {
                 const unavailableState = getGitVersionUnavailableState(data);
@@ -367,13 +313,20 @@ export default function VersionManager({
         }
     };
 
-    const handleViewPrototype = async (commitHash: string) => {
+    const handleViewPrototype = async (commit: CommitItem) => {
+        if (commit.previewReady && commit.prototypeUrl) {
+            window.open(resolvePrototypeVersionPreviewUrl(item, commit.prototypeUrl), '_blank', 'noopener,noreferrer');
+            return;
+        }
+
+        const commitHash = commit.hash;
         setViewingPrototypeId(commitHash);
         try {
             if (!targetPath) {
                 toast.error('无法获取文件路径');
                 return;
             }
+            toast.info('正在准备历史版本预览，完成后请再次点击预览');
             const response = await fetch('/api/git/build-version', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -383,7 +336,16 @@ export default function VersionManager({
             const data = await response.json();
 
             if (response.ok && data.hasPrototype && data.prototypeUrl) {
-                window.open(resolvePrototypeVersionPreviewUrl(item, data.prototypeUrl), '_blank', 'noopener,noreferrer');
+                setCommits((currentCommits) => currentCommits.map((currentCommit) => (
+                    currentCommit.hash === commitHash
+                        ? {
+                            ...currentCommit,
+                            prototypeUrl: data.prototypeUrl,
+                            previewReady: true,
+                        }
+                        : currentCommit
+                )));
+                toast.success('历史版本已准备好，请再次点击预览');
             } else if (response.ok && data.hasPrototype === false) {
                 toast.warning('这个历史版本里还没有当前原型，无法预览。');
             } else {
@@ -404,6 +366,19 @@ export default function VersionManager({
             toast.success('已读取在线仓库');
         } catch (error) {
             toast.error(error instanceof Error ? error.message : '读取在线仓库失败');
+        } finally {
+            setBusyAction(null);
+        }
+    };
+
+    const handleSyncDown = async () => {
+        setBusyAction('sync-down');
+        try {
+            await apiService.syncDownGitWorkspace();
+            await reloadAll();
+            toast.success('已同步在线仓库');
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : '同步下来失败');
         } finally {
             setBusyAction(null);
         }
@@ -558,65 +533,56 @@ export default function VersionManager({
                             ) : null}
 
                             {showLocalHistory ? (
-                                <SectionCard title="历史版本">
-                                    <div className="space-y-3">
+                                <SectionCard title="历史版本" contentClassName="px-3.5 py-0">
+                                    <div className="divide-y divide-border/50">
                                         {commits.map((commit, index) => {
                                             const isCurrent = index === 0 && !hasUncommitted;
                                             const canPreview = commit.hasPrototype !== false;
                                             return (
-                                                <div key={commit.hash} className="rounded-md border bg-card px-4 py-3.5">
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <div className="truncate text-sm font-medium text-foreground">{commit.message}</div>
-                                                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                                                                <span>{commit.author || 'Unknown'}</span>
-                                                                <span>·</span>
-                                                                <span title={formatCommitTimestamp(commit.timestamp)}>{timeAgo(commit.timestamp)}</span>
-                                                                <span>·</span>
-                                                                <code className="rounded bg-muted px-1 py-0.5 text-sm">{commit.hash.substring(0, 7)}</code>
-                                                            </div>
-                                                        </div>
-                                                        {isCurrent ? (
-                                                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-sm text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-100">
-                                                                当前版本
-                                                            </span>
-                                                        ) : (
-                                                            <TooltipProvider>
-                                                                <div className="flex items-center gap-1">
-                                                                    {canPreview ? (
-                                                                        <Tooltip>
-                                                                            <TooltipTrigger asChild>
-                                                                                <Button
-                                                                                    variant="ghost"
-                                                                                    size="icon-xs"
-                                                                                    onClick={() => void handleViewPrototype(commit.hash)}
-                                                                                    disabled={viewingPrototypeId === commit.hash}
-                                                                                    aria-label="预览历史版本"
-                                                                                >
-                                                                                    {viewingPrototypeId === commit.hash ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
-                                                                                </Button>
-                                                                            </TooltipTrigger>
-                                                                            <TooltipContent side="top">预览历史版本</TooltipContent>
-                                                                        </Tooltip>
-                                                                    ) : null}
+                                                <VersionCommitRow
+                                                    key={commit.hash}
+                                                    commit={commit}
+                                                    badge={isCurrent ? (
+                                                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-100">
+                                                            当前版本
+                                                        </span>
+                                                    ) : null}
+                                                    actions={!isCurrent ? (
+                                                        <TooltipProvider>
+                                                            <div className="flex items-center gap-1">
+                                                                {canPreview ? (
                                                                     <Tooltip>
                                                                         <TooltipTrigger asChild>
                                                                             <Button
                                                                                 variant="ghost"
                                                                                 size="icon-xs"
-                                                                                onClick={() => void handleRestore(commit.hash)}
-                                                                                aria-label="恢复此版本"
+                                                                                onClick={() => void handleViewPrototype(commit)}
+                                                                                disabled={viewingPrototypeId === commit.hash}
+                                                                                aria-label="预览历史版本"
                                                                             >
-                                                                                <RotateCcw className="h-4 w-4" />
+                                                                                {viewingPrototypeId === commit.hash ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                                                                             </Button>
                                                                         </TooltipTrigger>
-                                                                        <TooltipContent side="top">恢复此版本</TooltipContent>
+                                                                        <TooltipContent side="top">预览历史版本</TooltipContent>
                                                                     </Tooltip>
-                                                                </div>
-                                                            </TooltipProvider>
-                                                        )}
-                                                    </div>
-                                                </div>
+                                                                ) : null}
+                                                                <Tooltip>
+                                                                    <TooltipTrigger asChild>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon-xs"
+                                                                            onClick={() => void handleRestore(commit.hash)}
+                                                                            aria-label="恢复此版本"
+                                                                        >
+                                                                            <RotateCcw className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TooltipTrigger>
+                                                                    <TooltipContent side="top">恢复此版本</TooltipContent>
+                                                                </Tooltip>
+                                                            </div>
+                                                        </TooltipProvider>
+                                                    ) : undefined}
+                                                />
                                             );
                                         })}
                                     </div>
@@ -659,32 +625,48 @@ export default function VersionManager({
                                         </div>
                                     </SectionCard>
 
-                                    {showOnlineIncoming ? (
-                                        <SectionCard title="线上更新">
-                                            <InfoValue>当前原型有线上更新</InfoValue>
-                                        </SectionCard>
-                                    ) : null}
-
-                                    {showOnlineOutgoing ? (
-                                        <SectionCard
-                                            title="同步到在线"
-                                            actions={(
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-7 gap-1.5 px-2"
-                                                    onClick={handlePush}
-                                                    disabled={isBusy}
-                                                >
-                                                    {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                                                    同步到在线
-                                                </Button>
-                                            )}
-                                        >
-                                            <InfoValue>当前原型待同步到在线</InfoValue>
-                                        </SectionCard>
-                                    ) : null}
+                                    <VersionSyncTabs
+                                        incoming={showOnlineIncoming ? (
+                                            <VersionChangeCard
+                                                title={getVersionChangeTitle('incoming', behindCount)}
+                                                description={`从线上 ${workspaceStatus?.remoteComparison?.branch || '当前'} 同步整个项目，当前原型涉及 ${incomingTotal} 个文件。`}
+                                                recentCommits={incomingRecentCommits}
+                                                actions={(
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 gap-1.5 px-2"
+                                                        onClick={handleSyncDown}
+                                                        disabled={isBusy}
+                                                    >
+                                                        {busyAction === 'sync-down' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                                                        同步下来
+                                                    </Button>
+                                                )}
+                                            />
+                                        ) : null}
+                                        outgoing={showOnlineOutgoing ? (
+                                            <VersionChangeCard
+                                                title={getVersionChangeTitle('outgoing', aheadCount)}
+                                                description={`推送整个项目到线上 ${workspaceStatus?.remoteComparison?.branch || '当前'}，当前原型涉及 ${outgoingTotal} 个文件。`}
+                                                recentCommits={outgoingRecentCommits}
+                                                actions={(
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="h-7 gap-1.5 px-2"
+                                                        onClick={handlePush}
+                                                        disabled={isBusy}
+                                                    >
+                                                        {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                                                        推送上去
+                                                    </Button>
+                                                )}
+                                            />
+                                        ) : null}
+                                    />
                                 </>
                             ) : null}
                         </div>

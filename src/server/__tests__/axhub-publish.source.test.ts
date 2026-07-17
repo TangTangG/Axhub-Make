@@ -53,8 +53,16 @@ describe('Axhub publish source contracts', () => {
     expect(source).toContain("pathname === '/api/axhub/publish'");
     expect(source).toContain('onlineBaseUrl: options.axhubOnlineBaseUrl');
     expect(source).toContain('buildExportHtmlStaticFiles');
+    expect(source).toContain('createProjectCommunicationStore');
+    expect(source).toContain("operationType: 'cloud.publish.axhub'");
+    expect(source).toContain('axhubProjectId: result.pid');
+    expect(source).toContain('prototypeId: built.reviewContext?.prototypeId');
+    expect(source).not.toContain('writePrototypeReviewAxhubBinding');
+    expect(source).toContain('reviewContext: reviewSubmitPrototypeId');
+    expect(source).toContain('client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext)');
+    expect(source).not.toContain('createReviewSubmitInjectionOptions');
     expect(source).not.toContain('assertAxhubHostedHtmlCompatibility');
-    expect(source).toContain('publishHtmlProject(pid, normalizeFilesForAxhub(built.files))');
+    expect(source).toContain('publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext)');
   });
 
   it('does not require local annotation runtime compatibility before uploading HTML to Axhub', () => {
@@ -68,9 +76,12 @@ describe('Axhub publish source contracts', () => {
     expect(combinedSource).not.toContain('AXHUB_HTML_MIN_ANNOTATION_VERSION');
     expect(combinedSource).not.toContain('AXHUB_HTML_ANNOTATION_RUNTIME_REQUIRED');
     expect(combinedSource).not.toContain('__AXHUB_ANNOTATION_RUNTIME__');
-    expect(axhubSource).toContain('const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files));');
+    expect(axhubSource).toContain('const rawResult = await client.publishHtmlProject(pid, normalizeFilesForAxhub(built.files), built.reviewContext);');
     expect(axhubSource).toContain('const result = normalizeAxhubPublishResultUrl(rawResult, client.getActiveBaseUrl());');
     expect(cloudPublishingSource).toContain('const result = await publishAxhubHtmlTarget({');
+    expect(cloudPublishingSource).toContain("target !== 'axhub'");
+    expect(cloudPublishingSource).toContain('prototypeId: reviewSubmitPrototypeId');
+    expect(cloudPublishingSource).not.toContain('writePrototypeReviewAxhubBinding');
   });
 
   it('adds Axhub as a cloud publishing target without requiring generic cloud credentials', () => {

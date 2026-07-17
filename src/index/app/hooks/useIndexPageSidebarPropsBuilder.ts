@@ -178,6 +178,7 @@ export function useIndexPageSidebarPropsBuilder({
             onSetDefaultTheme: (themeName) => { void deps.resources.handleSetDefaultTheme(themeName); },
             onResourceSectionChange: deps.setResourceSection,
             onSelectDoc: (item) => {
+                deps.resources.setSelectedResourceFolder?.(null);
                 deps.previewHandleSelectDoc(item);
                 deps.setViewMode('demo');
             },

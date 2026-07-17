@@ -25,6 +25,8 @@ import { useIndexPagePresentationPropsBuilder } from './hooks/useIndexPagePresen
 import { useIndexPageSelectionSync } from './hooks/useIndexPageSelectionSync';
 import { useIndexPageSidebarPropsBuilder } from './hooks/useIndexPageSidebarPropsBuilder';
 import { useIndexPageUiBridge } from './hooks/useIndexPageUiBridge';
+import { usePrototypeSpecController } from './hooks/usePrototypeSpecController';
+import { usePrototypeSpecNavigationGuard } from './hooks/usePrototypeSpecNavigationGuard';
 import { resolveIndexContentMode, type IndexContentMode } from './index-page/contentMode';
 import { buildIndexDeepLinkUrl, parseResourceDeepLink, shouldSyncIndexDeepLinkUrl, type ResourceDeepLinkTarget } from './index-page/resourceDeepLink';
 import {
@@ -66,7 +68,7 @@ interface AppInnerProps {
 }
 
 type PrototypeRouteInfo = {
-    pages: { id: string; title: string }[];
+    pages: { id: string; title: string; group?: string }[];
     defaultPageId: string;
     activePageId: string;
 };
@@ -85,10 +87,11 @@ function normalizePrototypeRoutePageId(value: unknown): string {
     return PROTOTYPE_ROUTE_PAGE_ID_RE.test(id) ? id : '';
 }
 
-function normalizePrototypeRoutePage(value: { id?: unknown; title?: unknown } | null | undefined) {
+function normalizePrototypeRoutePage(value: { id?: unknown; title?: unknown; group?: unknown } | null | undefined) {
     const id = normalizePrototypeRoutePageId(value?.id);
     const title = typeof value?.title === 'string' ? value.title.trim() : '';
-    return id && title ? { id, title } : null;
+    const group = typeof value?.group === 'string' ? value.group.trim() : '';
+    return id && title ? { id, title, ...(group ? { group } : {}) } : null;
 }
 
 function resolveSelectedPrototypePageAfterRouteInfo(
@@ -539,14 +542,34 @@ export default function IndexPage({
         }
     }, [messageApi, resources, workspace.activeProjectId]);
 
-    const contentMode = useMemo<IndexContentMode>(() => resolveIndexContentMode({
+    const selectedPrototypeId = String(selectedItem?.resourceId || selectedItem?.name || '').trim();
+    const shouldAutoOpenInitialPrototypeSpec = Boolean(
+        initialResourceDeepLink?.resourceType === 'prototype'
+        && initialResourceDeepLink.openSpec
+        && initialResourceDeepLink.resourceId === selectedPrototypeId,
+    );
+    const prototypeSpec = usePrototypeSpecController({
+        activeProjectId: workspace.activeProjectId,
+        selectedItem,
+        autoOpen: shouldAutoOpenInitialPrototypeSpec,
+        onError: messageApi.error,
+    });
+    useEffect(() => {
+        if (prototypeSpec.isOpen && sidebarTab !== 'prototype') prototypeSpec.close();
+    }, [prototypeSpec.isOpen, prototypeSpec.close, sidebarTab]);
+
+    const baseContentMode = useMemo<IndexContentMode>(() => resolveIndexContentMode({
         sidebarTab,
         resourceSection,
         viewMode,
         selectedDocOpenMode: resources.selectedDoc?.openMode,
     }), [resourceSection, resources.selectedDoc?.openMode, sidebarTab, viewMode]);
+    const contentMode: IndexContentMode = prototypeSpec.isOpen ? 'prototype-spec' : baseContentMode;
 
     const currentMarkdownResource = useMemo(() => {
+        if (contentMode === 'prototype-spec') {
+            return { item: prototypeSpec.currentItem, kind: 'doc' as const };
+        }
         if (contentMode === 'doc') {
             return { item: resources.selectedDoc, kind: 'doc' as const };
         }
@@ -554,7 +577,7 @@ export default function IndexPage({
             return { item: resources.selectedTemplate, kind: 'template' as const };
         }
         return { item: null, kind: 'doc' as const };
-    }, [contentMode, resources.selectedDoc, resources.selectedTemplate]);
+    }, [contentMode, prototypeSpec.currentItem, resources.selectedDoc, resources.selectedTemplate]);
     const currentMarkdownItem = currentMarkdownResource.item;
     const currentMarkdownLabel = currentMarkdownResource.kind === 'template' ? '模板' : '文档';
     const prototypePlaceholderActive = contentMode === 'preview' && viewMode === 'demo' && selectedItem?.placeholder === true;
@@ -976,6 +999,9 @@ export default function IndexPage({
         selectedPageId: selectedPrototypePageId,
         onPrototypePageChange: setSelectedPrototypePageId,
         selectedDoc: resources.selectedDoc,
+        selectedPrototypeSpec: prototypeSpec.currentItem,
+        contentModeOverride: contentMode,
+        onPrototypeSpecExit: prototypeSpec.close,
         setSelectedDoc: resources.setSelectedDoc,
         selectedTemplate: resources.selectedTemplate,
         setSelectedTemplate: resources.setSelectedTemplate,
@@ -1005,7 +1031,7 @@ export default function IndexPage({
                 return;
             }
             const nextPages = Array.isArray(routeInfo.pages)
-                ? routeInfo.pages.map((page) => normalizePrototypeRoutePage(page)).filter((page): page is { id: string; title: string } => Boolean(page))
+                ? routeInfo.pages.map((page) => normalizePrototypeRoutePage(page)).filter((page): page is { id: string; title: string; group?: string } => Boolean(page))
                 : [];
             if (nextPages.length === 0) {
                 return;
@@ -1038,6 +1064,27 @@ export default function IndexPage({
             ));
         },
     });
+
+    const prototypeSpecNavigation = usePrototypeSpecNavigationGuard({
+        enabled: contentMode === 'prototype-spec' && prototypeSpec.isOpen,
+        currentPath: prototypeSpec.currentPath,
+        modifiedCount: preview.hostToolbarState?.modifiedCount ?? 0,
+        getSourceWindow: () => preview.previewIframeRef.current?.contentWindow ?? null,
+        navigate: prototypeSpec.navigate,
+        clearCurrentPageAnnotations: () => preview.runHostToolbarAction({
+            type: 'clear-edits',
+            scope: 'page',
+            skipConfirm: true,
+        }),
+        onError: (message) => {
+            messageApi.error(message);
+        },
+    });
+
+    const handlePrototypeSpecPreviewReady = useCallback(() => {
+        if (String(prototypeSpec.currentItem?.name || '').toLowerCase().endsWith('.md')) return;
+        preview.handleEnableDocEdit('comment', { disableSelectionMode: true, preserveSidebar: true });
+    }, [preview.handleEnableDocEdit, prototypeSpec.currentItem?.name]);
 
     const selection = useIndexPageSelectionSync({
         loading: workspace.loading,
@@ -1077,6 +1124,15 @@ export default function IndexPage({
     const currentDeepLinkTarget = useMemo<ResourceDeepLinkTarget | null>(() => {
         const activeProjectId = workspace.activeProjectId;
         const currentContentIsDocumentResource = contentMode === 'doc' || (contentMode === 'canvas' && sidebarTab === 'document');
+        if (contentMode === 'prototype-spec' && selectedItem) {
+            return {
+                resourceType: 'prototype',
+                resourceId: selectedItem.resourceId || selectedItem.name,
+                projectId: activeProjectId || undefined,
+                openSpec: true,
+                collapseSidebar: true,
+            };
+        }
         if (contentMode === 'preview' && selectedItem) {
             return {
                 resourceType: 'prototype',
@@ -2038,6 +2094,9 @@ export default function IndexPage({
             docsItems: workspace.docsItems,
             sidebarTrees: workspace.sidebarTrees,
             selectedDoc: resources.selectedDoc,
+            selectedPrototypeSpec: prototypeSpec.currentItem,
+            prototypeSpecSupported: prototypeSpec.isSupported,
+            prototypeSpecLoading: prototypeSpec.loading,
             selectedResourceFolder: resources.selectedResourceFolder,
             selectedTemplate: resources.selectedTemplate,
             selectedCanvas: resources.selectedCanvas,
@@ -2078,12 +2137,15 @@ export default function IndexPage({
             handleCopyStartServerErrorPrompt,
             handleOpenIdeFile: ideActions.handleOpenIdeFile,
             handleOpenSelectedDocInIDE: ideActions.handleOpenSelectedDocInIDE,
+            handleOpenPrototypeSpec: prototypeSpec.open,
+            handlePrototypeSpecPreviewReady,
             handleOpenSelectedThemeInIDE: ideActions.handleOpenSelectedThemeInIDE,
             handleOpenSelectedThemeDocInIDE: ideActions.handleOpenSelectedThemeDocInIDE,
             handleOpenSelectedDataTableInIDE: ideActions.handleOpenSelectedDataTableInIDE,
             handleCopyCurrentAddress,
             onSelectResourceFolder: resources.handleSelectResourceFolder,
             onSelectResourceFolderItem: (item) => {
+                resources.setSelectedResourceFolder(null);
                 preview.handleSelectDoc(item);
                 setViewMode('demo');
             },
@@ -2143,6 +2205,19 @@ export default function IndexPage({
     };
 
     const dialogsProps = {
+        prototypeSpecPromptDialog: prototypeSpec.promptOpen ? {
+            prompt: prototypeSpec.prompt,
+            targetPath: prototypeSpec.promptTargetPath,
+            onOpenChange: prototypeSpec.setPromptOpen,
+        } : null,
+        prototypeSpecNavigationDialog: prototypeSpecNavigation.pendingTargetPath ? {
+            targetPath: prototypeSpecNavigation.pendingTargetPath,
+            annotationCount: preview.hostToolbarState?.modifiedCount ?? 0,
+            clearing: prototypeSpecNavigation.clearing,
+            onContinue: prototypeSpecNavigation.continueNavigation,
+            onClearAndContinue: prototypeSpecNavigation.clearAndContinue,
+            onCancel: prototypeSpecNavigation.cancelNavigation,
+        } : null,
         docReferencePromptDialog: resources.docReferencePromptDialog,
         setDocReferencePromptDialog: resources.setDocReferencePromptDialog,
         preferredPromptClient: preferences.preferredPromptClient,

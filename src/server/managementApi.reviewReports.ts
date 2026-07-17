@@ -80,7 +80,15 @@ interface ParsedMarkdownMeta {
 }
 
 const REVIEW_REPORT_FILE_EXTENSIONS = new Set(['.md', '.markdown']);
-const FRONTMATTER_KEYS = ['title', 'reviewer', 'createdAt', 'source', 'score'];
+const FRONTMATTER_KEYS = [
+  'title',
+  'reviewer',
+  'createdAt',
+  'source',
+  'score',
+  'axhubReportId',
+  'axhubPayloadHash',
+];
 const FRONTMATTER_FIELD_PATTERN = new RegExp(
   `(?:^|\\s)(${FRONTMATTER_KEYS.join('|')})\\s*:\\s*("[^"]*"|'[^']*'|.+?)(?=\\s+(?:${FRONTMATTER_KEYS.join('|')})\\s*:|$)`,
   'giu',
@@ -106,7 +114,6 @@ const REVIEW_REPORT_HEADING_TITLES = new Map<string, string>([
   ['Prototype Review', '原型评审'],
   ['原型评审', '原型评审'],
 ]);
-
 function isSafePathName(value: string): boolean {
   const trimmed = String(value || '').trim();
   if (!trimmed || trimmed.includes('\0')) return false;
@@ -117,7 +124,11 @@ function isSafePathName(value: string): boolean {
 }
 
 function stripFrontmatterQuotes(value: string): string {
-  return value.trim().replace(/^['"]|['"]$/gu, '');
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).replace(/\\([\\"])/gu, '$1');
+  }
+  return trimmed.replace(/^'|'$/gu, '');
 }
 
 function parseFrontmatterFields(value: string): Record<string, string> {
@@ -357,7 +368,11 @@ function createUniqueReportFilePath(reviewsDir: string, baseName: string): strin
 }
 
 function escapeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/gu, ' ').replace(/"/gu, '\\"').trim();
+  return value
+    .replace(/\r?\n/gu, ' ')
+    .replace(/\\/gu, '\\\\')
+    .replace(/"/gu, '\\"')
+    .trim();
 }
 
 function createStoredMarkdown(params: {

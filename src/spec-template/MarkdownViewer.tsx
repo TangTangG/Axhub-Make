@@ -23,11 +23,17 @@ import { defaultThemeConfig } from '../theme';
 import type { AssistantContextV1 } from '@/common/assistant-context/types';
 import {
     buildMarkdownCommentPrompt,
+    buildPrototypeSpecMarkdownSaveRequest,
     resolveMarkdownQuickEditMeta,
     shouldIgnoreInitialMarkdownEditorChange,
     type MarkdownQuickEditMeta,
 } from './quickEdit';
-import { stripMarkdownPreviewFrontmatter } from './previewMarkdownContent';
+import {
+    resolvePrototypeSpecAssetUrl,
+    resolvePrototypeSpecDocumentLink,
+    resolvePrototypeSpecResourceUrl,
+    stripMarkdownPreviewFrontmatter,
+} from './previewMarkdownContent';
 
 export interface MarkdownDocument {
     key: string;
@@ -217,6 +223,10 @@ function resolveMarkdownImageSrc(src: string, documentUrl?: string): string {
         const projectDocumentAssetUrl = buildProjectDocumentAssetUrl(parsedUrl, safeSrc);
         if (projectDocumentAssetUrl) {
             return projectDocumentAssetUrl;
+        }
+        const prototypeSpecAssetUrl = resolvePrototypeSpecAssetUrl(safeSrc, parsedUrl.toString());
+        if (prototypeSpecAssetUrl) {
+            return prototypeSpecAssetUrl;
         }
     } catch {
         // noop
@@ -971,6 +981,13 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     }, []);
 
     const buildSaveRequest = useCallback((docUrl: string, nextContent: string) => {
+        const prototypeSpecRequest = buildPrototypeSpecMarkdownSaveRequest(
+            docUrl,
+            nextContent,
+            window.location.origin,
+        );
+        if (prototypeSpecRequest) return prototypeSpecRequest;
+
         let pathname = '';
         let search = '';
         try {
@@ -1482,6 +1499,30 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                         className="x-markdown-light"
                         content={previewContent}
                         components={{
+                            a: ((props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
+                                const targetPath = resolvePrototypeSpecDocumentLink(
+                                    String(props.href || ''),
+                                    String(currentDoc?.url || ''),
+                                );
+                                const resourceUrl = targetPath
+                                    ? null
+                                    : resolvePrototypeSpecResourceUrl(
+                                        String(props.href || ''),
+                                        String(currentDoc?.url || ''),
+                                    );
+                                return (
+                                    <a
+                                        {...props}
+                                        href={resourceUrl || props.href}
+                                        onClick={(event) => {
+                                            props.onClick?.(event);
+                                            if (event.defaultPrevented || !targetPath) return;
+                                            event.preventDefault();
+                                            postToParent({ type: 'axhub-prototype-spec:navigate', path: targetPath });
+                                        }}
+                                    />
+                                );
+                            }) as any,
                             code: Code,
                             img: ((props: MarkdownImageProps) => (
                                 <MarkdownImage

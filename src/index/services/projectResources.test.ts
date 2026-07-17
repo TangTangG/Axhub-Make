@@ -46,7 +46,8 @@ describe('project resource frontend adapter', () => {
             clientUrl: 'http://localhost:3000/home',
             pages: [
               { id: 'dashboard', title: '工作台' },
-              { id: 'orders-list', title: '订单列表' },
+              { id: 'orders-list', title: '订单列表', group: '订单管理' },
+              { id: 'customers', title: '客户列表', group: '   ' },
             ],
             defaultPageId: 'dashboard',
             filePath: 'src/prototypes/home-page/index.tsx',
@@ -108,7 +109,8 @@ describe('project resource frontend adapter', () => {
 	        previewUrl: 'http://localhost:3000/home',
 	        pages: [
 	          { id: 'dashboard', title: '工作台' },
-	          { id: 'orders-list', title: '订单列表' },
+	          { id: 'orders-list', title: '订单列表', group: '订单管理' },
+	          { id: 'customers', title: '客户列表' },
 	        ],
 	        defaultPageId: 'dashboard',
 	        specUrl: '',

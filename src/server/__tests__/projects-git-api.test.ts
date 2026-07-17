@@ -101,6 +101,12 @@ describe('make-server project git APIs', () => {
         projectId: 'git-client',
       });
       expect(history.commits.length).toBeGreaterThan(0);
+      const historyVersionId = history.commits[0].hash.slice(0, 8);
+      const historyPrototypeUrl = `/prototypes/home?projectId=git-client&gitVersion=${historyVersionId}&gitPath=src%2Fprototypes%2Fhome`;
+      expect(history.commits[0].prototypeUrl).toBe(historyPrototypeUrl);
+
+      const versionEntryUrl = `${server.origin}/api/git/version-file/${historyVersionId}/prototypes/home/index.tsx?projectId=git-client`;
+      expect((await fetch(versionEntryUrl)).status).toBe(404);
 
       const diff = await fetch(`${server.origin}/api/git/diff?path=${encodeURIComponent('prototypes/home')}`)
         .then((response) => response.json());
@@ -125,6 +131,7 @@ describe('make-server project git APIs', () => {
       expect(version.body.prototypeUrl).toBe(`/prototypes/home?projectId=git-client&gitVersion=${version.body.versionId}&gitPath=src%2Fprototypes%2Fhome`);
       expect(version.body.prototypeUrl).not.toContain('/api/git/version-file/');
       expect(version.body.prototypeUrl).not.toContain('/index.tsx');
+      expect((await fetch(versionEntryUrl)).status).toBe(200);
 
       const missingMessage = await fetch(`${server.origin}/api/git/commit`, {
         method: 'POST',
@@ -355,6 +362,8 @@ describe('make-server project git APIs', () => {
       });
       expect(version.body.prototypeUrl).toBe(`/prototypes/${encodeURIComponent('未命名')}?projectId=git-version-preview-unicode&gitVersion=${version.body.versionId}&gitPath=src%2Fprototypes%2F%E6%9C%AA%E5%91%BD%E5%90%8D`);
       expect(fs.existsSync(path.join(projectRoot, '.git-versions', version.body.versionId, 'src', 'prototypes', '未命名', 'index.tsx'))).toBe(true);
+      const versionEntry = await fetch(`${server.origin}/api/git/version-file/${version.body.versionId}/prototypes/${encodeURIComponent('未命名')}/index.tsx?projectId=git-version-preview-unicode`);
+      expect(versionEntry.status).toBe(200);
     } finally {
       await server.close();
     }
@@ -584,6 +593,18 @@ describe('make-server project git APIs', () => {
           message: '更新首页原型到第二版',
         },
       });
+      expect(currentStatus.body.recentCommits).toEqual([
+        expect.objectContaining({
+          hash: currentStatus.body.currentCommit.hash,
+          shortHash: currentStatus.body.currentCommit.shortHash,
+          message: '更新首页原型到第二版',
+          fullMessage: '更新首页原型到第二版',
+        }),
+        expect.objectContaining({
+          hash: expect.stringMatching(/^[0-9a-f]{40}$/u),
+          shortHash: expect.stringMatching(/^[0-9a-f]{7}$/u),
+        }),
+      ]);
 
       const historicalStatus = await fetch(`${server.origin}/api/git/workspace/status?gitVersion=${currentStatus.body.currentCommit.shortHash}`)
         .then(async (response) => ({ status: response.status, body: await response.json() }));
@@ -605,6 +626,46 @@ describe('make-server project git APIs', () => {
           items: [expect.objectContaining({ name: '首页原型' })],
         }),
       ]);
+    } finally {
+      await server.close();
+    }
+  }, GIT_INTEGRATION_TIMEOUT_MS);
+
+  it('automatically detects the origin remote when Make metadata is missing', async () => {
+    const projectRoot = createTempRoot('axhub-workspace-git-detect-origin-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'workspace-detect-origin', name: 'Workspace Detect Origin' },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'README.md'), '# Detect origin\n', 'utf8');
+    await initGitRepo(projectRoot);
+    const { execFile } = await import('node:child_process');
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'git',
+        ['remote', 'add', 'origin', 'git@gitee.com:axhub/workspace-detect-origin.git'],
+        { cwd: projectRoot },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error(String(stderr || stdout || error.message)));
+            return;
+          }
+          resolve();
+        },
+      );
+    });
+    const server = await startTestServer(projectRoot);
+
+    try {
+      await registerProject(server.origin, projectRoot, 'workspace-detect-origin', 'Workspace Detect Origin');
+
+      const status = await fetch(`${server.origin}/api/git/workspace/status`)
+        .then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(status.status).toBe(200);
+      expect(status.body.remote).toEqual({
+        url: 'git@gitee.com:axhub/workspace-detect-origin.git',
+      });
+      expect(status.body.remoteComparison.reason).not.toBe('remote-not-configured');
     } finally {
       await server.close();
     }
@@ -789,6 +850,30 @@ describe('make-server project git APIs', () => {
       if (args.join(' ') === 'diff --name-status origin/main..HEAD') {
         return { stdout: 'M\tskills/writer/SKILL.md\nM\tpackage.json', stderr: '' };
       }
+      if (args[0] === 'log' && args[1] === '-1' && args[2]?.startsWith('--pretty=format:')) {
+        const ref = args[3] || '';
+        if (ref === 'HEAD') {
+          return { stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|Local User|local@example.com|1700000300|本地版本头', stderr: '' };
+        }
+        if (ref === 'origin/main') {
+          return { stdout: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|Remote User|remote@example.com|1700000200|线上版本头', stderr: '' };
+        }
+      }
+      if (args[0] === 'log' && args[1]?.startsWith('--pretty=format:') && args[2] === 'HEAD..origin/main') {
+        return {
+          stdout: [
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\x1fRemote User\x1fremote@example.com\x1f1700000200\x1f线上版本头\n\n完整线上更新日志\x1e',
+            'cccccccccccccccccccccccccccccccccccccccc\x1fDesigner\x1fdesigner@example.com\x1f1700000100\x1f补充首页素材\x1e',
+          ].join(''),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'log' && args[1]?.startsWith('--pretty=format:') && args[2] === 'origin/main..HEAD') {
+        return {
+          stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x1fLocal User\x1flocal@example.com\x1f1700000300\x1f本地版本头\x1e',
+          stderr: '',
+        };
+      }
       throw new Error(`${command} ${args.join(' ')} in ${options.cwd}`);
     });
     const server = await startTestServer(projectRoot, createTempRoot('axhub-workspace-git-remote-comparison-home-'), {
@@ -806,6 +891,35 @@ describe('make-server project git APIs', () => {
         available: true,
         branch: 'main',
         targetRef: 'origin/main',
+        localHead: expect.objectContaining({
+          shortHash: 'aaaaaaa',
+          message: '本地版本头',
+          author: 'Local User',
+        }),
+        remoteHead: expect.objectContaining({
+          shortHash: 'bbbbbbb',
+          message: '线上版本头',
+          author: 'Remote User',
+        }),
+        aheadCount: 1,
+        behindCount: 2,
+        incomingCommits: [
+          expect.objectContaining({
+            shortHash: 'bbbbbbb',
+            message: '线上版本头',
+            fullMessage: '线上版本头\n\n完整线上更新日志',
+          }),
+          expect.objectContaining({
+            shortHash: 'ccccccc',
+            message: '补充首页素材',
+          }),
+        ],
+        outgoingCommits: [
+          expect.objectContaining({
+            shortHash: 'aaaaaaa',
+            message: '本地版本头',
+          }),
+        ],
         incoming: {
           totalFiles: 2,
           groups: [
@@ -1154,7 +1268,7 @@ describe('make-server project git APIs', () => {
       });
       expect(commands).toContainEqual({
         command: 'gh',
-        args: ['repo', 'create', 'acme/workspace-create-remote', '--private', '--confirm'],
+        args: ['repo', 'create', 'acme/workspace-create-remote', '--private', '--source=.', '--remote=origin', '--confirm'],
       });
 
       const createdByName = await fetch(`${server.origin}/api/git/workspace/create-remote-repository`, {
@@ -1169,7 +1283,7 @@ describe('make-server project git APIs', () => {
       });
       expect(commands).toContainEqual({
         command: 'gh',
-        args: ['repo', 'create', 'workspace-create-remote-name', '--public', '--confirm'],
+        args: ['repo', 'create', 'workspace-create-remote-name', '--public', '--source=.', '--remote=origin', '--confirm'],
       });
 
       const fallback = await fetch(`${server.origin}/api/git/workspace/create-remote-repository`, {
@@ -1184,6 +1298,63 @@ describe('make-server project git APIs', () => {
       });
       expect(fallback.body.prompt).toContain('目标仓库地址：ssh://git.example.internal/team/workspace-create-remote.git');
       expect(fallback.body.prompt).toContain('请根据仓库地址判断平台');
+    } finally {
+      await server.close();
+    }
+  }, GIT_INTEGRATION_TIMEOUT_MS);
+
+  it('persists the origin remote created by the repository CLI', async () => {
+    const projectRoot = createTempRoot('axhub-workspace-git-persist-created-remote-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'workspace-persist-created-remote', name: 'Workspace Persist Created Remote' },
+    });
+    fs.writeFileSync(path.join(projectRoot, 'README.md'), '# Created remote\n', 'utf8');
+    await initGitRepo(projectRoot);
+    let originUrl = '';
+    const commandExecutor = vi.fn(async (command: string, args: string[]) => {
+      if (command === 'git') {
+        if (args[0] === '--version') return { stdout: 'git version 2.44.0', stderr: '' };
+        if (args.join(' ') === 'rev-parse --is-inside-work-tree') return { stdout: 'true', stderr: '' };
+        if (args.join(' ') === 'rev-parse --verify HEAD') return { stdout: 'HEAD', stderr: '' };
+        if (args.join(' ') === 'branch --show-current') return { stdout: 'main', stderr: '' };
+        if (args.join(' ') === 'branch --format=%(refname:short)') return { stdout: 'main', stderr: '' };
+        if (args.join(' ') === 'branch -r --format=%(refname:short)') return { stdout: '', stderr: '' };
+        if (args.join(' ') === 'status --porcelain -uall') return { stdout: '', stderr: '' };
+        if (args.join(' ') === 'remote get-url origin' && originUrl) return { stdout: originUrl, stderr: '' };
+        if (args[0] === 'remote') throw new Error('origin is not configured');
+      }
+      if (command === 'gh') {
+        originUrl = 'git@github.com:acme/workspace-created.git';
+        return { stdout: 'created', stderr: '' };
+      }
+      throw new Error(`${command} ${args.join(' ')}`);
+    });
+    const server = await startTestServer(projectRoot, createTempRoot('axhub-workspace-git-persist-created-remote-home-'), {
+      gitWorkspaceCommandExecutor: commandExecutor,
+    });
+
+    try {
+      await registerProject(server.origin, projectRoot, 'workspace-persist-created-remote', 'Workspace Persist Created Remote');
+
+      const created = await fetch(`${server.origin}/api/git/workspace/create-remote-repository`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repositoryName: 'acme/workspace-created', visibility: 'private' }),
+      }).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+      expect(created.status).toBe(200);
+      expect(created.body.remote).toEqual({
+        url: 'git@github.com:acme/workspace-created.git',
+      });
+      expect(commandExecutor).toHaveBeenCalledWith(
+        'gh',
+        ['repo', 'create', 'acme/workspace-created', '--private', '--source=.', '--remote=origin', '--confirm'],
+        { cwd: projectRoot },
+      );
+      const config = JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'), 'utf8'));
+      expect(config.versionCollaboration.remote).toEqual({
+        url: 'git@github.com:acme/workspace-created.git',
+      });
     } finally {
       await server.close();
     }

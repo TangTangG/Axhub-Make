@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ClaudeCode, CodeBuddy, Codex, Cursor, DeepSeek, OpenCode, Qoder } from '@lobehub/icons';
+import { ClaudeCode, CodeBuddy, Codex, Cursor, DeepSeek, Grok, OpenCode, Qoder } from '@lobehub/icons';
 import { QRCode } from 'antd';
 import { AlertTriangle, CheckCircle2, CircleHelp, Copy, Loader2, Play, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -23,6 +23,7 @@ import {
     SheetTitle,
 } from '@/components/ui/sheet';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -49,7 +50,7 @@ import type { ThemeResourceItem } from '../domains/resources/resource.types';
 import { PrototypeThemeSearchSelect } from '../domains/prototype-generation/PrototypeThemeSearchSelect';
 import { NO_PROTOTYPE_THEME_VALUE } from '../domains/prototype-generation/prototypeGenerationThemeSelection';
 
-export type SettingsDialogInitialTab = 'project' | 'update' | 'ai';
+export type SettingsDialogInitialTab = 'project' | 'update' | 'ai' | 'network';
 
 export interface SettingsDialogAIContext {
     runtime?: AssistantRuntimeResponse | null;
@@ -79,6 +80,7 @@ interface ServerConfig {
     host: string;
     port: number;
     lanHost?: string;
+    skipLanPreviewAuth?: boolean;
     enableCommandAPI?: boolean;
 }
 
@@ -120,6 +122,7 @@ interface Config {
 interface SettingsFormState {
     host: string;
     lanHost: string;
+    skipLanPreviewAuth: boolean;
     projectName: string;
     projectDescription: string;
     defaultTheme: string;
@@ -161,6 +164,7 @@ const AI_IMAGE_CONFIG_TEST_PROMPT = '生成一张用于验证图片生成配置�
 const DEFAULT_FORM_STATE: SettingsFormState = {
     host: 'localhost',
     lanHost: '',
+    skipLanPreviewAuth: false,
     projectName: '',
     projectDescription: '',
     defaultTheme: '',
@@ -199,11 +203,13 @@ const LOCAL_AI_AGENT_OPTIONS: Array<{
     provider: AcpProviderKey;
     label: string;
     versionKey: AcpProviderKey;
+    supportsNpxFallback: boolean;
 }> = ACP_PROVIDER_OPTIONS.map((option) => ({
     value: option.client,
     provider: option.provider,
     label: option.label,
     versionKey: option.provider,
+    supportsNpxFallback: option.supportsNpxFallback === true,
 }));
 
 function getAgentProviderIcon(provider: AcpProviderKey): React.ReactNode {
@@ -214,6 +220,7 @@ function getAgentProviderIcon(provider: AcpProviderKey): React.ReactNode {
     if (provider === 'qoder') return <Qoder.Color size={16} />;
     if (provider === 'codebuddy') return <CodeBuddy.Color size={16} />;
     if (provider === 'reasonix') return <DeepSeek.Color size={16} />;
+    if (provider === 'grok-build') return <Grok size={16} />;
     return null;
 }
 
@@ -229,6 +236,7 @@ function normalizeFormState(config: Config): SettingsFormState {
     return {
         host: config.server.host || 'localhost',
         lanHost: config.server.lanHost || config.availableLANHosts?.[0] || '',
+        skipLanPreviewAuth: config.server.skipLanPreviewAuth === true,
         projectName: config.projectInfo?.name || '',
         projectDescription: config.projectInfo?.description || '',
         defaultTheme: config.projectDefaults?.defaultTheme || '',
@@ -446,7 +454,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const [activeProjectId, setActiveProjectId] = useState('');
     const [localAcpRuntime, setLocalAcpRuntime] = useState<AssistantRuntimeResponse | null>(null);
     const [localAcpFailureContext, setLocalAcpFailureContext] = useState<{ source: string; message: string } | null>(null);
-    const [localAcpChecking, setLocalAcpChecking] = useState(false);
     const [localAcpConnecting, setLocalAcpConnecting] = useState(false);
     const [localAcpRestarting, setLocalAcpRestarting] = useState(false);
     const [makeClientUpdateStatus, setMakeClientUpdateStatus] = useState<MakeClientUpdateStatus | null>(null);
@@ -466,8 +473,11 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const visibleMakeClientUpdateBlocker = makeClientUpdateAvailable ? getVisibleMakeClientUpdateBlocker(makeClientUpdateStatus) : '';
     const makeClientUpdateCanApply = Boolean(makeClientUpdateAvailable && makeClientUpdateStatus?.canApply);
     const latestMakeClientUpdateBackup = makeClientUpdateResult?.backupRecord || makeClientUpdateStatus?.lastBackup || null;
+    const providerSupportsNpxFallback = (provider: AcpProviderKey): boolean => (
+        LOCAL_AI_AGENT_OPTIONS.some((option) => option.provider === provider && option.supportsNpxFallback)
+    );
     const isAgentProviderMissingFromVersions = (versions: AgentVersionMap, provider: AcpProviderKey): boolean => (
-        versions[provider]?.status === 'missing'
+        versions[provider]?.status === 'missing' && !providerSupportsNpxFallback(provider)
     );
     const isAgentProviderMissing = (provider: AcpProviderKey): boolean => (
         isAgentProviderMissingFromVersions(agentVersions, provider)
@@ -497,7 +507,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             setMakeClientUpdateError(null);
             setLocalAcpRuntime(null);
             setLocalAcpFailureContext(null);
-            setLocalAcpChecking(false);
             setLocalAcpConnecting(false);
             setLocalAcpRestarting(false);
             setAgentVersionRefreshingProvider(null);
@@ -691,7 +700,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     };
 
     async function handleLocalAcpRuntimeCheck(options: { silent?: boolean } = {}) {
-        setLocalAcpChecking(true);
         try {
             const runtime = await apiService.getAssistantRuntime({ autoStart: false, projectId: activeProjectId || undefined });
             setLocalAcpRuntime(runtime);
@@ -711,8 +719,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                 toast.error(error?.message || '检测本地 ACP 服务失败');
             }
             return null;
-        } finally {
-            setLocalAcpChecking(false);
         }
     }
 
@@ -786,7 +792,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     };
 
     const handleTabValueChange = (value: string) => {
-        setActiveTab(value === 'ai' ? 'ai' : value === 'update' ? 'update' : 'project');
+        setActiveTab(value === 'ai' ? 'ai' : value === 'update' ? 'update' : value === 'network' ? 'network' : 'project');
         if (value === 'ai') {
             void handleLocalAcpRuntimeCheck({ silent: true });
             void loadAgentVersions().then(clearMissingDefaultPromptClientAfterVersionCheck);
@@ -1125,6 +1131,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                     host,
                     port: currentConfig.server.port || 51720,
                     lanHost: formState.lanHost.trim(),
+                    skipLanPreviewAuth: formState.skipLanPreviewAuth,
                     enableCommandAPI: currentConfig.server.enableCommandAPI || false,
                 },
                 projectInfo: {
@@ -1186,6 +1193,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             onClose();
         } catch (error: any) {
             console.error('Error saving config:', error);
+            await loadConfig();
             toast.error(error?.message || '保存配置失败');
         } finally {
             setLoading(false);
@@ -1200,9 +1208,9 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             >
                 <Tabs value={activeTab} onValueChange={handleTabValueChange} className="flex h-full flex-col">
                     <SheetHeader className="border-b px-5 py-3.5">
-                        <SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置</SheetTitle>
+                        <SheetTitle className="sr-only">项目设置 / 项目更新 / AI 设置 / 网络配置</SheetTitle>
                         <div className="flex items-center justify-between gap-3">
-                            <TabsList className="grid h-8 w-full max-w-[360px] grid-cols-3 rounded-lg border border-border/70 bg-muted/50 p-0.5">
+                            <TabsList className="grid h-8 w-full max-w-[460px] grid-cols-4 rounded-lg border border-border/70 bg-muted/50 p-0.5">
                                 <TabsTrigger value="project" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     项目设置
                                 </TabsTrigger>
@@ -1214,6 +1222,9 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                 </TabsTrigger>
                                 <TabsTrigger value="ai" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
                                     AI 设置
+                                </TabsTrigger>
+                                <TabsTrigger value="network" className="h-full rounded-md px-2.5 py-0 text-[13px] leading-none data-[state=active]:shadow-none">
+                                    网络配置
                                 </TabsTrigger>
                             </TabsList>
                             <Button
@@ -1274,134 +1285,6 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                             />
                         </Field>
 
-                        </section>
-
-                        <Separator className="my-5" />
-
-                        <section className="space-y-4">
-                        <div className="space-y-1">
-                            <h3 className="text-base font-semibold text-foreground">服务配置</h3>
-                            <p className="text-xs text-muted-foreground">配置服务监听地址与网络访问范围。</p>
-                        </div>
-
-                        <Field>
-                            <FieldLabelWithHint hint="复制本地访问链接时使用的地址。通常保持 localhost 即可。">本地地址</FieldLabelWithHint>
-                            <Input
-                                value={formState.host}
-                                onChange={(event) => updateField('host', event.target.value)}
-                                placeholder="localhost"
-                            />
-                        </Field>
-
-                        <Field>
-                            <FieldLabelWithHint hint="复制局域网链接和二维码时使用的固定地址，可手动填写或从检测到的地址中选择。">局域网地址</FieldLabelWithHint>
-                            <Input
-                                value={formState.lanHost}
-                                onChange={(event) => updateField('lanHost', event.target.value)}
-                                placeholder={availableLANHosts[0] || '192.168.1.10'}
-                            />
-                            {availableLANHosts.length ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                    {availableLANHosts.slice(0, 4).map((host) => (
-                                        <button
-                                            key={host}
-                                            type="button"
-                                            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] leading-5 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-                                            onClick={() => updateField('lanHost', host)}
-                                        >
-                                            {host}
-                                        </button>
-                                    ))}
-                                </div>
-                            ) : null}
-                        </Field>
-
-                        <Field>
-                            <FieldLabelWithHint hint="设置后非本机访问管理端、API、客户端预览都需要验证。修改或清除密码会让旧链接和登录失效。">局域网访问密码</FieldLabelWithHint>
-                            <div className="flex gap-2">
-                                <Input
-                                    type="password"
-                                    value={lanAccessPassword}
-                                    onChange={(event) => setLanAccessPassword(event.target.value)}
-                                    placeholder={lanAccessStatus?.passwordSet ? '输入新密码以修改' : '设置局域网访问密码'}
-                                    autoComplete="new-password"
-                                />
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    className="shrink-0 gap-1.5"
-                                    disabled={lanAccessPasswordSaving}
-                                    onClick={() => void handleLanAccessPasswordSave()}
-                                >
-                                    {lanAccessPasswordSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                                    {lanAccessStatus?.passwordSet ? '修改' : '设置'}
-                                </Button>
-                                {lanAccessStatus?.passwordSet ? (
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        className="shrink-0 text-destructive hover:text-destructive"
-                                        disabled={lanAccessPasswordSaving}
-                                        onClick={() => void handleLanAccessPasswordClear()}
-                                    >
-                                        清除
-                                    </Button>
-                                ) : null}
-                            </div>
-                            <FieldDescription>
-                                {lanAccessStatus?.passwordSet ? '已设置密码，非本机访问会要求验证。' : '未设置密码时，非本机局域网访问不可用。'}
-                            </FieldDescription>
-                        </Field>
-
-                        <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="space-y-1">
-                                    <div className="text-sm font-medium text-foreground">全局二维码</div>
-                                    <p className="text-xs leading-5 text-muted-foreground">
-                                        生成当前 Make 管理端项目页的 10 分钟局域网链接。
-                                    </p>
-                                </div>
-                                <div className="flex shrink-0 gap-2">
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-8 gap-1.5"
-                                        disabled={!lanAccessStatus?.passwordSet || lanAccessShareGenerating}
-                                        onClick={() => void handleGenerateGlobalLanQRCode()}
-                                    >
-                                        {lanAccessShareGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                                        生成
-                                    </Button>
-                                    <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-8 gap-1.5"
-                                        disabled={!lanAccessShareUrl}
-                                        onClick={() => void handleCopyGlobalLanShareUrl()}
-                                    >
-                                        <Copy className="h-3.5 w-3.5" />
-                                        复制
-                                    </Button>
-                                </div>
-                            </div>
-                            {!lanAccessStatus?.passwordSet ? (
-                                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
-                                    请先设置局域网访问密码后再生成二维码。
-                                </div>
-                            ) : lanAccessShareUrl ? (
-                                <div className="flex items-center gap-3">
-                                    <div className="rounded-md border bg-background p-2">
-                                        <QRCode value={lanAccessShareUrl} size={120} bordered={false} />
-                                    </div>
-                                    <div className="min-w-0 flex-1 space-y-1 text-xs text-muted-foreground">
-                                        <div className="truncate">{lanAccessShareUrl}</div>
-                                        <div>有效至 {formatShareExpiry(lanAccessShareExpiresAt) || '10 分钟后'}</div>
-                                    </div>
-                                </div>
-                            ) : null}
-                        </div>
                         </section>
                     </TabsContent>
 
@@ -1987,6 +1870,150 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                 </section>
                             </>
                         ) : null}
+                    </TabsContent>
+
+                    <TabsContent value="network" className="m-0 min-h-0 flex-1 overflow-y-auto px-5 py-4.5">
+                        <section className="space-y-4">
+                        <div className="space-y-1">
+                            <h3 className="text-base font-semibold text-foreground">网络配置</h3>
+                            <p className="text-xs text-muted-foreground">配置服务监听地址与网络访问范围。</p>
+                        </div>
+
+                        <Field>
+                            <FieldLabelWithHint hint="复制本地访问链接时使用的地址。通常保持 localhost 即可。">本地地址</FieldLabelWithHint>
+                            <Input
+                                value={formState.host}
+                                onChange={(event) => updateField('host', event.target.value)}
+                                placeholder="localhost"
+                            />
+                        </Field>
+
+                        <Field>
+                            <FieldLabelWithHint hint="复制局域网链接和二维码时使用的固定地址，可手动填写或从检测到的地址中选择。">局域网地址</FieldLabelWithHint>
+                            <Input
+                                value={formState.lanHost}
+                                onChange={(event) => updateField('lanHost', event.target.value)}
+                                placeholder={availableLANHosts[0] || '192.168.1.10'}
+                            />
+                            {availableLANHosts.length ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {availableLANHosts.slice(0, 4).map((host) => (
+                                        <button
+                                            key={host}
+                                            type="button"
+                                            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] leading-5 text-muted-foreground hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                                            onClick={() => updateField('lanHost', host)}
+                                        >
+                                            {host}
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : null}
+                        </Field>
+
+                        <Field>
+                            <div className="flex items-center justify-between gap-4">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium text-foreground">预览免验证</div>
+                                    <FieldDescription>
+                                        开启后，局域网可直接访问当前项目预览；管理端和 API 仍需验证。
+                                    </FieldDescription>
+                                </div>
+                                <Switch
+                                    checked={formState.skipLanPreviewAuth}
+                                    onCheckedChange={(checked) => updateField('skipLanPreviewAuth', checked === true)}
+                                    aria-label="预览免验证"
+                                />
+                            </div>
+                        </Field>
+
+                        <Field>
+                            <FieldLabelWithHint hint="设置后非本机访问管理端、API、客户端预览都需要验证。修改或清除密码会让旧链接和登录失效。">局域网访问密码</FieldLabelWithHint>
+                            <div className="flex gap-2">
+                                <Input
+                                    type="password"
+                                    value={lanAccessPassword}
+                                    onChange={(event) => setLanAccessPassword(event.target.value)}
+                                    placeholder={lanAccessStatus?.passwordSet ? '输入新密码以修改' : '设置局域网访问密码'}
+                                    autoComplete="new-password"
+                                />
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="shrink-0 gap-1.5"
+                                    disabled={lanAccessPasswordSaving}
+                                    onClick={() => void handleLanAccessPasswordSave()}
+                                >
+                                    {lanAccessPasswordSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                    {lanAccessStatus?.passwordSet ? '修改' : '设置'}
+                                </Button>
+                                {lanAccessStatus?.passwordSet ? (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="shrink-0 text-destructive hover:text-destructive"
+                                        disabled={lanAccessPasswordSaving}
+                                        onClick={() => void handleLanAccessPasswordClear()}
+                                    >
+                                        清除
+                                    </Button>
+                                ) : null}
+                            </div>
+                            <FieldDescription>
+                                {lanAccessStatus?.passwordSet ? '已设置密码，非本机访问会要求验证。' : '未设置密码时，非本机局域网访问不可用。'}
+                            </FieldDescription>
+                        </Field>
+
+                        <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="space-y-1">
+                                    <div className="text-sm font-medium text-foreground">全局二维码</div>
+                                    <p className="text-xs leading-5 text-muted-foreground">
+                                        生成当前 Make 管理端项目页的 10 分钟局域网链接。
+                                    </p>
+                                </div>
+                                <div className="flex shrink-0 gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        disabled={!lanAccessStatus?.passwordSet || lanAccessShareGenerating}
+                                        onClick={() => void handleGenerateGlobalLanQRCode()}
+                                    >
+                                        {lanAccessShareGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                        生成
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 gap-1.5"
+                                        disabled={!lanAccessShareUrl}
+                                        onClick={() => void handleCopyGlobalLanShareUrl()}
+                                    >
+                                        <Copy className="h-3.5 w-3.5" />
+                                        复制
+                                    </Button>
+                                </div>
+                            </div>
+                            {!lanAccessStatus?.passwordSet ? (
+                                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800/40 dark:bg-amber-950/30 dark:text-amber-300">
+                                    请先设置局域网访问密码后再生成二维码。
+                                </div>
+                            ) : lanAccessShareUrl ? (
+                                <div className="flex items-center gap-3">
+                                    <div className="rounded-md border bg-background p-2">
+                                        <QRCode value={lanAccessShareUrl} size={120} bordered={false} />
+                                    </div>
+                                    <div className="min-w-0 flex-1 space-y-1 text-xs text-muted-foreground">
+                                        <div className="truncate">{lanAccessShareUrl}</div>
+                                        <div>有效至 {formatShareExpiry(lanAccessShareExpiresAt) || '10 分钟后'}</div>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                        </section>
                     </TabsContent>
 
                     <SheetFooter className="flex flex-row justify-end gap-2 border-t px-5 py-3.5">

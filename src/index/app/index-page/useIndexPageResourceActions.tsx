@@ -9,6 +9,7 @@ import { removeDocsSidebarTreeItem, sanitizeSidebarTree } from '../../utils/side
 import {
     getDocDisplayName,
     getDocFileName,
+    findResourceItemByPathOrName,
     isProtectedDocItemName,
     isProtectedTemplateName,
     normalizeDocItem,
@@ -1383,9 +1384,8 @@ export function useIndexPageResourceActions(params: any) {
                 } catch {
                 }
             }
-            setSelectedThemeDocRefs((previous) => replaceDocNameInSelections(previous, currentName, renamedDocName));
             const nextDocs = await reloadDocsItems();
-            const renamedDoc = nextDocs.find((doc) => doc.name === renamedDocName);
+            const renamedDoc = findResourceItemByPathOrName(nextDocs, renamedResourcePath, renamedDocName);
             setSelectedDoc(renamedDoc || nextDocs[0] || null);
             messageApi.success('重命名成功');
         } catch (error: any) {

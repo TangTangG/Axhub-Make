@@ -1,7 +1,7 @@
 import type { ViewMode } from '../../types';
 import type { ResourceSection, SidebarTab } from '../../types/index-page.types';
 
-export type IndexContentMode = 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+export type IndexContentMode = 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
 
 interface ResolveIndexContentModeParams {
     sidebarTab: SidebarTab;

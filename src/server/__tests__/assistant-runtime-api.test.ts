@@ -238,13 +238,7 @@ function expectAcpUiCorsArg(args: string[], makeOrigin: string) {
   const corsIndex = args.indexOf('--cors-origin');
   expect(corsIndex).toBeGreaterThanOrEqual(0);
   const origins = String(args[corsIndex + 1] || '').split(',').filter(Boolean);
-  const parsed = new URL(makeOrigin);
-  const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
-  expect(origins).toEqual(expect.arrayContaining([
-    parsed.origin,
-    `${parsed.protocol}//localhost:${port}`,
-    `${parsed.protocol}//127.0.0.1:${port}`,
-  ]));
+  expect(origins).toEqual([new URL(makeOrigin).origin]);
 }
 
 function normalizeTestPath(value: string): string {
@@ -333,6 +327,29 @@ afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+describe('resolveAssistantMakeCorsOrigins', () => {
+  it.each([
+    'http://localhost:53817',
+    'http://127.0.0.1:53817',
+  ])('omits the ACP default Make origin %s', (makeOrigin) => {
+    expect(resolveAssistantMakeCorsOrigins(makeOrigin, { env: {} })).toBe('');
+  });
+
+  it('keeps only the current non-default Make origin', () => {
+    expect(resolveAssistantMakeCorsOrigins('http://192.168.10.82:53817', { env: {} }))
+      .toBe('http://192.168.10.82:53817');
+  });
+
+  it('preserves explicit origins without adding local variants', () => {
+    expect(resolveAssistantMakeCorsOrigins('http://localhost:53817', {
+      env: {
+        AXHUB_ACP_UI_CORS_ORIGIN: 'https://configured.example.com',
+        ACP_UI_CORS_ORIGINS: 'https://second.example.com',
+      },
+    })).toBe('https://configured.example.com,https://second.example.com');
+  });
 });
 
 describe('make-server assistant runtime API', () => {

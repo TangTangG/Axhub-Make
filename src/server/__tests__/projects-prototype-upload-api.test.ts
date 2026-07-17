@@ -120,7 +120,7 @@ function writeAxureHtmlConverterScript(projectRoot: string): void {
     '  success: true,',
     '  outputDir,',
     '  requiresAi: false,',
-    '  pages: [{ id: "page-001", title: "首页" }, { id: "detail", title: "详情" }],',
+    '  pages: [{ id: "page-001", title: "首页" }, { id: "detail", title: "详情", group: "订单管理" }],',
     '  defaultPageId: "page-001",',
     '  warnings: ["Unsupported action: wait"],',
     '}));',
@@ -1620,7 +1620,7 @@ describe('make-server project prototype upload APIs', () => {
         requiresAi: false,
         pages: [
           { id: 'page-001', title: '首页' },
-          { id: 'detail', title: '详情' },
+          { id: 'detail', title: '详情', group: '订单管理' },
         ],
         defaultPageId: 'page-001',
         warnings: ['Unsupported action: wait'],
@@ -1637,7 +1637,7 @@ describe('make-server project prototype upload APIs', () => {
           clientUrl: `${server.origin}/prototypes/axure-demo`,
           pages: [
             { id: 'page-001', title: '首页' },
-            { id: 'detail', title: '详情' },
+            { id: 'detail', title: '详情', group: '订单管理' },
           ],
           defaultPageId: 'page-001',
           importReport: expect.objectContaining({

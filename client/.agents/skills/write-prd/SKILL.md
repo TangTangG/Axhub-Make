@@ -13,7 +13,7 @@ description: Use when the user explicitly asks to write, draft, create, update, 
 
 1. 用户当前说明、附件、截图，以及用户提供的模板。
 2. `src/resources/` 中已有产品资料、PRD、模板、素材和长期文档。
-3. 相关 `src/prototypes/<prototype-id>/.spec/` 文档。
+3. 按 `rules/requirements-alignment-guide.md` 读取相关原型主规格。
 4. 相关原型页面、`annotation-source.json`、批注、状态定义和可见文案。
 5. 相关 `src/resources/**/*.excalidraw` 和同级 `<name>.assets/`，用于识别跨原型关系、流程草图和补充说明。
 
@@ -69,7 +69,7 @@ src/resources/<topic>-prd.md
 src/resources/prd/<topic>.md
 ```
 
-只有用户明确要求 PRD 绑定单个原型、且不需要作为项目级资源沉淀时，才写入原型 `.spec/` 目录。
+PRD 仍写入 `src/resources/prd/`。如果内容会改变单个原型的范围或行为，按 `rules/requirements-alignment-guide.md` 同步更新主规格中的引用或相关决策。
 
 ## 完成输出
 

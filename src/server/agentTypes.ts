@@ -31,7 +31,7 @@ export const WEB_AGENT_OPTIONS = [
 ] as const;
 
 export const LOCAL_APP_AGENT_OPTIONS = [
-  { value: 'codex', label: 'Codex' },
+  { value: 'codex', label: 'ChatGPT' },
   { value: 'opencode', label: 'OpenCode' },
 ] as const;
 
@@ -55,7 +55,7 @@ export const WEB_AGENT_APP_NAMES: Record<WebAgent, string> = {
 };
 
 export const LOCAL_APP_AGENT_APP_NAMES: Record<LocalAppAgent, string> = {
-  codex: 'Codex',
+  codex: 'ChatGPT',
   opencode: 'OpenCode',
 };
 

@@ -764,6 +764,64 @@
     line-height: 1.65;
 }
 
+.beginner-guide-uncertainty-effect-flow {
+    width: min(100%, 310px);
+    display: grid;
+    grid-template-columns: minmax(92px, 1fr) 34px minmax(92px, 1fr);
+    grid-template-areas:
+        "prompt prompt prompt"
+        "arrow-left . arrow-right"
+        "result-a . result-b";
+    align-items: center;
+    justify-items: center;
+    gap: 10px 4px;
+}
+
+.beginner-guide-uncertainty-prompt {
+    grid-area: prompt;
+    width: min(190px, 100%);
+}
+
+.beginner-guide-uncertainty-arrow-left {
+    grid-area: arrow-left;
+}
+
+.beginner-guide-uncertainty-arrow-right {
+    grid-area: arrow-right;
+}
+
+.beginner-guide-uncertainty-result-a {
+    grid-area: result-a;
+    width: 100%;
+}
+
+.beginner-guide-uncertainty-result-b {
+    grid-area: result-b;
+    width: 100%;
+}
+
+.beginner-guide-uncertainty-time-flow {
+    width: min(100%, 390px);
+    display: grid;
+    grid-template-columns: minmax(78px, 1fr) 18px minmax(94px, 1.15fr) 18px minmax(78px, 1fr);
+    align-items: center;
+    justify-items: center;
+    gap: 6px;
+}
+
+.beginner-guide-uncertainty-time-flow .beginner-guide-flow-step {
+    width: 100%;
+}
+
+.beginner-guide-uncertainty-time-flow small {
+    margin-top: 3px;
+    color: var(--stone);
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1;
+    letter-spacing: 0.08em;
+}
+
 .beginner-guide-tip-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1149,6 +1207,11 @@
         width: 100%;
         gap: 5px;
         padding: 6px;
+    }
+
+    .beginner-guide-uncertainty-time-flow {
+        grid-template-columns: minmax(68px, 1fr) 12px minmax(82px, 1.1fr) 12px minmax(68px, 1fr);
+        gap: 4px;
     }
 
     .beginner-guide-footer-actions {

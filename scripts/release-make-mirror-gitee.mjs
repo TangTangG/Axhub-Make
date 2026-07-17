@@ -23,6 +23,7 @@ Options:
   --target <commitish>       Gitee release target branch or commit. Defaults to main.
   --replace                  Delete and re-upload an existing template attachment.
   --dry-run                  Print planned Gitee mirror actions without requiring a token.
+  --confirm-publish          Confirm external Gitee publishing after reviewing prepared artifacts.
   -h, --help                 Show this help message.
 
 Token:
@@ -37,6 +38,7 @@ function parseArgs(argv = []) {
     targetCommitish: 'main',
     replace: false,
     dryRun: false,
+    confirmPublish: false,
     help: false,
   };
 
@@ -62,6 +64,8 @@ function parseArgs(argv = []) {
       options.replace = true;
     } else if (arg === '--dry-run') {
       options.dryRun = true;
+    } else if (arg === '--confirm-publish') {
+      options.confirmPublish = true;
     } else if (arg === '--help' || arg === '-h') {
       options.help = true;
     } else {
@@ -345,6 +349,10 @@ export async function runGiteeMirrorRelease({
     logger.log(`  local: ${plan.assetPath}`);
     logger.log(`  url: ${plan.mirrorUrl}`);
     return { dryRun: true, ...plan };
+  }
+
+  if (!options.confirmPublish) {
+    throw new Error('Gitee publishing requires human confirmation. Re-run with --confirm-publish after reviewing the prepared artifacts.');
   }
 
   const token = resolveGiteeToken({ env, tokenFile: options.tokenFile });

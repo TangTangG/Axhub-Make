@@ -25,7 +25,7 @@ class MemoryStorage {
 describe('prototype placeholder settings storage', () => {
   it('builds a scoped key from project, prototype path, and scene', () => {
     const key = createPrototypePlaceholderSettingsStorageKey([
-      '/Users/me/Project',
+      '/tmp/axhub-project',
       'untitled',
       'src/prototypes/untitled/index.tsx',
       'placeholder-start',
@@ -33,7 +33,7 @@ describe('prototype placeholder settings storage', () => {
     ]);
 
     expect(key).toBe(
-      'axhub:prototype-placeholder-settings:v1:%2FUsers%2Fme%2FProject:untitled:src%2Fprototypes%2Funtitled%2Findex.tsx:placeholder-start:design',
+      'axhub:prototype-placeholder-settings:v1:%2Ftmp%2Faxhub-project:untitled:src%2Fprototypes%2Funtitled%2Findex.tsx:placeholder-start:design',
     );
   });
 

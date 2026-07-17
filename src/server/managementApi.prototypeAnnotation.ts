@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projectCore/index.ts';
 
-import { preprocessAnnotationSourceMarkdown } from './annotationSourceMarkdown.ts';
+import { preprocessAnnotationSourceMarkdown } from '../../client/vite-plugins/annotationSourceMarkdown.ts';
 import { readJsonBody, sendCorsJson, sendCorsPreflight } from './http.ts';
 
 const ANNOTATION_SOURCE_FILE_NAME = 'annotation-source.json';

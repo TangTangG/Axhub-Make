@@ -4,6 +4,7 @@ import type { RuntimeAgentAvailability } from '../../common/agent';
 import type { AcpProvider } from '@/common/assistant-context/types';
 import type {
     CloudPublishTarget,
+    ReviewAxhubConfig,
     ReviewLanSubmitConfig,
     ReviewReportDetail,
     ReviewReportSummary,
@@ -322,6 +323,7 @@ export interface PresentationAreaState {
     reviewUploadLoading?: boolean;
     reviewError?: string;
     reviewLanSubmitConfig?: ReviewLanSubmitConfig | null;
+    reviewAxhubSubmitConfig?: ReviewAxhubConfig | null;
     reviewPrompt?: string;
     reviewDocumentPath?: string;
     reviewPrompts?: Partial<Record<ReviewKind, string>>;
@@ -347,7 +349,7 @@ export interface PresentationAreaState {
     primaryIframeUrl: string;
     secondaryIframeUrl: string;
     elementIframeSize: { width: number; height: number };
-    contentMode?: 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+    contentMode?: 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
     docsItems?: ItemData[];
     sidebarTrees?: Partial<Record<SidebarTreeTab, SidebarTreeNode[]>>;
     selectedDoc?: ItemData | null;
@@ -355,6 +357,9 @@ export interface PresentationAreaState {
     selectedCanvas?: CanvasItem | null;
     canvasItems?: CanvasItem[];
     selectedTemplate?: ItemData | null;
+    selectedPrototypeSpec?: ItemData | null;
+    prototypeSpecSupported?: boolean;
+    prototypeSpecLoading?: boolean;
     isDarkMode?: boolean;
     selectedTheme?: ThemeResourceItem | null;
     selectedDataTable?: DataTableResourceItem | null;
@@ -399,7 +404,7 @@ export interface PresentationAreaActions {
     handleChangeSplitPreviewHeight: (pane: 'primary' | 'secondary', height: number) => void;
     handleChangePreviewScaleMode: (mode: PreviewScaleMode) => void;
     handleOpenWebEditor: () => void;
-    handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;
+    handleEnableDocEdit: (mode?: SpecQuickEditMode, options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => void;
     handleSaveDocEdit: () => void;
     handleExitDocEdit: () => void;
     handleSwitchDocQuickEditMode: (mode: SpecQuickEditMode) => void;
@@ -414,6 +419,7 @@ export interface PresentationAreaActions {
     handleRunReviewDirect?: (kind: ReviewKind) => void | Promise<boolean | void>;
     handleUploadReviewReport?: (files: File[], meta: { title?: string; reviewer?: string }) => void | Promise<void>;
     handleReviewLanSubmitEnabledChange?: (enabled: boolean) => void | Promise<void>;
+    handleReviewAxhubSubmitEnabledChange?: (enabled: boolean) => void | Promise<void>;
     handleRunHostToolbarAction?: (action: CommentaryHostToolbarAction) => void | Promise<boolean>;
     handleRunPrototypePanePromptAction?: (
         pane: PreviewPane,
@@ -434,7 +440,6 @@ export interface PresentationAreaActions {
     handleOpenCloudPublishSettings: (target?: ConfigurableCloudPublishTarget | 'publish-settings') => void;
     handleOpenAxhubPublishDialog: () => void | Promise<void>;
     currentPublishResourcePath: string;
-    visibleCloudPublishTargets: CloudPublishTarget[];
     latestCloudPublishUrl: string;
     handleCopyLatestCloudPublishUrl: () => void | Promise<void>;
     setIsExportModalOpen: (open: boolean) => void;
@@ -444,6 +449,7 @@ export interface PresentationAreaActions {
     handleOpenAxureUsageGuide: () => void;
     handleOpenIdeFile: () => void | Promise<void>;
     handleOpenDocInIDE: () => void | Promise<void>;
+    handleOpenPrototypeSpec: () => void | Promise<void>;
     handleOpenThemeInIDE: () => void | Promise<void>;
     handleOpenThemeDocInIDE: () => void | Promise<void>;
     handleOpenDataTableInIDE: () => void | Promise<void>;

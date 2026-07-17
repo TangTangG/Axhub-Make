@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   getConfigPath,
 } from '../projectCore/index.ts';
+import {
+  readPrototypeReviewLanSubmitEnabled,
+  writePrototypeReviewLanSubmitConfig,
+} from '../reviewLanSubmitConfig.ts';
 
 import {
   cleanupProjectApiTestRoots,
@@ -69,6 +73,18 @@ async function readJsonResponse(response: Response) {
 }
 
 describe('review report APIs', () => {
+  it('keeps review config limited to review-owned submission settings', () => {
+    const projectRoot = createTempRoot();
+    const prototypeDir = writePrototype(projectRoot);
+    writePrototypeReviewLanSubmitConfig(prototypeDir, true);
+
+    expect(readPrototypeReviewLanSubmitEnabled(prototypeDir)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getReviewConfigPath(prototypeDir), 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lanSubmitEnabled: true,
+    });
+  });
+
   it('lists current-prototype review reports by newest time and reads markdown details', async () => {
     const projectRoot = createTempRoot();
     const prototypeDir = writePrototype(projectRoot);
@@ -680,6 +696,18 @@ describe('review report APIs', () => {
 
       const unsafeList = await fetch(`${server.origin}/api/review-reports?projectId=review-safety-client&prototypeId=../secret`).then(readJsonResponse);
       expect(unsafeList).toMatchObject({ status: 400, body: { code: 'INVALID_PROTOTYPE_ID' } });
+
+      const removedFeishuConfig = await fetch(
+        `${server.origin}/api/review-reports/feishu-config?projectId=review-safety-client&prototypeId=home`,
+      ).then(readJsonResponse);
+      expect(removedFeishuConfig.status).toBe(404);
+
+      const removedFeishuSync = await fetch(`${server.origin}/api/review-reports/feishu-sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'review-safety-client', prototypeId: 'home' }),
+      }).then(readJsonResponse);
+      expect(removedFeishuSync.status).toBe(404);
 
       const unsafeDetail = await fetch(`${server.origin}/api/review-reports/../secret?projectId=review-safety-client&prototypeId=home`).then(readJsonResponse);
       expect(unsafeDetail.status).toBeGreaterThanOrEqual(400);

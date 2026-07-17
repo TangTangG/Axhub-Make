@@ -503,6 +503,13 @@ export interface CommentaryExternalEditingStateResult {
   taskRef?: CommentaryExternalEditingTaskRef | null;
 }
 
+export type CommentaryClearEditsScope = 'page' | 'prototype';
+
+export interface CommentaryClearEditsOptions {
+  skipConfirm?: boolean;
+  scope?: CommentaryClearEditsScope;
+}
+
 export interface PrototypeEditCommentTweakEntry {
   summaryLines?: string[];
   baselineValues?: CommentaryTweakValues | null;
@@ -616,6 +623,11 @@ export interface CommentaryTextChange {
   after: string;
 }
 
+export interface CommentaryTargetedTextChange extends CommentaryTextChange {
+  elementKey: WebEditorElementKey;
+  locator: ElementLocator;
+}
+
 export interface CommentaryStyleChangeSet {
   cssText: string;
 }
@@ -705,7 +717,7 @@ export type CommentaryHostToolbarAction =
     } & CommentaryExternalEditingTargetRef)
   | { type: 'interrupt-agent' }
   | { type: 'copy-prompt'; clipboard?: 'host' }
-  | { type: 'clear-edits'; skipConfirm?: boolean }
+  | ({ type: 'clear-edits' } & CommentaryClearEditsOptions)
   | { type: 'toggle-property-panel'; open?: boolean }
   | { type: 'set-active-agent'; agent: WebEditorAgentProvider | null }
   | { type: 'open-ai-settings' }
@@ -770,6 +782,13 @@ export interface CommentaryCopyPromptContext {
   defaultPrompt: string;
 }
 
+export interface CommentaryElementTool {
+  id: string;
+  label: string;
+  icon?: 'diagram' | 'document' | 'external';
+  disabled?: boolean;
+}
+
 export interface CommentaryHostOptions {
   getResourceContext?: () => CommentaryHostResource | null;
   persistenceAdapter?: PrototypeEditCommentsPersistenceAdapter;
@@ -785,6 +804,13 @@ export interface CommentaryHostOptions {
    * If omitted, the editor falls back to its built-in prompt builder.
    */
   buildCopyPrompt?: (context: CommentaryCopyPromptContext) => string;
+  /** Return optional host-owned actions for the selected element card. */
+  getElementTools?: (element: Element | null) => CommentaryElementTool[];
+  /** Run a host-owned selected-element action. */
+  onElementToolAction?: (
+    tool: CommentaryElementTool,
+    element: Element,
+  ) => void | Promise<void>;
   /** Whether local annotation markdown editing is available for the selected element. */
   canEditAnnotationMarkdown?: (element: Element | null) => boolean;
   /** Return an edit URL for the selected annotation document, or an empty value to hide the document edit entry. */
@@ -956,6 +982,8 @@ export interface CommentaryApi {
   getModifiedElements: () => CommentaryModifiedElementSummary[];
   /** Read aggregated text changes */
   getTextChanges: () => CommentaryTextChange[];
+  /** Read per-element text changes for host-managed precise persistence */
+  getTargetedTextChanges: () => CommentaryTargetedTextChange[];
   /** Read aggregated style changes */
   getStyleChanges: () => CommentaryStyleChangeSet;
   /** Read the full edited snapshot for host consumption */

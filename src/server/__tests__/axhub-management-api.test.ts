@@ -346,4 +346,60 @@ describe('Axhub management API', () => {
       },
     });
   });
+
+  it('clears hosted review reports through the authenticated local proxy', async () => {
+    const homeDir = createTempRoot();
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://enterprise.example.com/api/runtime/axhub/me') {
+        return new Response(JSON.stringify({
+          code: 0,
+          data: {
+            name: 'Make 发布 Token',
+            role: 'service',
+            isPlus: true,
+            scopes: ['html:read', 'html:publish'],
+            tokenPrefix: 'axent_secret',
+          },
+        }), { status: 200 });
+      }
+      expect(url).toBe('https://enterprise.example.com/api/runtime/axhub/html-projects/23/review-reports');
+      expect(init?.method).toBe('DELETE');
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer axent_secret_123');
+      return new Response(JSON.stringify({
+        code: 0,
+        data: {
+          pid: 23,
+          path: 'hosted-review',
+          deleted: 2,
+          reviewReportCount: 0,
+        },
+      }), { status: 200 });
+    }));
+
+    await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/connect-enterprise',
+      method: 'POST',
+      body: {
+        serverUrl: 'https://enterprise.example.com/',
+        token: 'axent_secret_123',
+      },
+    });
+
+    const cleared = await callAxhubApi({
+      homeDir,
+      pathname: '/api/axhub/html-projects/23/review-reports',
+      method: 'DELETE',
+    });
+    expect(cleared).toEqual({
+      handled: true,
+      status: 200,
+      body: {
+        pid: 23,
+        path: 'hosted-review',
+        deleted: 2,
+        reviewReportCount: 0,
+      },
+    });
+  });
 });

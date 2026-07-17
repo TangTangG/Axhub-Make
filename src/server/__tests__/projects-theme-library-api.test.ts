@@ -45,45 +45,6 @@ const MIGRATED_GETDESIGN_TEMPLATE_SYSTEMS = [
   'meta',
 ];
 
-function useLocalThemeLibraryFixture(): void {
-  const workspaceRoot = createTempRoot('axhub-make-theme-library-workspace-');
-  const makeTemplateRoot = path.join(workspaceRoot, 'apps', 'make-template');
-  const designSystems = MIGRATED_GETDESIGN_TEMPLATE_SYSTEMS.map((slug) => {
-    const coverFileName = slug === 'mastercard'
-      ? 'mastercard-design-system-cover.webp'
-      : 'official-homepage.webp';
-    const sourcePath = `design-systems/${slug}`;
-    const sourceDir = path.join(makeTemplateRoot, sourcePath);
-    fs.mkdirSync(path.join(sourceDir, 'assets'), { recursive: true });
-    fs.writeFileSync(
-      path.join(sourceDir, 'index.tsx'),
-      '/** Self-contained design system preview for Make theme-library imports. */\nexport default function Preview() { return null; }\n',
-      'utf8',
-    );
-    fs.writeFileSync(path.join(sourceDir, 'designToken.json'), JSON.stringify({ name: slug }, null, 2), 'utf8');
-    fs.writeFileSync(path.join(sourceDir, 'globals.css'), ':root { --fixture-color: #111111; }\n', 'utf8');
-    fs.writeFileSync(path.join(sourceDir, 'assets', coverFileName), 'fixture cover\n', 'utf8');
-    return {
-      id: slug,
-      title: slug === 'hp' ? 'HP Design System' : `${slug} Design System`,
-      slug,
-      sourcePath,
-      entryPath: `${sourcePath}/index.tsx`,
-      tokenPath: `${sourcePath}/designToken.json`,
-      stylePath: `${sourcePath}/globals.css`,
-      coverPath: `${sourcePath}/assets/${coverFileName}`,
-      description: `${slug} fixture design system`,
-    };
-  });
-  fs.mkdirSync(makeTemplateRoot, { recursive: true });
-  fs.writeFileSync(
-    path.join(makeTemplateRoot, 'design-systems.json'),
-    `${JSON.stringify({ schemaVersion: 1, designSystems }, null, 2)}\n`,
-    'utf8',
-  );
-  vi.spyOn(process, 'cwd').mockReturnValue(workspaceRoot);
-}
-
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -264,7 +225,6 @@ describe('make-server project theme library APIs', () => {
   it('loads local make-template design systems when available', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
-    useLocalThemeLibraryFixture();
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
@@ -299,7 +259,6 @@ describe('make-server project theme library APIs', () => {
   it('exposes migrated getdesign.md themes from local make-template design systems', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
-    useLocalThemeLibraryFixture();
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
@@ -331,7 +290,6 @@ describe('make-server project theme library APIs', () => {
   it('prefers local make-template design systems without waiting for the remote index', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot);
-    useLocalThemeLibraryFixture();
     const server = await startThemeLibraryTestServer(projectRoot);
     const originalFetch = globalThis.fetch;
     const remoteRequests: string[] = [];
@@ -463,7 +421,6 @@ describe('make-server project theme library APIs', () => {
   it('imports a migrated local make-template design system into the declared themes target', async () => {
     const projectRoot = createTempRoot();
     writeThemeImportEnabledProject(projectRoot, 'theme-local-import-client');
-    useLocalThemeLibraryFixture();
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {

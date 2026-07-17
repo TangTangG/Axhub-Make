@@ -9,9 +9,70 @@ import {
   resolveDefaultMultiPageColumns,
   resolveMultiPageVisiblePages,
   resolvePreviewLayout,
+  resolveStablePreviewContainerSize,
 } from './preview-layout';
 
 describe('preview layout', () => {
+  it('subtracts layout insets from a usable container measurement', () => {
+    expect(resolveStablePreviewContainerSize({
+      previous: { width: 0, height: 0 },
+      clientWidth: 1048,
+      clientHeight: 732,
+      horizontalInset: 48,
+      verticalInset: 32,
+    })).toEqual({ width: 1000, height: 700 });
+  });
+
+  it('preserves the previous size for zero and inset-only measurements', () => {
+    const previous = { width: 1000, height: 700 };
+
+    expect(resolveStablePreviewContainerSize({
+      previous,
+      clientWidth: 0,
+      clientHeight: 0,
+      horizontalInset: 48,
+      verticalInset: 32,
+    })).toBe(previous);
+    expect(resolveStablePreviewContainerSize({
+      previous,
+      clientWidth: 48,
+      clientHeight: 32,
+      horizontalInset: 48,
+      verticalInset: 32,
+    })).toBe(previous);
+  });
+
+  it('keeps the initial unmeasured size until a usable measurement arrives', () => {
+    const previous = { width: 0, height: 0 };
+
+    expect(resolveStablePreviewContainerSize({
+      previous,
+      clientWidth: 1,
+      clientHeight: 1,
+      horizontalInset: 48,
+      verticalInset: 32,
+    })).toBe(previous);
+  });
+
+  it('accepts a valid measurement after an invalid transition', () => {
+    const previous = { width: 1000, height: 700 };
+    const preserved = resolveStablePreviewContainerSize({
+      previous,
+      clientWidth: 1,
+      clientHeight: 1,
+      horizontalInset: 48,
+      verticalInset: 32,
+    });
+
+    expect(resolveStablePreviewContainerSize({
+      previous: preserved,
+      clientWidth: 848,
+      clientHeight: 632,
+      horizontalInset: 48,
+      verticalInset: 32,
+    })).toEqual({ width: 800, height: 600 });
+  });
+
   it('defaults preview sizing to fit-screen so the full viewport is shown', () => {
     expect(createDefaultPreviewConfig().scaleMode).toBe('fit-screen');
   });

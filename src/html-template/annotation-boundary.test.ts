@@ -28,6 +28,17 @@ describe('html-template annotation boundary', () => {
     expect(source).toContain('setNodeEditingState');
     expect(source).toContain('setContext');
     expect(source).toContain('getEditedSnapshot');
+    expect(source).toContain('createHtmlResourceSaveBridge');
+    expect(source).not.toContain('notify: (level, message) => {');
+    expect(source).toContain('saveWebEditorTextChanges');
+    expect(source).toContain('saveWebEditorStyleChanges');
+    expect(source).toContain('clearWebEditorForcedStyles');
+    expect(source).toContain('createHtmlReviewBridge');
+    expect(source).toContain('getElementTools: htmlReviewBridge.getElementTools');
+    expect(source).toContain('onElementToolAction: htmlReviewBridge.onElementToolAction');
+    expect(source).toContain('normalizeHtmlReviewDocumentPath');
+    expect(source).toContain('contextResourceId');
+    expect(source).toContain('shouldAllowPageEvent: shouldAllowHtmlReviewPageEvent');
   });
 
   it('passes host dark-mode changes into the HTML annotation editor', () => {
@@ -51,6 +62,10 @@ describe('html-template annotation boundary', () => {
     expect(source).toContain('await Promise.resolve(editorBridge.setNodeEditingState(');
     expect(source).toContain('data.targetRef ?? null');
     expect(source).toContain("event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE'");
+    expect(source).toContain("event.data.type === 'AXHUB_PROTOTYPE_EDITOR_SAVE_ACTION'");
+    expect(source).toContain("data.action === 'save-text'");
+    expect(source).toContain("data.action === 'save-style'");
+    expect(source).toContain("data.action === 'clear-style'");
     expect(source).toContain('debugState: commentEditor?.getDebugState?.() ?? null');
     expect(source).toContain('ensureParentEditorBridgeHostToolbarBridge');
     expect(source).toContain('teardownParentEditorBridgeHostToolbarBridge');

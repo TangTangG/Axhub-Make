@@ -11,6 +11,7 @@ import {
     Search,
     Check,
     ChevronDown,
+    ChevronRight,
     File,
     Folder,
     FolderOpen,
@@ -83,6 +84,8 @@ import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
 import { makeClientTemplateMirrorDownloadUrl, makeClientTemplatePrimaryDownloadUrl } from '../../../common/makeClientTemplate';
 import { formatProjectRootDisplayPath } from './projectSwitcherPathDisplay';
 import { copyToClipboard } from '../../utils/clipboard';
+import { buildPrototypePageSegments, findPrototypePageGroupKey } from './prototypePageGroups';
+import type { PrototypePageItem } from './prototypePageGroups';
 
 interface ContentPanelProps {
     activeTab: SidebarTab;
@@ -477,6 +480,7 @@ interface SidebarRowProps {
     draggable?: boolean;
     beforeIndicator?: boolean;
     afterIndicator?: boolean;
+    ariaExpanded?: boolean;
     onEditingValueChange?: (value: string) => void;
     onClick?: () => void;
     onDoubleClick?: (event: React.MouseEvent<HTMLDivElement>) => void;
@@ -507,6 +511,7 @@ function SidebarRow({
     draggable,
     beforeIndicator = false,
     afterIndicator = false,
+    ariaExpanded,
     onEditingValueChange,
     onClick,
     onDoubleClick,
@@ -524,6 +529,7 @@ function SidebarRow({
         <div className="relative">
             <div
                 role="button"
+                aria-expanded={ariaExpanded}
                 data-document-paste-surface
                 tabIndex={0}
                 className={cn(
@@ -824,7 +830,7 @@ function filterTree(
     return walk(nodes);
 }
 
-const getPrototypePageMatches = (item: ItemData): { id: string; title: string }[] => {
+const getPrototypePageMatches = (item: ItemData): PrototypePageItem[] => {
     return Array.isArray(item.pages)
         ? item.pages.filter((page) => page?.id && page?.title)
         : [];
@@ -1771,6 +1777,10 @@ export default function ContentPanel({
     const [isSearchExpanded, setIsSearchExpanded] = useState(false);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
+    const [expandedPrototypePageGroups, setExpandedPrototypePageGroups] = useState<{
+        prototypeId: string;
+        keys: Set<string>;
+    }>({ prototypeId: '', keys: new Set() });
     const knownFolderIdsRef = useRef<Set<string>>(new Set());
     const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
     const [dropTarget, setDropTarget] = useState<{ id: string; placement: DropPlacement } | null>(null);
@@ -1888,7 +1898,58 @@ export default function ContentPanel({
             : activeTab === 'assets'
                 ? 'themes'
                 : 'canvas';
+    const selectedPrototypeId = dataTab === 'prototypes' ? selectedItem?.name || '' : '';
+    const selectedPrototypePageSegments = useMemo(
+        () => buildPrototypePageSegments(
+            selectedPrototypeId,
+            selectedItem ? getPrototypePageMatches(selectedItem) : [],
+        ),
+        [selectedItem?.pages, selectedPrototypeId],
+    );
+    const validPrototypePageGroupKeys = useMemo(() => new Set(
+        selectedPrototypePageSegments
+            .filter((segment) => segment.kind === 'group')
+            .map((segment) => segment.key),
+    ), [selectedPrototypePageSegments]);
+    const activePrototypePageGroupKey = useMemo(
+        () => findPrototypePageGroupKey(selectedPrototypePageSegments, selectedPrototypePageId),
+        [selectedPrototypePageId, selectedPrototypePageSegments],
+    );
     const promptCreateEnabled = true;
+
+    useEffect(() => {
+        setExpandedPrototypePageGroups((previous) => {
+            const keys = previous.prototypeId === selectedPrototypeId
+                ? new Set([...previous.keys].filter((key) => validPrototypePageGroupKeys.has(key)))
+                : new Set<string>();
+            if (activePrototypePageGroupKey) {
+                keys.add(activePrototypePageGroupKey);
+            }
+            if (
+                previous.prototypeId === selectedPrototypeId
+                && previous.keys.size === keys.size
+                && [...keys].every((key) => previous.keys.has(key))
+            ) {
+                return previous;
+            }
+            return { prototypeId: selectedPrototypeId, keys };
+        });
+    }, [activePrototypePageGroupKey, selectedPrototypeId, selectedPrototypePageId, validPrototypePageGroupKeys]);
+
+    const togglePrototypePageGroup = useCallback((prototypeId: string, groupKey: string) => {
+        setExpandedPrototypePageGroups((previous) => {
+            const keys = previous.prototypeId === prototypeId
+                ? new Set(previous.keys)
+                : new Set<string>();
+            if (keys.has(groupKey)) {
+                keys.delete(groupKey);
+            } else {
+                keys.add(groupKey);
+            }
+            return { prototypeId, keys };
+        });
+    }, []);
+
     useEffect(() => {
         setTempTitle(projectTitle);
     }, [projectTitle]);
@@ -2668,51 +2729,90 @@ export default function ContentPanel({
         </DropdownMenu>
     );
 
+    const renderPrototypePageRow = (item: ItemData, page: PrototypePageItem, depth: number) => (
+        <SidebarRow
+            key={`prototype-page:${item.name}:${page.id}`}
+            title={page.title}
+            icon={<File className="h-3.5 w-3.5" />}
+            actions={null}
+            selected={selectedItem?.name === item.name && selectedPrototypePageId === page.id}
+            selectedVariant="subtle"
+            paddingLeft={`${8 + depth * 8}px`}
+            className="cursor-pointer text-muted-foreground"
+            draggable={true}
+            onClick={() => {
+                void Promise.resolve(onPrototypePageSelect(item, page.id));
+            }}
+            onDragStart={(event) => {
+                const resourceId = item.resourceId || item.name;
+                const displayName = resolvePrototypePageEmbedDisplayName(item, page.title);
+                event.dataTransfer.effectAllowed = 'copy';
+                event.dataTransfer.setData('text/plain', `${item.name}:${page.id}`);
+                try {
+                    event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
+                        source: 'sidebar',
+                        resourceType: 'prototype-page',
+                        resourceId,
+                        items: buildAssistantContextItemsFromResource({
+                            resourceType: 'prototype-page',
+                            resourceId,
+                            pageId: page.id,
+                            name: item.name,
+                            displayName,
+                            filePath: item.filePath,
+                            absoluteFilePath: item.absoluteFilePath,
+                        }),
+                    })));
+                } catch {
+                    // Older browsers may reject custom MIME types.
+                }
+            }}
+        />
+    );
+
     const renderPrototypePageRows = (item: ItemData, depth: number) => {
         const pages = getPrototypePageMatches(item);
         if (dataTab !== 'prototypes' || pages.length === 0) {
             return null;
         }
-        return pages.map((page) => (
-            <SidebarRow
-                key={`prototype-page:${item.name}:${page.id}`}
-                title={page.title}
-                icon={<File className="h-3.5 w-3.5" />}
-                actions={null}
-                selected={selectedItem?.name === item.name && selectedPrototypePageId === page.id}
-                selectedVariant="subtle"
-                paddingLeft={`${8 + depth * 8}px`}
-                className="cursor-pointer text-muted-foreground"
-                draggable={true}
-                onClick={() => {
-                    void Promise.resolve(onPrototypePageSelect(item, page.id));
-                }}
-                onDragStart={(event) => {
-                    const resourceId = item.resourceId || item.name;
-                    const displayName = resolvePrototypePageEmbedDisplayName(item, page.title);
-                    event.dataTransfer.effectAllowed = 'copy';
-                    event.dataTransfer.setData('text/plain', `${item.name}:${page.id}`);
-                    try {
-                        event.dataTransfer.setData(ASSISTANT_CONTEXT_DRAG_MIME, JSON.stringify(buildAssistantContextDragPayload({
-                            source: 'sidebar',
-                            resourceType: 'prototype-page',
-                            resourceId,
-                            items: buildAssistantContextItemsFromResource({
-                                resourceType: 'prototype-page',
-                                resourceId,
-                                pageId: page.id,
-                                name: item.name,
-                                displayName,
-                                filePath: item.filePath,
-                                absoluteFilePath: item.absoluteFilePath,
-                            }),
-                        })));
-                    } catch {
-                        // Older browsers may reject custom MIME types.
-                    }
-                }}
-            />
-        ));
+        const segments = item.name === selectedPrototypeId
+            ? selectedPrototypePageSegments
+            : buildPrototypePageSegments(item.name, pages);
+        const expandedKeys = expandedPrototypePageGroups.prototypeId === item.name
+            ? expandedPrototypePageGroups.keys
+            : new Set<string>();
+
+        return segments.map((segment) => {
+            if (segment.kind === 'page') {
+                return renderPrototypePageRow(item, segment.page, depth);
+            }
+            const expanded = expandedKeys.has(segment.key);
+            return (
+                <React.Fragment key={segment.key}>
+                    <SidebarRow
+                        title={segment.title}
+                        icon={expanded
+                            ? <ChevronDown className="h-3.5 w-3.5" />
+                            : <ChevronRight className="h-3.5 w-3.5" />}
+                        actions={null}
+                        ariaExpanded={expanded}
+                        paddingLeft={`${8 + depth * 8}px`}
+                        className="cursor-pointer text-muted-foreground"
+                        titleClassName="font-medium"
+                        onClick={() => togglePrototypePageGroup(item.name, segment.key)}
+                        onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                togglePrototypePageGroup(item.name, segment.key);
+                            }
+                        }}
+                    />
+                    {expanded
+                        ? segment.pages.map((page) => renderPrototypePageRow(item, page, depth + 1))
+                        : null}
+                </React.Fragment>
+            );
+        });
     };
 
     const renderTreeNodes = (nodes: SidebarTreeNode[], depth = 0): React.ReactNode => {

@@ -281,8 +281,25 @@ describe('IndexPage source', () => {
     expect(deepLinkTargetSource).toContain('resourceId: resources.selectedDoc.projectDocumentPath || resources.selectedDoc.resourceId || resources.selectedDoc.name');
   });
 
+  it('syncs an open prototype spec to a collapsed project review deep link', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const deepLinkTargetSource = source.slice(
+      source.indexOf('const currentDeepLinkTarget = useMemo<ResourceDeepLinkTarget | null>(() => {'),
+      source.indexOf('const currentDeepLinkUrl = useMemo(() => ('),
+    );
+
+    expect(source).toContain('autoOpen: shouldAutoOpenInitialPrototypeSpec');
+    expect(deepLinkTargetSource).toContain("if (contentMode === 'prototype-spec' && selectedItem)");
+    expect(deepLinkTargetSource).toContain('openSpec: true');
+    expect(deepLinkTargetSource).toContain('collapseSidebar: true');
+  });
+
   it('merges runtime prototype route info into workspace state before syncing the selected page', () => {
     const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const routePageNormalizer = source.slice(
+      source.indexOf('function normalizePrototypeRoutePage('),
+      source.indexOf('function resolveSelectedPrototypePageAfterRouteInfo('),
+    );
 
     expect(source).toContain('workspace.setData');
     expect(source).toContain('setSelectedItem((previous) =>');
@@ -293,6 +310,8 @@ describe('IndexPage source', () => {
     expect(source).toContain('setSelectedPrototypePageId((previousPageId) =>');
     expect(source).not.toContain('setSelectedPrototypePageId(normalizePrototypeRoutePageId(routeInfo.activePageId) || null)');
     expect(source).toContain('onPrototypeRouteInfo:');
+    expect(routePageNormalizer).toContain("const group = typeof value?.group === 'string' ? value.group.trim() : '';");
+    expect(routePageNormalizer).toContain('...(group ? { group } : {})');
   });
 
   it('refreshes the currently selected prototype after canvas-side prototype reloads', () => {
@@ -1031,5 +1050,17 @@ describe('IndexPage source', () => {
     expect(presentationBuilderCall).toContain('handleToggleAssistant: startPageActive ? () => undefined : handleToggleAssistantPanel,');
     expect(assistantPanelPropsSource).toContain('mounted: startPageActive ? false : assistantController.assistantPanelMounted,');
     expect(assistantPanelPropsSource).toContain('visible: startPageActive ? false : assistantController.assistantVisible,');
+  });
+
+  it('clears the selected resource folder before opening a folder preview item', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+    const handlerSource = source.slice(
+      source.indexOf('onSelectResourceFolderItem: (item) => {'),
+      source.indexOf('onOpenResourceFolderInSystem: resources.handleOpenResourceFolderInSystem,'),
+    );
+
+    expect(handlerSource).toContain('resources.setSelectedResourceFolder(null);');
+    expect(handlerSource.indexOf('resources.setSelectedResourceFolder(null);'))
+      .toBeLessThan(handlerSource.indexOf('preview.handleSelectDoc(item);'));
   });
 });

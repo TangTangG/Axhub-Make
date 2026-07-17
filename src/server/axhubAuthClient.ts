@@ -44,6 +44,52 @@ export interface AxhubHtmlProject {
   generateTime?: string;
   generateStatus?: number;
   htmlUsedSpace?: number;
+  reviewReportCount?: number;
+  reviewSubmitEnabled?: boolean;
+}
+
+export interface AxhubReviewContext {
+  projectId: string;
+  prototypeId: string;
+}
+
+export interface AxhubHostedReviewConfig {
+  pid: number;
+  path: string;
+  submitEnabled: boolean;
+  projectId: string;
+  prototypeId: string;
+  reviewReportCount: number;
+  reviewReportBytes: number;
+  maxReportCount: number;
+  maxReportBytes: number;
+  maxTotalReportBytes: number;
+}
+
+export interface AxhubHostedReviewReport {
+  id: string;
+  title: string;
+  reviewer: string;
+  createdAt: string;
+  score?: number;
+  source?: string;
+  path: string;
+  content: string;
+  contentBytes: number;
+  payloadHash: string;
+  projectId: string;
+  prototypeId: string;
+}
+
+export interface AxhubHostedReviewReportList extends AxhubHostedReviewConfig {
+  reports: AxhubHostedReviewReport[];
+}
+
+export interface AxhubHostedReviewClearResult {
+  pid: number;
+  path: string;
+  deleted: number;
+  reviewReportCount: number;
 }
 
 export interface AxhubPublishFile {
@@ -301,9 +347,14 @@ function parseApiPayload(payload: any, fallback: string) {
   if (payload?.code === 0) {
     return payload.data;
   }
+  const numericStatus = typeof payload?.code === 'number' ? payload.code : undefined;
   throw new AxhubApiError(extractAxhubErrorMessage(payload, fallback), {
-    status: typeof payload?.code === 'number' ? payload.code : undefined,
-    code: typeof payload?.code === 'string' ? payload.code : undefined,
+    status: numericStatus,
+    code: numericStatus === 401
+      ? 'AXHUB_AUTH_EXPIRED'
+      : typeof payload?.code === 'string'
+        ? payload.code
+        : undefined,
     details: payload,
   });
 }
@@ -451,7 +502,7 @@ export function createAxhubAuthClient(options: {
     if (!response.ok) {
       throw new AxhubApiError(extractAxhubErrorMessage(payload, `Axhub 请求失败（${response.status}）`), {
         status: response.status,
-        code: payload?.code,
+        code: response.status === 401 ? 'AXHUB_AUTH_EXPIRED' : payload?.code,
         details: payload,
       });
     }
@@ -618,7 +669,7 @@ export function createAxhubAuthClient(options: {
         body: JSON.stringify({ name }),
       });
     },
-    publishHtmlProject(pid: number, files: AxhubPublishFile[]) {
+    publishHtmlProject(pid: number, files: AxhubPublishFile[], reviewContext?: AxhubReviewContext) {
       return request<AxhubPublishResponse>(`/html-projects/${encodeURIComponent(String(pid))}/publish`, {
         method: 'POST',
         headers: {
@@ -630,7 +681,26 @@ export function createAxhubAuthClient(options: {
             contentType: file.contentType,
             bodyBase64: file.body.toString('base64'),
           })),
+          ...(reviewContext ? { reviewContext } : {}),
         }),
+      });
+    },
+    getHtmlProjectReviewConfig(pid: number) {
+      return request<AxhubHostedReviewConfig>(`/html-projects/${encodeURIComponent(String(pid))}/review-submit-config`);
+    },
+    updateHtmlProjectReviewConfig(pid: number, enabled: boolean) {
+      return request<AxhubHostedReviewConfig>(`/html-projects/${encodeURIComponent(String(pid))}/review-submit-config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    },
+    listHtmlProjectReviewReports(pid: number) {
+      return request<AxhubHostedReviewReportList>(`/html-projects/${encodeURIComponent(String(pid))}/review-reports`);
+    },
+    clearHtmlProjectReviewReports(pid: number) {
+      return request<AxhubHostedReviewClearResult>(`/html-projects/${encodeURIComponent(String(pid))}/review-reports`, {
+        method: 'DELETE',
       });
     },
   };

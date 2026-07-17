@@ -121,8 +121,7 @@ describe('make-server project docs APIs', () => {
       const docs = await fetch(`${server.origin}/api/docs`).then((response) => response.json());
       expect(docs).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          name: 'guide.md',
-          path: 'nested/guide.md',
+          name: 'nested/guide.md',
           displayName: 'Guide Title',
           description: 'Useful notes.',
           absoluteFilePath: path.join(docsDir, 'nested', 'guide.md'),
@@ -407,8 +406,15 @@ describe('make-server project docs APIs', () => {
   it('injects the shared HTML annotation bootstrap into browser previews for HTML docs', async () => {
     const projectRoot = createTempRoot();
     const docsDir = path.join(projectRoot, 'src', 'resources');
-    fs.mkdirSync(docsDir, { recursive: true });
-    fs.writeFileSync(path.join(docsDir, 'visual-prd.html'), '<!doctype html><html><body><main>Visual PRD</main></body></html>', 'utf8');
+    const reviewDir = path.join(docsDir, 'reviews');
+    const diagramPath = path.join(reviewDir, 'visual-prd.assets', 'diagram.drawio.svg');
+    fs.mkdirSync(path.dirname(diagramPath), { recursive: true });
+    fs.writeFileSync(
+      path.join(reviewDir, 'visual-prd.html'),
+      '<!doctype html><html><body><main>Visual PRD</main><img src="visual-prd.assets/diagram.drawio.svg" /></body></html>',
+      'utf8',
+    );
+    fs.writeFileSync(diagramPath, '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8');
     writeProjectMetadata(projectRoot, {
       project: { id: 'docs-html-preview-client', name: 'Docs HTML Preview Client' },
       resources: {
@@ -426,17 +432,23 @@ describe('make-server project docs APIs', () => {
       await registerProject(server.origin, projectRoot, 'docs-html-preview-client', 'Docs HTML Preview Client');
       await setActiveProject(server.origin, 'docs-html-preview-client');
 
-      const response = await fetch(`${server.origin}/api/docs/visual-prd.html`, {
-        headers: {
-          accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      const response = await fetch(
+        `${server.origin}/api/docs/${encodeURIComponent('reviews/visual-prd.html')}?projectId=docs-html-preview-client`,
+        {
+          headers: {
+            accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
         },
-      });
+      );
       const html = await response.text();
 
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('text/html');
       expect(html).toContain('Visual PRD');
       expect(html).toContain('<script type="module" src="/assets/html-template-bootstrap.js"></script>');
+      expect(html).toContain(
+        `/api/docs/${encodeURIComponent('reviews/visual-prd.assets/diagram.drawio.svg')}?projectId=docs-html-preview-client`,
+      );
     } finally {
       await server.close();
     }

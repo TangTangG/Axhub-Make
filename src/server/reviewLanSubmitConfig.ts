@@ -37,26 +37,42 @@ export function getPrototypeReviewConfigPath(prototypeDir: string): string {
   return path.join(getPrototypeReviewsDir(prototypeDir), REVIEW_CONFIG_FILE_NAME);
 }
 
-export function readPrototypeReviewLanSubmitEnabled(prototypeDir: string): boolean {
+function readPrototypeReviewConfig(prototypeDir: string): Record<string, unknown> {
   const configPath = getPrototypeReviewConfigPath(prototypeDir);
   if (!fs.existsSync(configPath)) {
-    return false;
+    return { schemaVersion: REVIEW_CONFIG_SCHEMA_VERSION };
   }
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    return config?.schemaVersion === REVIEW_CONFIG_SCHEMA_VERSION && config?.lanSubmitEnabled === true;
+    if (!config || typeof config !== 'object' || config.schemaVersion !== REVIEW_CONFIG_SCHEMA_VERSION) {
+      return { schemaVersion: REVIEW_CONFIG_SCHEMA_VERSION };
+    }
+    return config as Record<string, unknown>;
   } catch {
-    return false;
+    return { schemaVersion: REVIEW_CONFIG_SCHEMA_VERSION };
   }
 }
 
-export function writePrototypeReviewLanSubmitConfig(prototypeDir: string, enabled: boolean): void {
+function writePrototypeReviewConfig(prototypeDir: string, config: Record<string, unknown>): void {
   const configPath = getPrototypeReviewConfigPath(prototypeDir);
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, `${JSON.stringify({
+  const tempPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, `${JSON.stringify({
+    ...config,
     schemaVersion: REVIEW_CONFIG_SCHEMA_VERSION,
-    lanSubmitEnabled: enabled,
   }, null, 2)}\n`, 'utf8');
+  fs.renameSync(tempPath, configPath);
+}
+
+export function readPrototypeReviewLanSubmitEnabled(prototypeDir: string): boolean {
+  return readPrototypeReviewConfig(prototypeDir).lanSubmitEnabled === true;
+}
+
+export function writePrototypeReviewLanSubmitConfig(prototypeDir: string, enabled: boolean): void {
+  writePrototypeReviewConfig(prototypeDir, {
+    ...readPrototypeReviewConfig(prototypeDir),
+    lanSubmitEnabled: enabled,
+  });
 }
 
 function isLocalOnlyHostname(value: unknown): boolean {

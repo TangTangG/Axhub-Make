@@ -878,6 +878,19 @@ type TextChangeConflict = {
   afterValues: string[];
 };
 
+const TEMPORARY_STYLE_HACK_COMMENT = `/*
+ * AXHUB TEMPORARY STYLE HACK
+ * 这是预览编辑产生的临时覆盖样式，不是最终实现。
+ * 后续修改本原型时，应将规则合并到正式组件或样式文件，
+ * 验证效果后删除已合并规则；文件为空后删除 hack.css。
+ */`;
+
+export function withTemporaryStyleHackComment(cssText: string): string {
+  const content = String(cssText ?? '').trim();
+  if (content.startsWith(TEMPORARY_STYLE_HACK_COMMENT)) return `${content}\n`;
+  return `${TEMPORARY_STYLE_HACK_COMMENT}\n\n${content}\n`;
+}
+
 type AnnotationDirectoryNode = {
   type?: unknown;
   id?: unknown;
@@ -1990,7 +2003,7 @@ export const createWebEditorV2Controller = (
 
       const result = await postJson<{ success?: boolean; error?: string }>('/api/hack-css/save', {
         path: targetPath,
-        content: styleChanges.cssText,
+        content: withTemporaryStyleHackComment(styleChanges.cssText),
       });
       if (!result.ok || result.data?.success !== true) {
         throw new Error(readResponseErrorMessage(result.data, '保存强制样式失败'));

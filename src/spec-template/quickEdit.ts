@@ -1,5 +1,7 @@
 export type MarkdownQuickEditResourceKind = 'doc' | 'template' | 'unknown';
 
+const PROTOTYPE_SPEC_CONTENT_PATH_RE = /^\/api\/projects\/[^/]+\/prototypes\/[^/]+\/spec\/content$/u;
+
 export interface MarkdownQuickEditMeta {
     resourceKind: MarkdownQuickEditResourceKind;
     entryType: 'components' | 'prototypes' | 'themes' | 'unknown';
@@ -46,6 +48,28 @@ function getPathname(docUrl?: string): string {
     } catch {
         return '';
     }
+}
+
+export function buildPrototypeSpecMarkdownSaveRequest(
+    docUrl: string,
+    nextContent: string,
+    baseUrl = 'http://localhost',
+): { url: string; init: RequestInit } | null {
+    let parsedUrl: URL;
+    try {
+        parsedUrl = new URL(docUrl, baseUrl);
+    } catch {
+        return null;
+    }
+    if (!PROTOTYPE_SPEC_CONTENT_PATH_RE.test(parsedUrl.pathname)) return null;
+    return {
+        url: `${parsedUrl.pathname}${parsedUrl.search}`,
+        init: {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: nextContent }),
+        },
+    };
 }
 
 export function formatLocatorPath(locator: { selectors?: string[]; path?: number[] } | null | undefined): string {

@@ -23,20 +23,14 @@ import type { DragReorderController } from '../../drag/drag-reorder-controller';
 import type { EventController } from '../event-controller';
 import type { PositionTracker } from '../position-tracker';
 import type { SelectionEngine } from '../../selection/selection-engine';
-import type {
-  TextCommentManager,
-  TextComment,
-} from '../../selection/text-comment-manager';
+import type { TextCommentManager, TextComment } from '../../selection/text-comment-manager';
 import type { TransactionManager } from '../transaction-manager';
 import type { DesignTokensService } from '../design-tokens';
 import type { PerfMonitor } from '../perf-monitor';
 import { locatorKey } from '../locator';
 import type { CommentShortcutSettings } from './comment-shortcut-settings';
 import { DEFAULT_COMMENT_SHORTCUT_SETTINGS } from './comment-shortcut-settings';
-import type {
-  WebEditorInteractionProfile,
-  WebEditorUiSettings,
-} from '../../core/editor/ui-settings';
+import type { WebEditorInteractionProfile, WebEditorUiSettings } from '../../core/editor/ui-settings';
 import { DEFAULT_WEB_EDITOR_UI_SETTINGS } from './ui-settings';
 import type { CommentaryTweakValues } from '../../tweak/protocol';
 import type { AnnotationBridgeSelection } from '../../utils/annotation-comment-bridge';
@@ -46,6 +40,10 @@ export interface WebEditorV2UiOptions {
   propertyPanel?: boolean;
   toolbarMode?: CommentaryToolbarMode;
   enableImageAttachments?: boolean;
+  onPrepareImageAttachments?: (
+    element: Element,
+    images: readonly PromptImageAttachment[],
+  ) => readonly PromptImageAttachment[] | Promise<readonly PromptImageAttachment[]>;
   initialSelectionModeActive?: boolean;
   initialDarkMode?: boolean;
   showCopyPromptAction?: boolean;
@@ -63,9 +61,7 @@ export interface WebEditorV2UiOptions {
   getAssistantPanelOpen?: () => boolean;
   onHostToolbarAction?: (
     action: CommentaryHostToolbarAction,
-  ) =>
-    | CommentaryHostToolbarActionResult
-    | Promise<CommentaryHostToolbarActionResult>;
+  ) => CommentaryHostToolbarActionResult | Promise<CommentaryHostToolbarActionResult>;
   onEnableAnnotation?: () => boolean | Promise<boolean>;
   getAnnotationEnabled?: () => boolean;
   getAnnotationEnableAvailable?: () => boolean;
@@ -75,12 +71,8 @@ export interface WebEditorV2UiOptions {
   commentarySkillOptions?: CommentarySkillOption[];
   commentarySelectedSkillIds?: string[];
   commentarySkillSettingsConfigured?: boolean;
-  onCommentarySkillSelectionLoad?: () =>
-    | readonly string[]
-    | Promise<readonly string[]>;
-  onCommentarySkillSelectionChange?: (
-    skillIds: string[],
-  ) => void | Promise<void>;
+  onCommentarySkillSelectionLoad?: () => readonly string[] | Promise<readonly string[]>;
+  onCommentarySkillSelectionChange?: (skillIds: string[]) => void | Promise<void>;
   onRequestFullExit?: () => void | Promise<void>;
 }
 export type CommentaryUiOptions = WebEditorV2UiOptions;
@@ -141,6 +133,8 @@ export interface ResolvedWebEditorOptions {
     Pick<
       CommentaryHostOptions,
       | 'buildCopyPrompt'
+      | 'getElementTools'
+      | 'onElementToolAction'
       | 'shouldAllowPageEvent'
       | 'persistenceAdapter'
       | 'canEditAnnotationMarkdown'
@@ -157,11 +151,7 @@ export interface ResolvedWebEditorOptions {
 }
 
 export type EditChangeKind = 'text' | 'tweak' | 'style' | 'class';
-export type ElementAgentTaskStatus =
-  | 'pending'
-  | 'created'
-  | 'completed'
-  | 'error';
+export type ElementAgentTaskStatus = 'pending' | 'created' | 'completed' | 'error';
 export type ElementAgentTaskRecovery = 'live' | 'snapshot' | 'storage';
 export type ElementAgentTaskOrigin = 'agent-run' | 'external-editing';
 
@@ -318,10 +308,7 @@ export interface EditorRuntimeState {
   agentConversationByScopeKey: Map<string, PageAgentConversationState>;
   agentTaskByElementKey: Map<WebEditorElementKey, ElementAgentTaskState>;
   agentTaskByRequestId: Map<string, ElementAgentTaskState>;
-  externalEditingTaskByElementKey: Map<
-    WebEditorElementKey,
-    ElementAgentTaskState
-  >;
+  externalEditingTaskByElementKey: Map<WebEditorElementKey, ElementAgentTaskState>;
   textCommentManager: TextCommentManager | null;
   textCommentTargetElement: HTMLElement | null;
   activeTextComment: TextComment | null;
@@ -339,10 +326,7 @@ export const DEFAULT_AGENT_PROBE_TIMEOUT_MS = 5_000;
 
 function generateExternalClientId(): string {
   const prefix = 'web-editor-v2';
-  if (
-    typeof crypto !== 'undefined' &&
-    typeof crypto.randomUUID === 'function'
-  ) {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;
   }
 
@@ -350,15 +334,14 @@ function generateExternalClientId(): string {
   return `${prefix}-${Date.now().toString(36)}-${randomPart}`;
 }
 
-export function resolveWebEditorOptions(
-  options: WebEditorV2InitOptions = {},
-): ResolvedWebEditorOptions {
+export function resolveWebEditorOptions(options: WebEditorV2InitOptions = {}): ResolvedWebEditorOptions {
   return {
     ui: {
       breadcrumbs: true,
       propertyPanel: true,
       toolbarMode: 'inline',
       enableImageAttachments: true,
+      onPrepareImageAttachments: async (_element, images) => images,
       initialSelectionModeActive: true,
       initialDarkMode: false,
       showCopyPromptAction: true,
@@ -388,15 +371,14 @@ export function resolveWebEditorOptions(
     host: {
       getResourceContext: options.host?.getResourceContext ?? (() => null),
       buildCopyPrompt: options.host?.buildCopyPrompt ?? undefined,
+      getElementTools: options.host?.getElementTools ?? undefined,
+      onElementToolAction: options.host?.onElementToolAction ?? undefined,
       shouldAllowPageEvent: options.host?.shouldAllowPageEvent ?? undefined,
       persistenceAdapter: options.host?.persistenceAdapter ?? undefined,
-      canEditAnnotationMarkdown:
-        options.host?.canEditAnnotationMarkdown ?? undefined,
-      getAnnotationDocumentEditUrl:
-        options.host?.getAnnotationDocumentEditUrl ?? undefined,
+      canEditAnnotationMarkdown: options.host?.canEditAnnotationMarkdown ?? undefined,
+      getAnnotationDocumentEditUrl: options.host?.getAnnotationDocumentEditUrl ?? undefined,
       getAnnotationMarkdown: options.host?.getAnnotationMarkdown ?? undefined,
-      onAnnotationMarkdownChange:
-        options.host?.onAnnotationMarkdownChange ?? undefined,
+      onAnnotationMarkdownChange: options.host?.onAnnotationMarkdownChange ?? undefined,
       onDeleteAnnotationNode: options.host?.onDeleteAnnotationNode ?? undefined,
     },
     agentBridge: {
@@ -435,8 +417,7 @@ export function resolveWebEditorOptions(
       ...(options.integrationWs ?? {}),
     },
     interactionProfile: options.interactionProfile ?? 'design',
-    mobileMode:
-      typeof options.mobileMode === 'boolean' ? options.mobileMode : undefined,
+    mobileMode: typeof options.mobileMode === 'boolean' ? options.mobileMode : undefined,
   };
 }
 
@@ -490,9 +471,7 @@ export function createEditorRuntimeState(): EditorRuntimeState {
   };
 }
 
-export function clearAnnotationBridgeSelection(
-  state: EditorRuntimeState,
-): void {
+export function clearAnnotationBridgeSelection(state: EditorRuntimeState): void {
   const selection = state.annotationBridgeSelection;
   if (!selection) return;
   selection.bridge.closeTarget(selection.target);
@@ -559,10 +538,7 @@ export function clearEditorRuntimeRefs(state: EditorRuntimeState): void {
   state.processedEditTimestampsByKey.clear();
 }
 
-export function getProcessedEditTimestamp(
-  state: EditorRuntimeState,
-  elementKey: WebEditorElementKey,
-): number | null {
+export function getProcessedEditTimestamp(state: EditorRuntimeState, elementKey: WebEditorElementKey): number | null {
   const value = state.processedEditTimestampsByKey.get(elementKey);
   return Number.isFinite(Number(value)) ? Number(value) : null;
 }
@@ -583,22 +559,12 @@ export function filterUnprocessedTransactions(
   transactions: readonly Transaction[],
 ): Transaction[] {
   return transactions.filter((tx) => {
-    const resolvedKey = String(
-      tx.elementKey ?? locatorKey(tx.targetLocator),
-    ).trim();
+    const resolvedKey = String(tx.elementKey ?? locatorKey(tx.targetLocator)).trim();
     if (!resolvedKey) return true;
-    return !shouldIgnoreProcessedEdit(
-      state,
-      resolvedKey,
-      Number(tx.timestamp ?? 0),
-    );
+    return !shouldIgnoreProcessedEdit(state, resolvedKey, Number(tx.timestamp ?? 0));
   });
 }
 
-export type EditorApiFactory = (
-  options?: CommentaryInitOptions,
-) => CommentaryApi;
+export type EditorApiFactory = (options?: CommentaryInitOptions) => CommentaryApi;
 export type EditorStateGetter = () => CommentaryState;
-export type EditorRevertHandler = (
-  elementKey: WebEditorElementKey,
-) => Promise<WebEditorRevertElementResponse>;
+export type EditorRevertHandler = (elementKey: WebEditorElementKey) => Promise<WebEditorRevertElementResponse>;

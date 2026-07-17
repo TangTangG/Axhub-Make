@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Copy, Download, Loader2, RefreshCw, Sparkles, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
 import {
     apiService,
     type GitWorkspaceChangeGroup,
@@ -17,6 +16,16 @@ import {
     type GitWorkspaceStatusResponse,
 } from '../services/api';
 import { generateGitCommitMessage } from '../domains/ai-generation/gitCommitMessageGeneration';
+import {
+    VersionChangeCard,
+    VersionCommitRow,
+    VersionInfoRow,
+    VersionInfoValue,
+    VersionSection,
+    VersionSyncTabs,
+    getVersionChangeTitle,
+    type VersionCardCommit,
+} from './VersionCards';
 
 export type VersionCollaborationTab = 'local' | 'online' | 'skills' | 'all';
 
@@ -42,7 +51,7 @@ interface FlattenedChangeItem extends GitWorkspaceChangeItem {
     groupLabel: string;
 }
 
-const MAX_VISIBLE_CHANGE_ITEM_ROWS = 3;
+const MAX_VISIBLE_CHANGE_ITEMS = 5;
 const GIT_REPO_BEGINNER_GUIDE_SKILL_URL = 'https://github.com/lintendo/Axhub-Skills/blob/main/skills/git-repo-beginner-guide/SKILL.md';
 const INSTALL_GIT_REPO_SKILL_PROMPT = [
     '请帮我把下面这个 git-repo-beginner-guide 技能安装到当前项目内：',
@@ -63,40 +72,6 @@ function getVisibleChangeItems<T>(items: T[], visibleItemCount: number): { items
         items: items.slice(0, normalizedVisibleItemCount),
         remainingCount: items.length - normalizedVisibleItemCount,
     };
-}
-
-function countWrappedRows(nodes: HTMLElement[]): number {
-    const rowTops = Array.from(new Set(nodes.map((node) => Math.round(node.offsetTop))));
-    return rowTops.length;
-}
-
-function countItemsInsideVisibleRows(items: HTMLElement[], maxRows: number): number {
-    const rowTops = Array.from(new Set(items.map((item) => Math.round(item.offsetTop)))).sort((a, b) => a - b);
-    if (rowTops.length <= maxRows) {
-        return items.length;
-    }
-    const maxVisibleTop = rowTops[maxRows - 1];
-    return items.filter((item) => Math.round(item.offsetTop) <= maxVisibleTop).length;
-}
-
-function measureCandidateVisibleRows(
-    itemNodes: HTMLElement[],
-    summaryNode: HTMLElement,
-    visibleItemCount: number,
-    totalItemCount: number,
-): number {
-    itemNodes.forEach((node, index) => {
-        node.style.display = index < visibleItemCount ? '' : 'none';
-    });
-    const shouldShowSummary = visibleItemCount < totalItemCount;
-    summaryNode.style.display = shouldShowSummary ? '' : 'none';
-    summaryNode.textContent = `+${Math.max(0, totalItemCount - visibleItemCount)} 变更`;
-
-    const visibleNodes = itemNodes.slice(0, visibleItemCount);
-    if (shouldShowSummary) {
-        visibleNodes.push(summaryNode);
-    }
-    return countWrappedRows(visibleNodes);
 }
 
 function flattenChangeGroups(groups: GitWorkspaceChangeGroup[]): FlattenedChangeItem[] {
@@ -214,64 +189,9 @@ async function copyText(text: string, successMessage: string) {
     }
 }
 
-function SectionCard({
-    title,
-    actions,
-    children,
-}: {
-    title: string;
-    actions?: ReactNode;
-    children: ReactNode;
-}) {
-    return (
-        <section className="rounded-md border border-border bg-background p-3.5">
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <h3 className="text-[13px] font-semibold leading-5 text-foreground">{title}</h3>
-                {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
-            </div>
-            {children}
-        </section>
-    );
-}
-
-function InfoRow({
-    label,
-    children,
-}: {
-    label: string;
-    children: ReactNode;
-}) {
-    return (
-        <div className="grid min-h-8 grid-cols-[88px_minmax(0,1fr)] items-center gap-2 text-xs">
-            <span className="whitespace-nowrap text-muted-foreground">{label}</span>
-            <div className="min-w-0 text-foreground">{children}</div>
-        </div>
-    );
-}
-
-function InfoValue({
-    children,
-    className,
-    contentClassName,
-    title,
-}: {
-    children: ReactNode;
-    className?: string;
-    contentClassName?: string;
-    title?: string;
-}) {
-    return (
-        <div
-            className={cn(
-                'flex h-8 min-w-0 items-center rounded-md border border-border/70 bg-muted/30 px-2.5 text-xs font-medium text-foreground',
-                className,
-            )}
-            title={title}
-        >
-            <span className={cn('min-w-0 truncate', contentClassName)}>{children}</span>
-        </div>
-    );
-}
+const SectionCard = VersionSection;
+const InfoRow = VersionInfoRow;
+const InfoValue = VersionInfoValue;
 
 function StatusValue({ status }: { status: GitWorkspaceStatusResponse | null }) {
     return (
@@ -290,72 +210,18 @@ function RemoteStatusValue({ status }: { status: GitWorkspaceStatusResponse | nu
 }
 
 function ChangeItemList({ items }: { items: FlattenedChangeItem[] }) {
-    const listContainerRef = useRef<HTMLDivElement | null>(null);
-    const measureListRef = useRef<HTMLDivElement | null>(null);
-    const visibleItemCountRef = useRef(items.length);
-    const [visibleItemCount, setVisibleItemCount] = useState(items.length);
-    const visibleChangeItems = getVisibleChangeItems(items, visibleItemCount);
-
-    useLayoutEffect(() => {
-        const listContainer = listContainerRef.current;
-        const measureList = measureListRef.current;
-        if (!listContainer || !measureList) return;
-
-        const updateVisibleItemCount = (nextVisibleItemCount: number) => {
-            if (visibleItemCountRef.current !== nextVisibleItemCount) {
-                visibleItemCountRef.current = nextVisibleItemCount;
-                setVisibleItemCount(nextVisibleItemCount);
-            }
-        };
-
-        const measure = () => {
-            if (listContainer.clientWidth <= 0) {
-                return;
-            }
-            const itemNodes = Array.from(measureList.querySelectorAll<HTMLElement>('[data-change-item-measure-chip]'));
-            const summaryNode = measureList.querySelector<HTMLElement>('[data-change-item-measure-summary]');
-            if (itemNodes.length === 0 || !summaryNode) {
-                updateVisibleItemCount(0);
-                return;
-            }
-
-            const totalItemCount = items.length;
-            if (measureCandidateVisibleRows(itemNodes, summaryNode, totalItemCount, totalItemCount) <= MAX_VISIBLE_CHANGE_ITEM_ROWS) {
-                updateVisibleItemCount(totalItemCount);
-                return;
-            }
-
-            let nextVisibleItemCount = Math.min(
-                countItemsInsideVisibleRows(itemNodes, MAX_VISIBLE_CHANGE_ITEM_ROWS),
-                totalItemCount - 1,
-            );
-            while (nextVisibleItemCount > 0) {
-                if (measureCandidateVisibleRows(itemNodes, summaryNode, nextVisibleItemCount, totalItemCount) <= MAX_VISIBLE_CHANGE_ITEM_ROWS) {
-                    break;
-                }
-                nextVisibleItemCount -= 1;
-            }
-            updateVisibleItemCount(nextVisibleItemCount);
-        };
-
-        measure();
-        const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-        observer?.observe(listContainer);
-        window.requestAnimationFrame(measure);
-        return () => observer?.disconnect();
-    }, [items]);
+    const visibleChangeItems = getVisibleChangeItems(items, MAX_VISIBLE_CHANGE_ITEMS);
 
     if (!items.length) {
         return <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-6 text-center text-xs text-muted-foreground">暂无变更</div>;
     }
 
-    const renderChip = (item: FlattenedChangeItem, measure = false) => {
+    const renderChip = (item: FlattenedChangeItem) => {
         const shouldShowGroupLabel = item.groupKey !== 'other';
         return (
             <span
-                key={measure ? `${item.id}:measure` : item.id}
-                data-change-item-chip={measure ? undefined : true}
-                data-change-item-measure-chip={measure ? true : undefined}
+                key={item.id}
+                data-change-item-chip
                 className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-muted/60 px-2 py-1 text-xs text-foreground"
                 title={shouldShowGroupLabel ? `${item.groupLabel}：${item.name}` : item.name}
             >
@@ -368,33 +234,17 @@ function ChangeItemList({ items }: { items: FlattenedChangeItem[] }) {
     };
 
     return (
-        <div ref={listContainerRef} className="relative">
-            <div className="flex flex-wrap items-center gap-1.5 overflow-hidden">
-                {visibleChangeItems.items.map((item) => renderChip(item))}
-                {visibleChangeItems.remainingCount > 0 ? (
-                    <span
-                        data-change-item-chip
-                        className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground"
-                        title={`还有 ${visibleChangeItems.remainingCount} 项变更，查看更多`}
-                    >
-                        +{visibleChangeItems.remainingCount} 变更
-                    </span>
-                ) : null}
-            </div>
-            <div
-                ref={measureListRef}
-                data-change-item-measure-list
-                aria-hidden="true"
-                className="pointer-events-none absolute left-0 top-0 flex h-0 w-full flex-wrap items-center gap-1.5 overflow-hidden opacity-0"
-            >
-                {items.map((item) => renderChip(item, true))}
+        <div className="flex flex-wrap items-center gap-1.5 overflow-hidden">
+            {visibleChangeItems.items.map((item) => renderChip(item))}
+            {visibleChangeItems.remainingCount > 0 ? (
                 <span
-                    data-change-item-measure-summary
+                    data-change-item-chip
                     className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground"
+                    title={`还有 ${visibleChangeItems.remainingCount} 项变更，查看更多`}
                 >
-                    +{items.length} 变更
+                    +{visibleChangeItems.remainingCount} 变更
                 </span>
-            </div>
+            ) : null}
         </div>
     );
 }
@@ -421,6 +271,16 @@ export function VersionCollaborationPanel({ activeTab = 'all' }: { activeTab?: V
         () => flattenChangeGroups(status?.remoteComparison?.outgoing.groups || []),
         [status],
     );
+    const incomingAllCommits = useMemo<VersionCardCommit[]>(
+        () => status?.remoteComparison?.incomingCommits || [],
+        [status],
+    );
+    const incomingRecentCommits = useMemo(() => incomingAllCommits.slice(0, 2), [incomingAllCommits]);
+    const outgoingAllCommits = useMemo<VersionCardCommit[]>(
+        () => status?.remoteComparison?.outgoingCommits || [],
+        [status],
+    );
+    const outgoingRecentCommits = useMemo(() => outgoingAllCommits.slice(0, 2), [outgoingAllCommits]);
     const localBranchOptions = useMemo(
         () => normalizeLocalBranches(status?.branchOverview?.localBranches, status?.currentBranch),
         [status],
@@ -443,6 +303,11 @@ export function VersionCollaborationPanel({ activeTab = 'all' }: { activeTab?: V
     const showLocalPanel = activeTab === 'local' || activeTab === 'all';
     const showOnlinePanel = activeTab === 'online' || activeTab === 'all';
     const showSkillPanel = activeTab === 'skills' || activeTab === 'all';
+    const incomingTotal = status?.remoteComparison?.incoming.totalFiles || 0;
+    const outgoingTotal = status?.remoteComparison?.outgoing.totalFiles || 0;
+    const recentCommits = status?.recentCommits || [];
+    const behindCount = status?.remoteComparison?.behindCount || incomingAllCommits.length;
+    const aheadCount = status?.remoteComparison?.aheadCount || outgoingAllCommits.length;
 
     const loadStatus = async (options: { silent?: boolean } = {}) => {
         setBusyAction('load');
@@ -829,18 +694,38 @@ export function VersionCollaborationPanel({ activeTab = 'all' }: { activeTab?: V
                                         {renderBranchSelect()}
                                     </InfoRow>
                                 ) : null}
-                                <InfoRow label="版本">
-                                    <InfoValue contentClassName="font-mono">{getWorkspaceVersionText(status)}</InfoValue>
-                                </InfoRow>
                                 {status?.isHistoricalVersion ? (
-                                    <InfoRow label="版本提交信息">
-                                        <InfoValue title={status?.currentCommit?.message || undefined}>
-                                            {status?.currentCommit?.message || '无提交信息'}
-                                        </InfoValue>
-                                    </InfoRow>
+                                    <>
+                                        <InfoRow label="版本">
+                                            <InfoValue contentClassName="font-mono">{getWorkspaceVersionText(status)}</InfoValue>
+                                        </InfoRow>
+                                        <InfoRow label="版本提交信息">
+                                            <InfoValue title={status?.currentCommit?.message || undefined}>
+                                                {status?.currentCommit?.message || '无提交信息'}
+                                            </InfoValue>
+                                        </InfoRow>
+                                    </>
                                 ) : null}
                             </div>
                         </SectionCard>
+
+                        {!status?.isHistoricalVersion && recentCommits.length > 0 ? (
+                            <SectionCard title="历史版本" contentClassName="px-3.5 py-0">
+                                <div className="divide-y divide-border/50">
+                                    {recentCommits.map((commit, index) => (
+                                        <VersionCommitRow
+                                            key={commit.hash}
+                                            commit={commit}
+                                            badge={index === 0 && !status?.hasChanges ? (
+                                                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-100">
+                                                    当前版本
+                                                </span>
+                                            ) : null}
+                                        />
+                                    ))}
+                                </div>
+                            </SectionCard>
+                        ) : null}
 
                         {status?.isHistoricalVersion && status?.hasChanges ? (
                             <SectionCard title="更改文件">
@@ -916,47 +801,52 @@ export function VersionCollaborationPanel({ activeTab = 'all' }: { activeTab?: V
                         <>
                             {renderOnlineInfoCard()}
 
-                            {incomingChangeItems.length > 0 ? (
-                                <SectionCard
-                                    title="线上有更新"
-                                    actions={(
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-7 gap-1.5 px-2"
-                                            onClick={handleSyncDown}
-                                            disabled={isBusy || !isRepositoryReady || !hasConfiguredRemote}
-                                        >
-                                            {busyAction === 'sync-down' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                                            同步下来
-                                        </Button>
-                                    )}
-                                >
-                                    <ChangeItemList items={incomingChangeItems} />
-                                </SectionCard>
-                            ) : null}
-
-                            {outgoingChangeItems.length > 0 ? (
-                                <SectionCard
-                                    title="本地待同步"
-                                    actions={(
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-7 gap-1.5 px-2"
-                                            onClick={handlePush}
-                                            disabled={isBusy || !isRepositoryReady || !hasConfiguredRemote}
-                                        >
-                                            {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                                            同步到在线
-                                        </Button>
-                                    )}
-                                >
-                                    <ChangeItemList items={outgoingChangeItems} />
-                                </SectionCard>
-                            ) : null}
+                            <VersionSyncTabs
+                                incoming={incomingChangeItems.length > 0 ? (
+                                    <VersionChangeCard
+                                        title={getVersionChangeTitle('incoming', behindCount)}
+                                        description={`从线上 ${status?.remoteComparison?.branch || onlineBranchValue || '当前'} 同步到本地，涉及 ${incomingTotal} 个文件。`}
+                                        recentCommits={incomingRecentCommits}
+                                        actions={(
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 gap-1.5 px-2"
+                                                onClick={handleSyncDown}
+                                                disabled={isBusy || !isRepositoryReady || !hasConfiguredRemote}
+                                            >
+                                                {busyAction === 'sync-down' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                                                同步下来
+                                            </Button>
+                                        )}
+                                    >
+                                        <ChangeItemList items={incomingChangeItems} />
+                                    </VersionChangeCard>
+                                ) : null}
+                                outgoing={outgoingChangeItems.length > 0 ? (
+                                    <VersionChangeCard
+                                        title={getVersionChangeTitle('outgoing', aheadCount)}
+                                        description={`推送到线上 ${status?.remoteComparison?.branch || onlineBranchValue || '当前'}，涉及 ${outgoingTotal} 个文件。`}
+                                        recentCommits={outgoingRecentCommits}
+                                        actions={(
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 gap-1.5 px-2"
+                                                onClick={handlePush}
+                                                disabled={isBusy || !isRepositoryReady || !hasConfiguredRemote}
+                                            >
+                                                {busyAction === 'push' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                                                推送上去
+                                            </Button>
+                                        )}
+                                    >
+                                        <ChangeItemList items={outgoingChangeItems} />
+                                    </VersionChangeCard>
+                                ) : null}
+                            />
                         </>
                     ) : (
                         renderOnlineRemoteSetupCard()

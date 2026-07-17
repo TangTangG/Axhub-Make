@@ -21,7 +21,7 @@ import {
 
 import { startMakeServer } from '../index.ts';
 import { getLocalNetworkHostsFromInterfaces } from '../http.ts';
-import { createDefaultCanvasData, handleCanvasApi } from '../managementApi.canvas.ts';
+import { handleCanvasApi } from '../managementApi.canvas.ts';
 import { handleCodeReviewApi } from '../managementApi.codeReview.ts';
 import { handleEntriesCompatibilityApi } from '../managementApi.entries.ts';
 import { handleLegacyWebSocketApi } from '../managementApi.legacyWebSocket.ts';
@@ -171,8 +171,8 @@ describe('make-server HTTP server', () => {
   it('serves project registry APIs, active project resources, docs content, and entries compatibility', async () => {
     const projectRoot = createProjectRoot();
     const secondProjectRoot = createProjectRoot();
-    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
-    const secondDocPath = path.join(secondProjectRoot, 'src', 'resources', 'spec.md');
+    const docPath = path.join(projectRoot, 'docs', 'spec.md');
+    const secondDocPath = path.join(secondProjectRoot, 'docs', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.mkdirSync(path.dirname(secondDocPath), { recursive: true });
     fs.writeFileSync(docPath, '# First Spec\n', 'utf8');
@@ -661,7 +661,7 @@ describe('make-server HTTP server', () => {
     }
   });
 
-  it('serves context with an unavailable active project when metadata is invalid', async () => {
+  it('ignores removed prototype spec metadata fields without legacy validation', async () => {
     const projectRoot = createProjectRoot();
     fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
     fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
@@ -715,19 +715,13 @@ describe('make-server HTTP server', () => {
       expect(context.status).toBe(200);
       expect(body.activeProject).toMatchObject({
         id: 'invalid-metadata',
-        unavailable: true,
-        error: {
-          code: 'PROJECT_METADATA_INVALID',
-          metadataPath: getProjectMetadataPath(projectRoot),
-        },
       });
+      expect(body.activeProject).not.toHaveProperty('unavailable');
 
       const resources = await fetch(`${server.origin}/api/projects/invalid-metadata/resources`);
-      expect(resources.status).toBe(400);
-      await expect(resources.json()).resolves.toMatchObject({
-        code: 'PROJECT_METADATA_INVALID',
-        projectId: 'invalid-metadata',
-      });
+      expect(resources.status).toBe(200);
+      const resourceBody = await resources.json();
+      expect(resourceBody.resources.prototypes[0]).not.toHaveProperty('spec');
     } finally {
       await server.close();
     }
@@ -775,7 +769,7 @@ describe('make-server HTTP server', () => {
   it('serves legacy docs preview routes from make-server before runtime proxy fallback', async () => {
     const projectRoot = createProjectRoot();
     const adminRoot = path.join(projectRoot, 'admin-dist');
-    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
+    const docPath = path.join(projectRoot, 'docs', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.mkdirSync(adminRoot, { recursive: true });
     fs.writeFileSync(docPath, '# Project Spec\n\n## Intro\n', 'utf8');
@@ -1067,15 +1061,15 @@ describe('make-server HTTP server', () => {
         references: [],
       });
 
-      const canvasCreate = await fetch(`${first.origin}/api/canvas/resources/main-canvas.excalidraw`, {
+      const canvasCreate = await fetch(`${first.origin}/api/canvas/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: createDefaultCanvasData() }),
+        body: JSON.stringify({ displayName: 'Main Canvas' }),
       }).then((response) => response.json());
       expect(canvasCreate).toMatchObject({
-        displayName: 'main-canvas',
+        displayName: 'Main Canvas',
       });
-      expect(canvasCreate.name).toBe('main-canvas.excalidraw');
+      expect(canvasCreate.name).toMatch(/main-canvas-\d+\.excalidraw|main-canvas\.excalidraw/);
     } finally {
       await first.close();
     }
@@ -2202,7 +2196,7 @@ describe('make-server HTTP server', () => {
 
   it('accepts project metadata document ids when saving docs workspace navigation', async () => {
     const projectRoot = createProjectRoot();
-    const docPath = path.join(projectRoot, 'src', 'resources', 'spec.md');
+    const docPath = path.join(projectRoot, 'docs', 'spec.md');
     fs.mkdirSync(path.dirname(docPath), { recursive: true });
     fs.writeFileSync(docPath, '# Project Spec\n', 'utf8');
     writeJson(getProjectMetadataPath(projectRoot), {
@@ -2261,7 +2255,7 @@ describe('make-server HTTP server', () => {
                   id: 'item:docs:spec',
                   kind: 'item',
                   title: 'Project Spec',
-                  itemKey: 'docs/spec.md',
+                  itemKey: 'docs/spec',
                 },
               ],
             },
@@ -2273,24 +2267,20 @@ describe('make-server HTTP server', () => {
       expect(response.status).toBe(200);
       expect(update).toMatchObject({ success: true, tab: 'docs' });
       expect(update.tree).toEqual([
-        expect.objectContaining({
+        {
+          id: 'folder:docs:product',
           kind: 'folder',
           title: '产品文档',
-          path: '产品文档',
-          folderPath: '产品文档',
           children: [
-            expect.objectContaining({
+            {
+              id: 'item:docs:spec',
               kind: 'item',
-              title: 'spec',
-              itemKey: 'docs/产品文档/spec.md',
-              path: '产品文档/spec.md',
-            }),
+              title: 'Project Spec',
+              itemKey: 'docs/spec',
+            },
           ],
-        }),
+        },
       ]);
-      expect(fs.existsSync(docPath)).toBe(false);
-      expect(fs.readFileSync(path.join(projectRoot, 'src', 'resources', '产品文档', 'spec.md'), 'utf8'))
-        .toBe('# Project Spec\n');
     } finally {
       await server.close();
     }

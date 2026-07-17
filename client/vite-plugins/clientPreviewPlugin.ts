@@ -86,6 +86,14 @@ function getSearchParamFromRequestUrl(requestUrl: string, key: string): string {
   }
 }
 
+export function shouldInjectManagementRuntime(requestUrl: string | undefined): boolean {
+  try {
+    return new URL(requestUrl || '/', 'http://localhost').searchParams.get('agentToolbar') === 'host';
+  } catch {
+    return false;
+  }
+}
+
 function getSearchParamFromRequestReferer(
   req: { headers?: Record<string, string | string[] | undefined> },
   key: string,
@@ -1041,12 +1049,24 @@ async function resolveAdminServerOrigin(
   return null;
 }
 
+function shouldSkipLanPreviewAuth(projectRoot: string): boolean {
+  try {
+    const config = JSON.parse(fs.readFileSync(
+      path.join(projectRoot, '.axhub', 'make', 'axhub.config.json'),
+      'utf8',
+    ));
+    return config?.server?.skipLanPreviewAuth === true;
+  } catch {
+    return false;
+  }
+}
+
 async function handleClientLanAccess(
   req: IncomingMessage,
   res: ServerResponse,
   projectRoot: string,
 ): Promise<boolean> {
-  if (isLocalPreviewRequest(req)) {
+  if (isLocalPreviewRequest(req) || shouldSkipLanPreviewAuth(projectRoot)) {
     return false;
   }
 
@@ -1239,7 +1259,9 @@ export function clientPreviewPlugin(): Plugin {
             mode: 'dev',
           });
           const template = readTemplate(projectRoot, 'dev-template.html');
-          const serverOrigin = await resolveAdminServerOrigin(projectRoot, req);
+          const serverOrigin = shouldInjectManagementRuntime(req.url)
+            ? await resolveAdminServerOrigin(projectRoot, req)
+            : null;
           let html = template
             .replace(/\{\{TITLE\}\}/g, title)
             .replace(

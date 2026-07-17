@@ -136,6 +136,13 @@ describe('useIndexPageSelectionSync source', () => {
     expect(docResolvedSource).toContain('setSelectedDoc(resolvedDeepLink.item);');
   });
 
+  it('does not block direct project-file deep links on sidebar asset loading', () => {
+    const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
+
+    expect(source).toContain('doesResourceDeepLinkRequireSidebarAssets');
+    expect(source).toContain('doesResourceDeepLinkRequireSidebarAssets(initialResourceDeepLink)');
+  });
+
   it('does not keep prototype-canvas resource browsing special sync branches', () => {
     const source = readFileSync(resolve(__dirname, './useIndexPageSelectionSync.tsx'), 'utf8');
 

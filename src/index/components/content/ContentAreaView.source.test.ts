@@ -28,7 +28,7 @@ describe('ContentAreaView review zoom source', () => {
     );
     const themePreviewBranch = getSourceSegment(
       source,
-      'const themePreviewUrl = selectedTheme.clientUrl || selectedTheme.previewUrl || \'\';',
+      "    if (contentMode === 'theme') {",
       "    if (contentMode === 'data') {",
     );
     const desktopBranch = getSourceSegment(
@@ -39,6 +39,7 @@ describe('ContentAreaView review zoom source', () => {
 
     expect(scaledIframeHelper).toContain('allow="clipboard-write"');
     expect(themePreviewBranch).toContain('allow="clipboard-write"');
+    expect(themePreviewBranch).toContain('const themePreviewUrl = primaryIframeUrl;');
     expect(desktopBranch).toContain('allow="clipboard-write"');
   });
 
@@ -403,7 +404,7 @@ describe('ContentAreaView review zoom source', () => {
     const optimizeSegment = getSourceSegment(
       startGuideSegment,
       'const optimizePlaceholderStartPrompt = async (request: CanvasPromptOptimizationRequest) => {',
-      '    const handleCopyLocalAiStartPrompt = async (promptText: string) => {',
+      '    useEffect(() => {',
     );
 
     expect(source).toContain("import { optimizeCanvasPrompt } from '../../domains/ai-generation/canvasPromptOptimization';");
@@ -656,7 +657,7 @@ describe('ContentAreaView review zoom source', () => {
     expect(startGuideSegment).toContain('...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {})');
   });
 
-  it('adds local AI prompt copy actions to prototype image and document start settings', () => {
+  it('does not expose local AI prompt copy actions in start settings', () => {
     const source = readContentAreaViewSource();
     const prototypeSettingsSegment = getSourceSegment(
       source,
@@ -679,8 +680,6 @@ describe('ContentAreaView review zoom source', () => {
       'export default function ContentArea({',
     );
 
-    expect(source).toContain("import { copyToClipboard } from '../../utils/clipboard';");
-    expect(source).toContain("const COPY_START_PROMPT_TOOLTIP = '复制提示词给本地AI使用';");
     expect(source).toContain('stripCanvasUpdateInstruction,');
     expect(source).toContain('const startSystemPrompt = finalGuide === \'update-canvas\'');
     expect(source).toContain('stripCanvasUpdateInstruction(activeStartSystemPrompt);');
@@ -688,27 +687,22 @@ describe('ContentAreaView review zoom source', () => {
     expect(startGuideSegment).toContain('buildPlaceholderStartPrompt');
     expect(startGuideSegment).toContain("appendCanvasGenerationFinalGuide({");
     expect(startGuideSegment).toContain("buildPlaceholderStartPrompt(prompt, 'none')");
-    expect(startGuideSegment).toContain("buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement')");
-    expect(startGuideSegment).toContain('handleCopyLocalAiStartPrompt');
-    expect(startGuideSegment).toContain('await copyToClipboard(prompt);');
-    expect(startGuideSegment).toContain("toast.success('提示词已复制到剪贴板');");
-    expect(startGuideSegment).not.toContain("toast.warning('请先输入需求后再复制提示词');");
-    expect(startGuideSegment).toContain('postSelectorActions={({ getPromptText }) =>');
-    expect(startGuideSegment).toContain('onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}');
-    expect(source).toContain('function StartSettingsCopyPromptButton({ onCopyPrompt }');
-    expect(source).toContain('const [tooltipOpen, setTooltipOpen] = useState(false);');
-    expect(source).toContain('<Tooltip open={tooltipOpen}>');
-    expect(source).toContain('aria-label={COPY_START_PROMPT_TOOLTIP}');
-    expect(source).toContain('onPointerEnter={(event) => {');
-    expect(source).toContain("if (event.pointerType === 'mouse') setTooltipOpen(true);");
-    expect(source).toContain('onPointerLeave={() => setTooltipOpen(false)}');
-    expect(source).toContain('setTooltipOpen(false);');
-    expect(source).toContain('<Copy className="size-3.5"');
-    expect(source).toContain('TooltipContent side="top"');
+    expect(startGuideSegment).toContain('postSelectorActions={() =>');
+    expect(startGuideSegment).not.toContain('postSelectorActions={({ getPromptText }) =>');
+    expect(source).not.toContain("import { copyToClipboard } from '../../utils/clipboard';");
+    expect(source).not.toContain("const COPY_START_PROMPT_TOOLTIP = '复制提示词给本地AI使用';");
+    expect(source).not.toContain('复制提示词给本地AI使用');
+    expect(source).not.toContain('function StartSettingsCopyPromptButton({ onCopyPrompt }');
+    expect(source).not.toContain('aria-label={COPY_START_PROMPT_TOOLTIP}');
+    expect(startGuideSegment).not.toContain("buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement')");
+    expect(startGuideSegment).not.toContain('handleCopyLocalAiStartPrompt');
+    expect(startGuideSegment).not.toContain('await copyToClipboard(prompt);');
+    expect(startGuideSegment).not.toContain("toast.success('提示词已复制到剪贴板');");
+    expect(startGuideSegment).not.toContain('onCopyPrompt={() => { void handleCopyLocalAiStartPrompt(getPromptText()); }}');
     for (const segment of [prototypeSettingsSegment, imageSettingsSegment, documentSettingsSegment]) {
-      expect(segment).toContain('onCopyPrompt,');
-      expect(segment).toContain('onCopyPrompt?: () => void;');
-      expect(segment).toContain('<StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} />');
+      expect(segment).not.toContain('onCopyPrompt,');
+      expect(segment).not.toContain('onCopyPrompt?: () => void;');
+      expect(segment).not.toContain('<StartSettingsCopyPromptButton onCopyPrompt={onCopyPrompt} />');
     }
   });
 
@@ -878,7 +872,7 @@ describe('ContentAreaView review zoom source', () => {
     const source = readContentAreaViewSource();
     const markdownPreviewSegment = getSourceSegment(
       source,
-      "if (contentMode === 'doc' || contentMode === 'template') {",
+      "if (contentMode === 'doc' || contentMode === 'template' || contentMode === 'prototype-spec') {",
       "    if (contentMode === 'theme') {",
     );
     const unsupportedFallbackSegment = getSourceSegment(
@@ -888,7 +882,7 @@ describe('ContentAreaView review zoom source', () => {
     );
 
     expect(source).toContain("import { resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';");
-    expect(markdownPreviewSegment).toContain("const markdownIframeUrl = resolveMarkdownPreviewIframeUrl(selectedMarkdownItem, contentMode);");
+    expect(markdownPreviewSegment).toContain("contentMode === 'template' ? 'template' : 'doc',");
     expect(markdownPreviewSegment).toContain("const canPreviewInIframe = markdownIframeUrl.includes('/spec-template.html') || candidateFields.some(");
     expect(markdownPreviewSegment).toContain('src={markdownIframeUrl}');
     expect(markdownPreviewSegment).not.toContain('src={selectedMarkdownItem.previewUrl || selectedMarkdownItem.specUrl}');
@@ -1173,6 +1167,26 @@ describe('ContentAreaView review zoom source', () => {
     expect(desktopBranch).not.toContain('desktopReviewZoomLayout.enabled');
     expect(desktopBranch).not.toContain('renderScaledIframe(');
     expect(desktopBranch).not.toContain('handleChangePreviewScaleMode');
+  });
+
+  it('preserves usable preview dimensions and remeasures after device mode changes', () => {
+    const source = readContentAreaViewSource();
+    const measurementEffect = getSourceSegment(
+      source,
+      '    useEffect(() => {\n        const node = containerRef.current;',
+      '    const previewLayout = useMemo',
+    );
+
+    expect(source).toContain('resolveStablePreviewContainerSize,');
+    expect(measurementEffect).toContain('setPreviewContainerSize((previous) => resolveStablePreviewContainerSize({');
+    expect(measurementEffect).toContain('clientWidth: node.clientWidth,');
+    expect(measurementEffect).toContain('clientHeight: node.clientHeight,');
+    expect(measurementEffect).toContain('const animationFrameId = window.requestAnimationFrame(updateSize);');
+    expect(measurementEffect).toContain('window.cancelAnimationFrame(animationFrameId);');
+    expect(measurementEffect).toContain('previewConfig.previewMode,');
+    expect(measurementEffect).toContain('previewConfig.singlePreset,');
+    expect(measurementEffect).not.toContain('Math.max(1, node.clientWidth - 48)');
+    expect(measurementEffect).not.toContain('Math.max(1, node.clientHeight - 32)');
   });
 
   it('shows pane-scoped prompt buttons in split preview title bars only while quick edit is active', () => {

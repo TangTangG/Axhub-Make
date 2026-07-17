@@ -9,6 +9,12 @@
 - 数据样例：JSON、CSV、TSV、YAML、TXT、表格导出文件
 - 设计或业务附件：图片、PDF、Office 文档、压缩包等
 
+## HTML 资源能力
+
+创建或修改 `src/resources/**/*.html` 前，必须阅读 [Make HTML 资源 Agent 能力协议](./html-agent-capabilities.md)。该分文档只声明普通 HTML 可使用的 Make 宿主能力、接入标记和文件边界，不规定评审清单或具体业务场景。
+
+原型评审、计划评审、指定方案评审等场景如果有额外要求，应使用独立的场景文档；不得把场景规则反向写成所有 HTML 都必须遵守的通用协议。
+
 ## 目录边界
 
 - `src/resources/` 存放长期项目资料、文档、画布、图表、数据样例和业务附件。

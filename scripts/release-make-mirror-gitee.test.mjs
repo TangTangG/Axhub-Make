@@ -167,7 +167,7 @@ describe('gitee make release mirror helper', () => {
     ]);
 
     const result = await mirrorGitee.runGiteeMirrorRelease({
-      argv: ['--manifest', manifestPath],
+      argv: ['--manifest', manifestPath, '--confirm-publish'],
       env: { GITEE_TOKEN: token },
       fetchImpl,
       logger: { log: (message) => logs.push(String(message)) },
@@ -205,7 +205,7 @@ describe('gitee make release mirror helper', () => {
     ]);
 
     const result = await mirrorGitee.runGiteeMirrorRelease({
-      argv: ['--manifest', manifestPath],
+      argv: ['--manifest', manifestPath, '--confirm-publish'],
       env: { GITEE_TOKEN: token },
       fetchImpl,
       logger: { log: () => {} },
@@ -231,6 +231,22 @@ describe('gitee make release mirror helper', () => {
     assert.equal(result.dryRun, true);
     assert.match(logs.join('\n'), /axhub\/Axhub-Make/u);
     assert.match(logs.join('\n'), /axhub-make-client-template\.zip/u);
+  });
+
+  it('requires explicit human confirmation before publishing to Gitee', async () => {
+    const { manifestPath } = createFixture();
+
+    await assert.rejects(
+      () => mirrorGitee.runGiteeMirrorRelease({
+        argv: ['--manifest', manifestPath],
+        env: { GITEE_TOKEN: 'test-token' },
+        fetchImpl: async () => {
+          throw new Error('confirmation gate should run before fetch');
+        },
+        logger: { log: () => {} },
+      }),
+      /--confirm-publish/u,
+    );
   });
 
   it('accepts the pnpm argument separator before dry-run options', async () => {

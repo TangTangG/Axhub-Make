@@ -595,6 +595,8 @@ describe('CanvasGenerationComposer source', () => {
     expect(selectorSegment).toContain("claude: 'Claude Code'");
     expect(selectorSegment).toContain("codex: 'Codex'");
     expect(selectorSegment).toContain("opencode: 'OpenCode'");
+    expect(selectorSegment).toContain("'grok-build': 'Grok Build'");
+    expect(source).toContain("const FIXED_CANVAS_ACP_PROVIDER_OPTIONS = ['claude', 'codex', 'opencode']");
     expect(selectorSegment).toContain('resolveCanvasAcpRuntimeProviderOptions(contextProviderOptions, context.provider)');
     expect(selectorSegment).toContain('runtimeProviderOptions.includes(option.value)');
     expect(selectorSegment).not.toContain('useVisibleAcpProviders');

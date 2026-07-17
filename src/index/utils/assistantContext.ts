@@ -8,7 +8,7 @@ import type { AssistantContextV1, CanvasItem, ItemData, TabType, ViewMode } from
 import type { CanvasElementContextInfo } from '../components/content/canvas-embeds/AnnotationOverlay';
 import type { DataTableResourceItem, ThemeResourceItem } from '../domains/resources/resource.types';
 
-export type AssistantContentMode = 'preview' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
+export type AssistantContentMode = 'preview' | 'prototype-spec' | 'doc' | 'template' | 'canvas' | 'theme' | 'data';
 
 export interface AssistantMarkdownResourceSelection {
   kind: 'doc' | 'template';
@@ -120,7 +120,7 @@ export function resolveAssistantCurrentFile(params: ResolveAssistantCurrentFileP
     currentDataTable,
   } = params;
 
-  if (contentMode === 'doc' || contentMode === 'template') {
+  if (contentMode === 'doc' || contentMode === 'template' || contentMode === 'prototype-spec') {
     const markdownPath = resolveMarkdownResourcePath(currentMarkdownResource.item);
     return normalizeAssistantCurrentFileV1(markdownPath, {
       displayName: currentMarkdownResource.item?.displayName || currentMarkdownResource.item?.name || '',

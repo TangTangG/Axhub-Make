@@ -6,7 +6,13 @@
 import React from 'react';
 import * as ReactDOMClient from 'react-dom/client';
 import * as ReactDOM from 'react-dom';
-import { createCommentary, type CommentaryApi, type CommentaryExternalEditingState, type CommentaryExternalEditingTaskRef, type CommentaryExternalEditingTargetRef, type CommentaryHostToolbarAction, type CommentaryHostToolbarState, type CommentaryToolbarMode } from '@axhub/commentary';
+import { createCommentary, resolveCommentaryDiagramTarget, type CommentaryApi, type CommentaryExternalEditingState, type CommentaryExternalEditingTaskRef, type CommentaryExternalEditingTargetRef, type CommentaryHostToolbarAction, type CommentaryHostToolbarState, type CommentaryToolbarMode } from '@axhub/commentary';
+import { createHtmlReviewBridge, normalizeHtmlReviewDocumentPath, shouldAllowHtmlReviewPageEvent, type HtmlReviewBridge } from './htmlReviewBridge';
+import {
+  createHtmlResourceSaveBridge,
+  type HtmlResourceSaveBridge,
+  type HtmlResourceSaveEditor,
+} from './htmlResourceSaveBridge';
 
 declare global {
   interface Window {
@@ -23,6 +29,8 @@ let commentEditorDarkMode = false;
 let commentEditorAssistantPanelOpen = false;
 let htmlEditorContext: Record<string, unknown> | null = null;
 let parentEditorBridgeUnsubscribe: (() => void) | null = null;
+let htmlReviewBridgeRuntime: HtmlReviewBridge | null = null;
+let htmlResourceSaveBridgeRuntime: HtmlResourceSaveBridge | null = null;
 const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
   '.agents/skills/explore-options/SKILL.md',
   '.claude/skills/explore-options/SKILL.md',
@@ -42,22 +50,29 @@ function readUrlParam(keys: string[]): string {
 
 function resolveHtmlResourcePath(): string {
   if (typeof window === 'undefined') return '';
+  const contextResourceId = typeof htmlEditorContext?.resourceId === 'string'
+    ? htmlEditorContext.resourceId.trim()
+    : '';
+  const contextPath = normalizeHtmlReviewDocumentPath(contextResourceId);
+  if (contextPath) return contextPath;
+
   const explicitPath = readUrlParam(['path', 'docPath', 'resourcePath']);
-  if (explicitPath) return explicitPath;
+  const normalizedExplicitPath = normalizeHtmlReviewDocumentPath(explicitPath);
+  if (normalizedExplicitPath) return normalizedExplicitPath;
 
   const nestedUrl = readUrlParam(['url', 'src']);
   if (nestedUrl) {
     try {
       const parsedUrl = new URL(nestedUrl, window.location.origin);
       const nestedPath = parsedUrl.searchParams.get('path')?.trim();
-      if (nestedPath) return nestedPath;
-      return decodeURIComponent(parsedUrl.pathname || '').replace(/^\/+/, '');
+      if (nestedPath) return normalizeHtmlReviewDocumentPath(nestedPath);
+      return normalizeHtmlReviewDocumentPath(parsedUrl.pathname);
     } catch {
-      return nestedUrl;
+      return normalizeHtmlReviewDocumentPath(nestedUrl);
     }
   }
 
-  return decodeURIComponent(window.location.pathname || '').replace(/^\/+/, '');
+  return normalizeHtmlReviewDocumentPath(window.location.pathname);
 }
 
 function buildHtmlResourceContext() {
@@ -65,7 +80,9 @@ function buildHtmlResourceContext() {
   const title = document.title || path.split('/').pop() || 'HTML 资源';
   const context = htmlEditorContext || {};
   const contextResourceId = typeof context.resourceId === 'string' ? context.resourceId.trim() : '';
-  const contextProjectId = typeof context.projectId === 'string' ? context.projectId.trim() : '';
+  const contextProjectId = typeof context.projectId === 'string'
+    ? context.projectId.trim()
+    : readUrlParam(['projectId']);
   const contextPane = typeof context.pane === 'string' ? context.pane.trim() : '';
   return {
     kind: 'html-document',
@@ -83,6 +100,32 @@ function buildHtmlResourceContext() {
       displayName: title,
     },
   };
+}
+
+function ensureHtmlReviewBridge(): HtmlReviewBridge {
+  if (htmlReviewBridgeRuntime) return htmlReviewBridgeRuntime;
+  const resource = buildHtmlResourceContext();
+  htmlReviewBridgeRuntime = createHtmlReviewBridge({
+    documentPath: String(resource.meta.currentFilePath || ''),
+    projectId: String(resource.meta.projectId || ''),
+    resolveDiagramTarget: resolveCommentaryDiagramTarget,
+  });
+  return htmlReviewBridgeRuntime;
+}
+
+function ensureHtmlResourceSaveBridge(): HtmlResourceSaveBridge {
+  if (htmlResourceSaveBridgeRuntime) return htmlResourceSaveBridgeRuntime;
+  htmlResourceSaveBridgeRuntime = createHtmlResourceSaveBridge({
+    getEditor: () => ensureCommentEditor() as unknown as HtmlResourceSaveEditor,
+    getContext: () => {
+      const resource = buildHtmlResourceContext();
+      return {
+        path: String(resource.meta.currentFilePath || ''),
+        projectId: String(resource.meta.projectId || ''),
+      };
+    },
+  });
+  return htmlResourceSaveBridgeRuntime;
 }
 
 function ensureCommentEditor(options?: {
@@ -110,6 +153,7 @@ function ensureCommentEditor(options?: {
   }
 
   commentEditor?.destroy();
+  const htmlReviewBridge = ensureHtmlReviewBridge();
   commentEditor = createCommentary({
     ui: {
       toolbarMode: options?.toolbarMode || 'host',
@@ -119,6 +163,9 @@ function ensureCommentEditor(options?: {
     },
     host: {
       getResourceContext: buildHtmlResourceContext,
+      getElementTools: htmlReviewBridge.getElementTools,
+      onElementToolAction: htmlReviewBridge.onElementToolAction,
+      shouldAllowPageEvent: shouldAllowHtmlReviewPageEvent,
     },
   });
   commentEditorDarkMode = initialDarkMode;
@@ -127,6 +174,11 @@ function ensureCommentEditor(options?: {
 
 function setContext(context: Record<string, unknown> | null | undefined): void {
   htmlEditorContext = context && typeof context === 'object' ? context : null;
+  htmlReviewBridgeRuntime?.dispose();
+  htmlReviewBridgeRuntime = null;
+  htmlResourceSaveBridgeRuntime = null;
+  commentEditor?.destroy();
+  commentEditor = null;
 }
 
 function enableDocumentEditor(options?: {
@@ -199,6 +251,15 @@ const editorBridge = {
   },
   getEditedSnapshot() {
     return commentEditor?.getEditedSnapshot?.() ?? null;
+  },
+  saveWebEditorTextChanges() {
+    return ensureHtmlResourceSaveBridge().saveTextChanges();
+  },
+  saveWebEditorStyleChanges() {
+    return ensureHtmlResourceSaveBridge().saveStyleChanges();
+  },
+  clearWebEditorForcedStyles() {
+    return ensureHtmlResourceSaveBridge().clearForcedStyles();
   },
 };
 
@@ -356,6 +417,35 @@ function installParentEditorBridge() {
       return;
     }
 
+    if (event.data.type === 'AXHUB_PROTOTYPE_EDITOR_SAVE_ACTION') {
+      try {
+        let handled = false;
+        if (data.action === 'save-text') {
+          await editorBridge.saveWebEditorTextChanges();
+          handled = true;
+        } else if (data.action === 'save-style') {
+          await editorBridge.saveWebEditorStyleChanges();
+          handled = true;
+        } else if (data.action === 'clear-style') {
+          await editorBridge.clearWebEditorForcedStyles();
+          handled = true;
+        }
+        postPrototypeEditorState({
+          requestId: data.requestId,
+          success: true,
+          handled,
+        });
+      } catch (error) {
+        postPrototypeEditorState({
+          requestId: data.requestId,
+          success: false,
+          handled: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+
     if (event.data.type === 'AXHUB_PROTOTYPE_EDITOR_QUERY_STATE') {
       postPrototypeEditorState({
         requestId: data.requestId,
@@ -406,6 +496,7 @@ export { React, ReactDOMFull as ReactDOM };
 
 // 挂载到全局，供 HTML 直接使用
 if (typeof window !== 'undefined') {
+  ensureHtmlReviewBridge();
   window.__AXHUB_DEFINE_COMPONENT__ = (Component: any) => {
     window.UserComponent = Component;
     return Component;

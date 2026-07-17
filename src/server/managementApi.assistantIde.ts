@@ -40,7 +40,8 @@ type AgentVersionKey =
   | 'cursor'
   | 'qoder'
   | 'codebuddy'
-  | 'reasonix';
+  | 'reasonix'
+  | 'grok-build';
 type AgentVersionResponseKey = AgentVersionKey | 'claudecode';
 
 interface AgentVersionCommandSpec {
@@ -59,6 +60,7 @@ const AGENT_VERSION_COMMANDS: Record<AgentVersionKey, AgentVersionCommandSpec[]>
     { command: 'reasonix', args: ['--version'] },
     { command: 'reasonix', args: ['version'] },
   ],
+  'grok-build': [{ command: 'grok', args: ['--version'] }],
 };
 const AGENT_NPM_PACKAGES: Partial<Record<AgentVersionKey, string>> = {
   claude: '@anthropic-ai/claude-code',
@@ -67,6 +69,7 @@ const AGENT_NPM_PACKAGES: Partial<Record<AgentVersionKey, string>> = {
   qoder: '@qoder-ai/qodercli',
   codebuddy: '@tencent-ai/codebuddy-code',
   reasonix: 'reasonix',
+  'grok-build': '@xai-official/grok',
 };
 
 function normalizeAgentVersionKey(value: unknown): AgentVersionKey | null {
@@ -188,7 +191,7 @@ async function detectAgentVersion(agent: AgentVersionKey): Promise<AgentVersionI
   }
 
   return {
-    status: 'missing',
+    status: lastError?.code === 'ENOENT' ? 'missing' : 'unknown',
     checkedAt,
     command: lastCommand,
     reason: lastError?.message || String(lastError),

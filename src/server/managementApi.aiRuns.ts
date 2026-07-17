@@ -37,6 +37,7 @@ import {
   sanitizeAgentRunConcurrency,
 } from './projectCore/server-config.ts';
 import { classifyAiArtifact } from '../common/aiArtifactClassification.ts';
+import { resolvePrototypeMainSpecStatus } from './managementApi.prototypeSpec.ts';
 
 const DEFAULT_ACP_API_BASE_URL = 'http://localhost:32124/api';
 const ACP_CHAT_NO_RESPONSE_CODE = 'ACP_CHAT_NO_RESPONSE';
@@ -102,6 +103,12 @@ function normalizeScene(value: unknown): AiRunScene {
   if (scene === 'canvas-prototype-generation' || scene === 'page') return 'prototype';
   if (scene === 'design') return 'image';
   return 'direct';
+}
+
+function resolvePrototypeIdFromTargetPath(value: unknown): string {
+  const normalized = safeText(value).replace(/\\/gu, '/').replace(/^\.\//u, '').replace(/^src\//u, '');
+  const match = normalized.match(/^prototypes\/([^/]+)(?:\/.*)?$/u);
+  return match?.[1] || '';
 }
 
 function resolveConfiguredAcpApiBaseUrl(assistantConfig: any): string {
@@ -875,6 +882,29 @@ export function handleAiRunsApi(
       return;
     }
 
+    const targetPrototypeId = scene === 'prototype'
+      ? resolvePrototypeIdFromTargetPath(request.targetPath)
+      : '';
+    let prototypeSpecProjectPath = '';
+    if (targetPrototypeId) {
+      const spec = resolvePrototypeMainSpecStatus({
+        project: context.project,
+        metadata: context.metadata,
+      }, targetPrototypeId);
+      if (!spec.available || !spec.activePath) {
+        sendJson(res, {
+          error: spec.available
+            ? '当前原型缺少主规格，请先创建并确认 .spec/spec.html 或 .spec/spec.md'
+            : '当前原型没有可用的本地规格目录',
+          code: spec.available ? 'PROTOTYPE_SPEC_REQUIRED' : 'PROTOTYPE_SPEC_UNAVAILABLE',
+          action: 'open-prototype-spec',
+          prototypeId: targetPrototypeId,
+        }, { status: 409 });
+        return;
+      }
+      prototypeSpecProjectPath = spec.projectPath || '';
+    }
+
     const config = handlers.getServerConfigStoreForRequest(options).getConfig({ activeProjectRoot: context.project.root });
     const runId = safeText(request.runId || request.id) || createAcpOneShotThreadId(scene);
     const threadId = safeText(request.threadId) || runId;
@@ -889,7 +919,14 @@ export function handleAiRunsApi(
       request.agentRunConcurrency,
       config?.automation?.agentRunConcurrency,
     );
-    const promptPlan = buildRunPrompt({ scene, prompt, body: request, config });
+    const executionPrompt = prototypeSpecProjectPath
+      ? [
+          prompt,
+          '',
+          `规格文档：先读取并以 ${prototypeSpecProjectPath} 为准；修改原型时同步更新规格文档。`,
+        ].join('\n')
+      : prompt;
+    const promptPlan = buildRunPrompt({ scene, prompt: executionPrompt, body: request, config });
     const aiRunTimeoutMs = resolveAiRunTimeoutMs(scene, config);
     const artifacts: AiArtifact[] = [];
     const emittedArtifactIds = new Set<string>();

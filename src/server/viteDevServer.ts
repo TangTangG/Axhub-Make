@@ -43,6 +43,7 @@ const DEV_ENTRY_ASSET_SOURCE_MAP = new Map<string, string>([
   ['/assets/canvas-template-bootstrap.js', '/src/canvas-template/index.tsx'],
   ['/assets/html-template-bootstrap.js', '/src/html-template/index.tsx'],
   ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
+  ['/assets/axure-export-runtime.js', '/src/axure-export-runtime.ts'],
 ]);
 const EMBEDDED_VITE_CACHE_DIR_PREFIX = 'axhub-make-dev-';
 const EMBEDDED_VITE_WATCH_IGNORED = [

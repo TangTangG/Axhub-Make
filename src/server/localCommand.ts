@@ -1,3 +1,4 @@
+import os from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -135,6 +136,8 @@ export function buildLocalCommandEnv(options: {
     for (const executablePath of POSIX_GUI_PATHS) {
       appendUniquePathSegment(segments, executablePath, platform);
     }
+    const homeDir = String(env.HOME || '').trim() || os.homedir();
+    appendUniquePathSegment(segments, pathApi.join(homeDir, '.local', 'bin'), platform);
     delete env.Path;
   }
 

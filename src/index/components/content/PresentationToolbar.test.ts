@@ -13,7 +13,10 @@ describe('PresentationToolbar cloud publishing source', () => {
       source.indexOf('const deviceSwitcherButton = ('),
       source.indexOf('const shouldShowDeviceSwitcher'),
     );
-    const toolbarReturnSource = source.slice(source.indexOf('return ('), source.indexOf('{/* Center: Tools */}'));
+    const toolbarReturnSource = source.slice(
+      source.lastIndexOf('\n    return ('),
+      source.indexOf('{/* Center: Tools */}'),
+    );
 
     expect(deviceSwitcherButtonSource).toContain('aria-label="设备"');
     expect(deviceSwitcherButtonSource).toContain('edgeIconButtonClass');
@@ -72,6 +75,13 @@ describe('PresentationToolbar cloud publishing source', () => {
     expect(source).not.toContain('const leftRefreshButton = (');
     expect(source).not.toContain('const shouldShowLeftRefreshButton =');
     expect(normalPreviewActionsSource).not.toContain('<RotateCw /> 刷新');
+  });
+
+  it('keeps HTML prototype specs annotation-only without persistence actions', () => {
+    const source = readToolbarSource();
+
+    expect(source).toContain("const isReadOnlyHtmlPrototypeSpec = contentMode === 'prototype-spec'");
+    expect(source).toContain('isQuickEditActive && !isReadOnlyHtmlPrototypeSpec');
   });
 
   it('keeps only the default publish action, copy URL, and platform settings visible by default', () => {
@@ -144,6 +154,22 @@ describe('PresentationToolbar cloud publishing source', () => {
     );
     expect(exportMenuSegment).toContain('复制截图');
     expect(exportMenuSegment.indexOf('复制截图')).toBeGreaterThan(exportMenuSegment.indexOf('设置'));
+  });
+
+  it('shows only lightweight Axure and export actions for theme previews', () => {
+    const source = readToolbarSource();
+    const exportMenuSegment = source.slice(
+      source.indexOf('const exportMenuButton = ('),
+      source.indexOf('</DropdownMenuContent>', source.indexOf('const exportMenuButton = (')),
+    );
+
+    expect(source).toContain("const showMakeExportEntry = isPreviewContent && viewMode === 'demo'");
+    expect(source).toContain("const showInteractiveAxureExportEntry = isPreviewContent && viewMode === 'demo'");
+    expect(source).toContain('const showEditableAxureCopyEntry = Boolean(currentRuntimeExportResource);');
+    expect(source).toContain('const showAxureUsageGuideEntry = showInteractiveAxureExportEntry;');
+    expect(exportMenuSegment).toContain('{showInteractiveAxureExportEntry ? (');
+    expect(exportMenuSegment).toContain('{showEditableAxureCopyEntry ? (');
+    expect(exportMenuSegment).toContain('{showAxureUsageGuideEntry ? (');
   });
 
   it('keeps the publish menu available when the Agent host toolbar is visible', () => {
@@ -223,7 +249,7 @@ describe('PresentationToolbar Agent host controls source', () => {
     expect(source).toContain('prototypeDecisionDataAvailable = false,');
     expect(source).toContain('const canShowPrototypeDecisionActions = !isPreviewContent || prototypeDecisionDataAvailable;');
     expect(source).toContain('&& canShowPrototypeDecisionActions');
-    expect(source).toContain('const showHostPropertyPanelAction = contentMode !== \'theme\'\n        && canShowPrototypeDecisionActions;');
+    expect(source).toContain('const showHostPropertyPanelAction = contentMode !== \'theme\'\n        && canShowPrototypeDecisionActions\n        && !isDocumentCommentActive;');
     expect(hostControlsSource).toContain('showHostPropertyPanelAction ? renderHostToolbarActionButton');
   });
 
@@ -403,6 +429,8 @@ describe('PresentationToolbar Agent host controls source', () => {
 
     expect(hostControlsSource).toMatch(/'host-clear'[\s\S]*'清空'[\s\S]*<Trash2 \/>/);
     expect(hostControlsSource).not.toContain('清空编辑');
+    expect(hostControlsSource).toContain("{ type: 'clear-edits', scope: 'prototype' }");
+    expect(activeToolbarSource).toContain("runHostAction({ type: 'clear-edits', scope: 'prototype' })");
     expect(activeToolbarSource).toMatch(/\{hostToolbarControls\}[\s\S]*<RotateCw \/> 刷新[\s\S]*\{hostMoreMenu\}[\s\S]*<CircleX \/> 退出/);
   });
 
@@ -434,6 +462,19 @@ describe('PresentationToolbar Agent host controls source', () => {
     expect(hostControlsSource).toContain('选择元素');
     expect(hostControlsSource).toContain("{ type: 'toggle-selection-mode', active: !hostToolbarState.selectionModeActive }");
     expect(hostControlsSource).toContain('active: hostToolbarState.selectionModeActive');
+  });
+
+  it('hides element selection and design decision host controls during document annotation', () => {
+    const source = readToolbarSource();
+    const hostControlsSource = source.slice(
+      source.indexOf('const hostToolbarControls = hostToolbarState?.visible ? ('),
+      source.indexOf('const activeQuickEditToolbarButtons = ('),
+    );
+
+    expect(source).toContain('const showHostSelectionModeAction = !isDocumentCommentActive;');
+    expect(source).toContain('&& !isDocumentCommentActive');
+    expect(hostControlsSource).toContain('visible: showHostSelectionModeAction');
+    expect(hostControlsSource).toContain('showHostPropertyPanelAction ? renderHostToolbarActionButton');
   });
 
   it('shows the selection mode shortcut hint in the host toolbar without binding it in the parent page', () => {
@@ -470,7 +511,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('adds a top online edit action for drawio document and template previews', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
@@ -489,7 +530,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('shows the document annotation action for commentable Markdown and HTML resources', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
@@ -504,11 +545,11 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('opens document annotation and editing buttons directly in their requested mode', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 
-    expect(source).toContain('handleEnableDocEdit: (mode?: SpecQuickEditMode) => void;');
+    expect(source).toContain('handleEnableDocEdit: (mode?: SpecQuickEditMode, options?: { disableSelectionMode?: boolean; preserveSidebar?: boolean }) => void;');
     expect(source).toContain('handleEnableDocEdit,');
     expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('comment')}");
     expect(documentResourceActionsSource).toContain("onClick={() => handleEnableDocEdit('edit')}");
@@ -518,7 +559,7 @@ describe('PresentationToolbar Agent host controls source', () => {
   it('reuses the page annotation host toolbar when HTML document annotation is active', () => {
     const source = readToolbarSource();
     const documentResourceActionsSource = source.slice(
-      source.indexOf("if ((contentMode === 'doc' && selectedDoc) || (contentMode === 'template' && selectedTemplate)) {"),
+      source.indexOf('const resourceActionButtons = (() => {'),
       source.indexOf("if (contentMode === 'theme' && selectedTheme) {"),
     );
 

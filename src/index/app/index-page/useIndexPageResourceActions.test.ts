@@ -145,6 +145,19 @@ describe('useIndexPageResourceActions source', () => {
     expect(docRenameSource).toContain('const newItemKey = `docs/${renamedResourcePath}`;');
   });
 
+  it('continues document rename completion without removed theme document selection state', () => {
+    const rootSource = readResourceRootSource();
+    const docRenameStart = rootSource.indexOf('const handleRenameDocItem = useCallback');
+    const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem', docRenameStart);
+    const docRenameSource = rootSource.slice(docRenameStart, duplicateDocStart);
+    const reloadIndex = docRenameSource.indexOf('const nextDocs = await reloadDocsItems();');
+    const selectIndex = docRenameSource.indexOf('setSelectedDoc(renamedDoc || nextDocs[0] || null);');
+
+    expect(docRenameSource).not.toContain('setSelectedThemeDocRefs');
+    expect(reloadIndex).toBeGreaterThanOrEqual(0);
+    expect(selectIndex).toBeGreaterThan(reloadIndex);
+  });
+
   it('duplicates nested document resources by path and reselects the copied path', () => {
     const rootSource = readResourceRootSource();
     const duplicateDocStart = rootSource.indexOf('const handleDuplicateDocItem = useCallback');

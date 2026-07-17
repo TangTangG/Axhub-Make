@@ -1,12 +1,12 @@
 import React, { useRef, useState } from 'react';
-import { ArrowLeft, ChevronDown, CircleHelp, Copy, FileText, Loader2, RefreshCw, Send, Trash2, UploadCloud } from 'lucide-react';
+import { ArrowLeft, ChevronDown, CircleHelp, Copy, FileText, ListChecks, Loader2, RefreshCw, Send, Trash2, UploadCloud } from 'lucide-react';
 import { XMarkdown } from '@ant-design/x-markdown';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Mermaid, XProvider } from '@ant-design/x';
 import zhCN_X from '@ant-design/x/locale/zh_CN';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
     Tooltip,
@@ -23,10 +23,12 @@ import {
 import { cn } from '@/lib/utils';
 import { type ReviewKind } from '../../utils/uiReviewPrompt';
 import type {
+    ReviewAxhubConfig,
     ReviewLanSubmitConfig,
     ReviewReportDetail,
     ReviewReportSummary,
 } from '../../services/api';
+import { getReviewScoreTone, normalizeReviewScore } from './reviewScore';
 
 interface UiReviewPanelProps {
     reports: ReviewReportSummary[];
@@ -41,6 +43,7 @@ interface UiReviewPanelProps {
     uploadLoading?: boolean;
     error?: string;
     lanSubmitConfig?: ReviewLanSubmitConfig | null;
+    axhubSubmitConfig?: ReviewAxhubConfig | null;
     onExecutePrompt?: (prompt: string, meta: { scene: string; targetPath?: string | null; autoSend?: boolean }) => Promise<boolean | void> | boolean | void;
     onSelectReport: (report: ReviewReportSummary) => void;
     onBackToList: () => void;
@@ -50,6 +53,7 @@ interface UiReviewPanelProps {
     onRunReviewDirect: (kind: ReviewKind) => Promise<boolean | void> | boolean | void;
     onUploadReport: (files: File[], meta: { title?: string; reviewer?: string }) => void | Promise<void>;
     onLanSubmitEnabledChange: (enabled: boolean) => void | Promise<void>;
+    onAxhubSubmitEnabledChange: (enabled: boolean) => void | Promise<void>;
 }
 
 type ReviewPromptActionKind = 'direct' | 'web' | 'copy';
@@ -210,19 +214,13 @@ function formatReviewTime(value?: string | null): string {
     });
 }
 
-function normalizeReviewScore(value: unknown): number | null {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) {
-        return null;
-    }
-    return Math.round(value);
-}
-
 function ReviewScoreBadge({ score: rawScore }: { score?: number }) {
     const score = normalizeReviewScore(rawScore);
     if (score === null) {
         return null;
     }
     const degrees = Math.max(0, Math.min(100, score)) * 3.6;
+    const scoreTone = getReviewScoreTone(score);
     return (
         <div
             className="relative h-11 w-11 shrink-0"
@@ -232,7 +230,7 @@ function ReviewScoreBadge({ score: rawScore }: { score?: number }) {
             <div
                 className="absolute inset-0 rounded-full"
                 style={{
-                    background: `conic-gradient(rgb(16 185 129) ${degrees}deg, hsl(var(--muted)) 0deg)`,
+                    background: `conic-gradient(${scoreTone} ${degrees}deg, hsl(var(--muted)) 0deg)`,
                 }}
             />
             <div className="absolute inset-[4px] flex items-center justify-center rounded-full bg-background text-[11px] font-semibold text-foreground">
@@ -328,14 +326,14 @@ const REVIEW_ACTIONS: Array<{ kind: ReviewKind; label: string; description: stri
     {
         kind: 'requirements',
         label: '需求评审',
-        description: '优先读取 .spec/requirements.md；没有则按项目资料和资源做常规需求评审。',
+        description: '优先读取 .spec/spec.html，其次 .spec/spec.md，并跟随必要的子文档。',
     },
 ];
 
 const REVIEW_REPORT_SUBMIT_SKILL_URL = 'https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-prototype-context/SKILL.md';
 const INSTALL_REVIEW_REPORT_SUBMIT_SKILL_PROMPT = [
     `请把下面这个技能安装到当前项目：${REVIEW_REPORT_SUBMIT_SKILL_URL}`,
-    '安装到当前项目后，请用 $axhub-prototype-context 读取 Axhub 原型上下文，并在需要提交评审报告时通过局域网提交到当前原型的评审列表。',
+    '安装到当前项目后，请用 $axhub-prototype-context 读取 Axhub 原型上下文，并按页面注入的评审提交地址把报告提交到当前原型的评审列表。',
 ].join('\n');
 
 export default function UiReviewPanel({
@@ -351,6 +349,7 @@ export default function UiReviewPanel({
     uploadLoading = false,
     error = '',
     lanSubmitConfig,
+    axhubSubmitConfig,
     onExecutePrompt,
     onSelectReport,
     onBackToList,
@@ -360,8 +359,10 @@ export default function UiReviewPanel({
     onRunReviewDirect,
     onUploadReport,
     onLanSubmitEnabledChange,
+    onAxhubSubmitEnabledChange,
 }: UiReviewPanelProps) {
-    const [lanSwitchPending, setLanSwitchPending] = useState(false);
+    const [lanSubmitPending, setLanSubmitPending] = useState(false);
+    const [axhubSubmitPending, setAxhubSubmitPending] = useState(false);
     const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
     const getReviewPrompt = (kind: ReviewKind) => reviewPrompts?.[kind] || reviewPrompt;
@@ -432,11 +433,20 @@ export default function UiReviewPanel({
     };
 
     const handleLanSubmitToggle = async (enabled: boolean) => {
-        setLanSwitchPending(true);
+        setLanSubmitPending(true);
         try {
             await onLanSubmitEnabledChange(enabled);
         } finally {
-            setLanSwitchPending(false);
+            setLanSubmitPending(false);
+        }
+    };
+
+    const handleAxhubSubmitToggle = async (enabled: boolean) => {
+        setAxhubSubmitPending(true);
+        try {
+            await onAxhubSubmitEnabledChange(enabled);
+        } finally {
+            setAxhubSubmitPending(false);
         }
     };
 
@@ -538,13 +548,13 @@ export default function UiReviewPanel({
                                 disabled={uploadLoading}
                                 onChange={handleUploadInputChange}
                             />
-                            <div className="flex shrink-0 items-center gap-1.5">
-                                {lanSubmitConfig?.lanSubmitEnabled === true ? (
+                            <div className="flex shrink-0 items-center gap-0.5">
+                                {lanSubmitConfig?.lanSubmitEnabled === true || axhubSubmitConfig?.submitEnabled === true ? (
                                     <Button
                                         type="button"
                                         size="xs"
                                         variant="ghost"
-                                        className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                        className="h-7 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground"
                                         onClick={() => { void handleCopySubmitSkillPrompt(); }}
                                     >
                                         <Copy className="h-3.5 w-3.5" />
@@ -555,47 +565,77 @@ export default function UiReviewPanel({
                                     type="button"
                                     size="xs"
                                     variant="ghost"
-                                    className="h-7 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                    className="h-7 shrink-0 gap-1 px-1.5 text-xs text-muted-foreground hover:text-foreground"
                                     disabled={uploadLoading}
                                     onClick={() => uploadInputRef.current?.click()}
                                 >
                                     {uploadLoading ? (
-                                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                     ) : (
-                                        <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                                        <UploadCloud className="h-3.5 w-3.5" />
                                     )}
                                     上传报告
                                 </Button>
                             </div>
                         </div>
                         <div className="flex h-8 items-center justify-between gap-2 px-2">
-                            <div className="flex min-w-0 items-center gap-1.5 text-[12px] font-medium text-foreground">
-                                <span>局域网提交</span>
-                                <TooltipProvider delayDuration={150}>
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <button
-                                                type="button"
-                                                className="inline-flex h-5 w-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                                                aria-label="局域网提交说明"
-                                            >
-                                                <CircleHelp className="h-3.5 w-3.5" />
-                                            </button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="top" className="max-w-[320px]">
-                                            <div className="space-y-1">
-                                                <div>允许研发团队成员的 AI agent 通过局域网提交 Markdown 评审报告。</div>
-                                            </div>
-                                        </TooltipContent>
-                                    </Tooltip>
-                                </TooltipProvider>
+                            <div className="flex min-w-0 items-center gap-2 text-[12px] font-medium text-foreground">
+                                <ListChecks className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <span>提交方式</span>
                             </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                                <Switch
-                                    checked={lanSubmitConfig?.lanSubmitEnabled === true}
-                                    disabled={lanSwitchPending || lanSubmitConfig?.projectLanAllowed === false}
-                                    onCheckedChange={(checked) => { void handleLanSubmitToggle(checked); }}
-                                />
+                            <div className="flex shrink-0 items-center gap-3 text-[12px] font-medium text-foreground">
+                                <div className="flex items-center gap-1.5">
+                                    <Checkbox
+                                        id="review-lan-submit"
+                                        checked={lanSubmitConfig?.lanSubmitEnabled === true}
+                                        disabled={lanSubmitPending || lanSubmitConfig?.projectLanAllowed === false}
+                                        onCheckedChange={(checked) => { void handleLanSubmitToggle(checked === true); }}
+                                    />
+                                    <label htmlFor="review-lan-submit" className="whitespace-nowrap">局域网提交</label>
+                                    <TooltipProvider delayDuration={150}>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                                                    aria-label="局域网提交说明"
+                                                >
+                                                    <CircleHelp className="h-3.5 w-3.5" />
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top" className="max-w-[320px]">
+                                                允许研发团队成员的 AI agent 通过局域网提交 Markdown 评审报告。
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <Checkbox
+                                        id="review-axhub-submit"
+                                        checked={axhubSubmitConfig?.submitEnabled === true}
+                                        disabled={axhubSubmitPending || axhubSubmitConfig?.bound !== true}
+                                        onCheckedChange={(checked) => { void handleAxhubSubmitToggle(checked === true); }}
+                                    />
+                                    <label htmlFor="review-axhub-submit" className="whitespace-nowrap">Axhub 提交</label>
+                                    <TooltipProvider delayDuration={150}>
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                                                    aria-label="Axhub 提交说明"
+                                                >
+                                                    <CircleHelp className="h-3.5 w-3.5" />
+                                                </button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="top" className="max-w-[320px]">
+                                                {axhubSubmitConfig?.bound === true
+                                                    ? '允许评审者通过已发布的 Axhub 原型提交 Markdown 评审报告。'
+                                                    : '重新发布到 Axhub 后可开启'}
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TooltipProvider>
+                                </div>
                             </div>
                         </div>
                     </TabsContent>

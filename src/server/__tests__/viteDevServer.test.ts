@@ -249,6 +249,7 @@ describe('make-server Vite dev middleware', () => {
     ['/assets/html-template-bootstrap.js', '/src/html-template/index.tsx'],
     ['/assets/runtime-export-core.js', '/src/runtime-export-core.ts'],
     ['/assets/runtime-export-core.js?v=0.3.0', '/src/runtime-export-core.ts'],
+    ['/assets/axure-export-runtime.js', '/src/axure-export-runtime.ts'],
   ])('serves production entry asset %s from source in dev mode', async (assetUrl, sourceUrl) => {
     let handledUrl = '';
     const close = vi.fn();

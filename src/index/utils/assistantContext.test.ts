@@ -249,6 +249,31 @@ describe('assistantContext helpers', () => {
     }).path).toBe('');
   });
 
+  it('uses the opened prototype spec as the assistant current file', () => {
+    expect(resolveAssistantCurrentFile({
+      selectedItem: {
+        name: 'home',
+        displayName: 'Home',
+        jsUrl: '',
+        specUrl: '',
+        filePath: 'src/prototypes/home/index.tsx',
+      },
+      activeTab: 'prototypes',
+      viewMode: 'demo',
+      contentMode: 'prototype-spec',
+      currentMarkdownResource: {
+        kind: 'doc',
+        item: {
+          name: 'spec.html',
+          displayName: '规格文档',
+          jsUrl: '',
+          specUrl: '/api/projects/make/prototypes/home/spec/content?path=spec.html',
+          filePath: 'src/prototypes/home/.spec/spec.html',
+        },
+      },
+    }).path).toBe('src/prototypes/home/.spec/spec.html');
+  });
+
   it('derives canvas, theme, and data current files from the active resource instead of stale prototype selection', () => {
     const stalePrototype = {
       name: 'home',

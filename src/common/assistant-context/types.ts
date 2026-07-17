@@ -1,4 +1,4 @@
-export type AcpProvider = 'claude' | 'cursor' | 'codex' | 'opencode' | 'qoder' | 'codebuddy' | 'reasonix';
+export type AcpProvider = 'claude' | 'cursor' | 'codex' | 'opencode' | 'qoder' | 'codebuddy' | 'reasonix' | 'grok-build';
 export type AcpProviderPreference = AcpProvider | null;
 
 export interface AssistantContextElementV1 {

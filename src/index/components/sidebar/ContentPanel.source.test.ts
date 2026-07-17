@@ -847,7 +847,7 @@ describe('ContentPanel resource drag and drop source', () => {
   it('adds assistant-context drag payloads without writing canvas drag payloads', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
     const treeDragSource = source.slice(
@@ -873,7 +873,7 @@ describe('ContentPanel prototype page children source', () => {
   it('uses a layout icon for prototype items while keeping file icons for prototype pages', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
     const treeNodeRenderSource = source.slice(
@@ -906,6 +906,29 @@ describe('ContentPanel prototype page children source', () => {
     expect(source).not.toContain('onTreePersist(page');
   });
 
+  it('renders data-driven page groups with transient independent expansion state', () => {
+    const source = readContentPanelSource();
+    const pageRowsSource = source.slice(
+      source.indexOf('const renderPrototypePageRow ='),
+      source.indexOf('const renderTreeNodes ='),
+    );
+
+    expect(source).toContain("import { buildPrototypePageSegments, findPrototypePageGroupKey } from './prototypePageGroups';");
+    expect(source).toContain('expandedPrototypePageGroups');
+    expect(source).toContain('setExpandedPrototypePageGroups');
+    expect(source).toContain('activePrototypePageGroupKey');
+    expect(source).toContain('validPrototypePageGroupKeys');
+    expect(source).toContain('ChevronRight,');
+    expect(source).toContain('aria-expanded={ariaExpanded}');
+    expect(pageRowsSource).toContain('segment.kind === \'page\'');
+    expect(pageRowsSource).toContain('togglePrototypePageGroup(item.name, segment.key)');
+    expect(pageRowsSource).toContain('ariaExpanded={expanded}');
+    expect(pageRowsSource).toContain("event.key === 'Enter' || event.key === ' '");
+    expect(pageRowsSource).toContain('renderPrototypePageRow(item, page, depth + 1)');
+    expect(pageRowsSource).not.toContain('onTreePersist');
+    expect(pageRowsSource).not.toContain('localStorage');
+  });
+
   it('drags prototype page rows only as assistant context resources', () => {
     const source = readContentPanelSource();
     const helperSource = source.slice(
@@ -913,7 +936,7 @@ describe('ContentPanel prototype page children source', () => {
       source.indexOf('interface ProjectSetupDialogProps'),
     );
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
 
@@ -944,7 +967,7 @@ describe('ContentPanel prototype page children source', () => {
   it('uses a text-only selected state for prototype pages so parent and first page backgrounds do not stack', () => {
     const source = readContentPanelSource();
     const pageRowsSource = source.slice(
-      source.indexOf('const renderPrototypePageRows ='),
+      source.indexOf('const renderPrototypePageRow ='),
       source.indexOf('const renderTreeNodes ='),
     );
 

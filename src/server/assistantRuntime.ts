@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
-import { networkInterfaces } from 'node:os';
 import path from 'node:path';
 
 import {
@@ -22,6 +21,10 @@ const ACP_UI_READY_CHECK_INTERVAL_MS = 500;
 const ACP_UI_ENDPOINT_PROBE_TIMEOUT_MS = 1_500;
 const COMMAND_AVAILABILITY_TIMEOUT_MS = 2_000;
 const ACP_UI_SERVICE_ID = '@axhub/acp';
+const DEFAULT_ACP_UI_CORS_ORIGINS = new Set([
+  'http://localhost:53817',
+  'http://127.0.0.1:53817',
+]);
 
 export type AssistantHealthStatus =
   | 'ready'
@@ -129,66 +132,21 @@ function normalizeCorsOriginList(...values: unknown[]): string {
   return Array.from(origins).join(',');
 }
 
-function getLocalNetworkHosts(): string[] {
-  const hosts = new Set<string>();
-  for (const nets of Object.values(networkInterfaces())) {
-    for (const net of nets || []) {
-      if (net.family === 'IPv4' && !net.internal) {
-        hosts.add(net.address);
-      }
-    }
-  }
-  return Array.from(hosts);
-}
-
-function formatOriginWithHost(url: URL, hostname: string): string {
-  const defaultPort = url.protocol === 'https:' ? '443' : '80';
-  const port = url.port || defaultPort;
-  const host = hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname;
-  return port === defaultPort ? `${url.protocol}//${host}` : `${url.protocol}//${host}:${port}`;
-}
-
-function addCorsOriginWithLocalVariants(origins: Set<string>, rawOrigin: string, localHosts: string[]): void {
-  const origin = rawOrigin.trim().replace(/\/+$/u, '');
-  if (!origin) return;
-  origins.add(origin);
-
-  try {
-    const parsed = new URL(origin);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return;
-    }
-    origins.add(formatOriginWithHost(parsed, 'localhost'));
-    origins.add(formatOriginWithHost(parsed, '127.0.0.1'));
-    for (const host of localHosts) {
-      origins.add(formatOriginWithHost(parsed, host));
-    }
-  } catch {
-    // Keep non-URL values such as "*" as provided.
-  }
-}
-
 export function resolveAssistantMakeCorsOrigins(
   corsOrigin?: string,
   options: {
     env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
-    localHosts?: string[];
   } = {},
 ): string {
   const env = options.env || process.env;
-  const localHosts = options.localHosts || getLocalNetworkHosts();
-  const origins = new Set<string>();
-  for (const value of [
+  const explicitOrigins = normalizeCorsOriginList(
     env.AXHUB_ACP_UI_CORS_ORIGIN,
     env.ACP_UI_CORS_ORIGINS,
-    corsOrigin,
-  ]) {
-    const normalized = normalizeCorsOriginList(value);
-    for (const origin of normalized.split(',')) {
-      addCorsOriginWithLocalVariants(origins, origin, localHosts);
-    }
-  }
-  return Array.from(origins).join(',');
+  );
+  const currentOrigins = normalizeCorsOriginList(corsOrigin)
+    .split(',')
+    .filter((origin) => origin && !DEFAULT_ACP_UI_CORS_ORIGINS.has(origin));
+  return normalizeCorsOriginList(explicitOrigins, currentOrigins.join(','));
 }
 
 function normalizeLocalAcpUiProjectRoot(value: unknown): string {

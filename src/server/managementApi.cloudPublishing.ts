@@ -1269,6 +1269,7 @@ async function publishTarget(
     managementOptions?: ManagementApiOptions;
     axhubProjectId?: number;
     resourcePath?: string;
+    reviewContext?: { projectId: string; prototypeId: string };
   },
 ) {
   if (target === 'axhub') {
@@ -1284,6 +1285,7 @@ async function publishTarget(
       options: options.managementOptions,
       pid: axhubProjectId,
       files,
+      reviewContext: options.reviewContext,
     });
     return {
       url: result.url,
@@ -1348,7 +1350,14 @@ function getLatestCloudPublishUrls(
   const normalizedFilterPath = options.path && options.metadata
     ? normalizeProjectResourcePath(options.metadata, options.path)
     : stringValue(options.path);
-  const latest: Record<CloudPublishTarget, null | { url: string; target: CloudPublishTarget; deployedAt: string; path?: string }> = {
+  const latest: Record<CloudPublishTarget, null | {
+    url: string;
+    target: CloudPublishTarget;
+    deployedAt: string;
+    path?: string;
+    axhubProjectId?: number;
+    axhubProjectPath?: string;
+  }> = {
     vercel: null,
     'cloudflare-pages': null,
     s3: null,
@@ -1370,6 +1379,8 @@ function getLatestCloudPublishUrls(
       continue;
     }
     const deployedAt = stringValue(record.createdAt);
+    const axhubProjectId = Number(record.metadata?.axhubProjectId);
+    const axhubProjectPath = stringValue(record.metadata?.axhubProjectPath);
     const current = latest[target];
     if (!current || deployedAt > current.deployedAt) {
       latest[target] = {
@@ -1377,6 +1388,9 @@ function getLatestCloudPublishUrls(
         target,
         deployedAt,
         path: normalizedRecordPath || undefined,
+        ...(target === 'axhub' && Number.isInteger(axhubProjectId) && axhubProjectId > 0
+          ? { axhubProjectId, axhubProjectPath: axhubProjectPath || undefined }
+          : {}),
       };
     }
   }
@@ -1508,7 +1522,7 @@ export function handleCloudPublishingApi(
           group: normalizedTargetPath.replace(/^src\//u, '').split('/')[0] || 'prototypes',
           includeSource: config.publishSettings?.includeSource === true,
           mediaRoot: handlers.getDeclaredResourceWriteDir?.(context, 'media') || undefined,
-          reviewSubmit: reviewSubmitPrototypeId
+          reviewSubmit: target !== 'axhub' && reviewSubmitPrototypeId
             ? createReviewSubmitInjectionOptions({
               projectRoot: context.project.root,
               projectId: context.project.id,
@@ -1521,6 +1535,9 @@ export function handleCloudPublishingApi(
           managementOptions: options,
           axhubProjectId: Number(body?.axhubProjectId || body?.pid),
           resourcePath: normalizedTargetPath,
+          reviewContext: reviewSubmitPrototypeId
+            ? { projectId: context.project.id, prototypeId: reviewSubmitPrototypeId }
+            : undefined,
         });
         const url = result.url;
         const deployedAt = new Date().toISOString();
@@ -1534,6 +1551,7 @@ export function handleCloudPublishingApi(
             path: normalizedTargetPath,
             url,
             fileCount: files.length,
+            prototypeId: reviewSubmitPrototypeId,
             ...(result.metadata || {}),
           },
         });

@@ -173,9 +173,31 @@ describe('default client skills', () => {
       expect(skillSource).toContain('src/resources/');
       expect(skillSource).toContain('用户提供的模板');
       expect(skillSource).toContain('src/resources/**/*.excalidraw');
+      expect(skillSource).toContain('rules/requirements-alignment-guide.md');
+      expect(skillSource).toContain('原型主规格');
+      expect(skillSource).not.toContain('同时存在时以 HTML 为准');
+      expect(skillSource).toContain('PRD 仍写入 `src/resources/prd/`');
+      expect(skillSource).toContain('同步更新主规格中的引用或相关决策');
       expect(skillSource).not.toContain('ready-for-agent');
       expect(skillSource).not.toContain('/setup-matt-pocock-skills');
       expect(interfaceSource).toContain('display_name: "写 PRD"');
+    }
+  });
+
+  it('keeps requirements exploration in the current prototype main spec', () => {
+    const skillRoots = [
+      '.agents/skills/requirements-exploration',
+      '.claude/skills/requirements-exploration',
+    ];
+
+    for (const root of skillRoots) {
+      const skillSource = readClientFile(`${root}/SKILL.md`);
+
+      expect(skillSource).toContain('rules/requirements-alignment-guide.md');
+      expect(skillSource).toContain('原型主规格');
+      expect(skillSource).not.toContain('同时存在时以 HTML 为准');
+      expect(skillSource).not.toContain('确认前不得修改原型');
+      expect(skillSource).not.toContain('snapshot files');
     }
   });
 

@@ -1,4 +1,3 @@
-import React from 'react';
 import PresentationToolbar from './PresentationToolbar';
 import ContentAreaView from './ContentAreaView';
 import UiReviewPanel from './UiReviewPanel';
@@ -90,6 +89,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleOpenAxureUsageGuide={props.handleOpenAxureUsageGuide}
                     handleOpenIdeFile={props.handleOpenIdeFile}
                     handleOpenDocInIDE={props.handleOpenDocInIDE}
+                    handleOpenPrototypeSpec={props.handleOpenPrototypeSpec}
                     handleOpenThemeInIDE={props.handleOpenThemeInIDE}
                     handleOpenDataTableInIDE={props.handleOpenDataTableInIDE}
                     preferredIDE={props.preferredIDE}
@@ -106,6 +106,9 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                     handleRunQuickEditSaveAction={props.handleRunQuickEditSaveAction}
                     contentMode={props.contentMode}
                     selectedDoc={props.selectedDoc}
+                    selectedPrototypeSpec={props.selectedPrototypeSpec}
+                    prototypeSpecSupported={props.prototypeSpecSupported}
+                    prototypeSpecLoading={props.prototypeSpecLoading}
                     selectedTemplate={props.selectedTemplate}
                     selectedTheme={props.selectedTheme}
                     selectedDataTable={props.selectedDataTable}
@@ -156,6 +159,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         docsItems={props.docsItems}
                         sidebarTrees={props.sidebarTrees}
                         selectedDoc={props.selectedDoc}
+                        selectedPrototypeSpec={props.selectedPrototypeSpec}
                         selectedResourceFolder={props.selectedResourceFolder}
                         selectedTemplate={props.selectedTemplate}
                         isDarkMode={props.isDarkMode}
@@ -236,6 +240,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         uploadLoading={props.reviewUploadLoading}
                         error={props.reviewError}
                         lanSubmitConfig={props.reviewLanSubmitConfig}
+                        axhubSubmitConfig={props.reviewAxhubSubmitConfig}
                         onExecutePrompt={props.onExecutePrompt}
                         onSelectReport={(report) => props.handleSelectReviewReport?.(report)}
                         onBackToList={() => props.handleBackToReviewList?.()}
@@ -245,6 +250,7 @@ export default function PresentationArea(rawProps: PresentationAreaProps) {
                         onRunReviewDirect={(kind) => props.handleRunReviewDirect?.(kind)}
                         onUploadReport={(files, meta) => props.handleUploadReviewReport?.(files, meta)}
                         onLanSubmitEnabledChange={(enabled) => props.handleReviewLanSubmitEnabledChange?.(enabled)}
+                        onAxhubSubmitEnabledChange={(enabled) => props.handleReviewAxhubSubmitEnabledChange?.(enabled)}
                     />
                 ) : null}
             </div>

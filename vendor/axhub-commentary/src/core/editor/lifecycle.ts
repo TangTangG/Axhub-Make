@@ -8,10 +8,7 @@ import { createSelectionEngine } from '../../selection/selection-engine';
 import { createTextCommentManager } from '../../selection/text-comment-manager';
 import { createEventController } from '../event-controller';
 import { createPositionTracker } from '../position-tracker';
-import {
-  createTransactionManager,
-  type TransactionManager,
-} from '../transaction-manager';
+import { createTransactionManager, type TransactionManager } from '../transaction-manager';
 import { createPerfMonitor } from '../perf-monitor';
 import { createDesignTokensService } from '../design-tokens';
 import { locateElement } from '../locator';
@@ -21,10 +18,7 @@ import {
   isExportableDesignElement,
 } from '../../design-tool-export';
 import { clearEditorRuntimeRefs, resetEditorTransientState } from './state';
-import type {
-  EditorLifecycleDeps,
-  ExternalEditingElementTarget,
-} from './contracts';
+import type { EditorLifecycleDeps, ExternalEditingElementTarget } from './contracts';
 import { TEXT_COMMENT_TARGET_ATTR } from './text-comment-target';
 import { getGlobalCommentaryTweakProtocol } from '../../tweak/protocol';
 import { resolveWebEditorOptions } from './state';
@@ -92,27 +86,14 @@ type SelectionModeHotkeyDebugWindow = Window & {
 
 const SELECTION_MODE_HOTKEY_SHORTCUT_LABEL = 'Ctrl / Cmd + S';
 
-export function createLifecycleService(
-  deps: EditorLifecycleDeps,
-): EditorLifecycle {
+export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecycle {
   const { state, services, onStatusChange } = deps;
-  const rawOptions: NonNullable<Parameters<typeof resolveWebEditorOptions>[0]> =
-    deps.options
-      ? (deps.options as NonNullable<
-          Parameters<typeof resolveWebEditorOptions>[0]
-        >)
-      : {};
+  const rawOptions: NonNullable<Parameters<typeof resolveWebEditorOptions>[0]> = deps.options
+    ? (deps.options as NonNullable<Parameters<typeof resolveWebEditorOptions>[0]>)
+    : {};
   const options = resolveWebEditorOptions(rawOptions);
-  if (
-    rawOptions.agentBridge &&
-    !Object.prototype.hasOwnProperty.call(
-      rawOptions.agentBridge,
-      'enableContextAppend',
-    )
-  ) {
-    (
-      options.agentBridge as { enableContextAppend?: boolean }
-    ).enableContextAppend = undefined;
+  if (rawOptions.agentBridge && !Object.prototype.hasOwnProperty.call(rawOptions.agentBridge, 'enableContextAppend')) {
+    (options.agentBridge as { enableContextAppend?: boolean }).enableContextAppend = undefined;
   }
   let inlineTextEditingElement: HTMLElement | null = null;
   let pendingCommentContextSync = false;
@@ -120,18 +101,13 @@ export function createLifecycleService(
 
   function shouldDelegateAiActionToHost(): boolean {
     return (
-      typeof rawOptions.ui?.onHostToolbarAction === 'function' &&
-      typeof options.ui.onHostToolbarAction === 'function'
+      typeof rawOptions.ui?.onHostToolbarAction === 'function' && typeof options.ui.onHostToolbarAction === 'function'
     );
   }
 
-  function buildHostSendToAgentAction(
-    element?: Element | null,
-  ): CommentaryHostToolbarAction {
+  function buildHostSendToAgentAction(element?: Element | null): CommentaryHostToolbarAction {
     const meta = services.changes.getMetaForElement(element ?? null);
-    const promptText = element
-      ? buildSaveRunPromptForAgentElement(element)
-      : '';
+    const promptText = element ? buildSaveRunPromptForAgentElement(element) : '';
     return meta?.elementKey
       ? {
           type: 'send-to-agent',
@@ -155,9 +131,7 @@ export function createLifecycleService(
     };
   }
 
-  function canReuseAgentConversationForElement(
-    element: Element | null,
-  ): boolean {
+  function canReuseAgentConversationForElement(element: Element | null): boolean {
     if (services.agentBridge.canReuseConversationForElement) {
       return services.agentBridge.canReuseConversationForElement(element);
     }
@@ -180,9 +154,7 @@ export function createLifecycleService(
     };
   }
 
-  function resolveHostExternalEditingElement(
-    target: ExternalEditingElementTarget,
-  ): Element | null {
+  function resolveHostExternalEditingElement(target: ExternalEditingElementTarget): Element | null {
     try {
       const element = locateElement(target.locator);
       return element?.isConnected ? element : null;
@@ -191,22 +163,15 @@ export function createLifecycleService(
     }
   }
 
-  function beginHostExternalEditing(
-    targetRefs: ExternalEditingElementTarget[],
-  ): {
+  function beginHostExternalEditing(targetRefs: ExternalEditingElementTarget[]): {
     taskRef: ReturnType<typeof createHostExternalEditingTaskRef>;
     targetRefs: ExternalEditingElementTarget[];
   } | null {
-    if (
-      !services.agentBridge.setExternalEditingStateByElementKey &&
-      !services.agentBridge.setExternalEditingState
-    ) {
+    if (!services.agentBridge.setExternalEditingStateByElementKey && !services.agentBridge.setExternalEditingState) {
       return null;
     }
 
-    const validTargets = targetRefs.filter(
-      (target) => String(target?.elementKey ?? '').trim() && target?.locator,
-    );
+    const validTargets = targetRefs.filter((target) => String(target?.elementKey ?? '').trim() && target?.locator);
     if (validTargets.length === 0) {
       return null;
     }
@@ -215,10 +180,7 @@ export function createLifecycleService(
     const appliedTargets: ExternalEditingElementTarget[] = [];
     for (const target of validTargets) {
       if (services.agentBridge.setExternalEditingStateByElementKey) {
-        const task = services.agentBridge.setExternalEditingStateByElementKey(
-          target,
-          taskRef,
-        );
+        const task = services.agentBridge.setExternalEditingStateByElementKey(target, taskRef);
         if (task) {
           appliedTargets.push(target);
         }
@@ -227,10 +189,7 @@ export function createLifecycleService(
 
       const element = resolveHostExternalEditingElement(target);
       if (element && services.agentBridge.setExternalEditingState) {
-        const task = services.agentBridge.setExternalEditingState(
-          element,
-          taskRef,
-        );
+        const task = services.agentBridge.setExternalEditingState(element, taskRef);
         if (task) {
           appliedTargets.push(target);
         }
@@ -253,34 +212,21 @@ export function createLifecycleService(
 
     const taskRef = {
       ...editingRun.taskRef,
-      ...(errorMessage
-        ? { error: errorMessage, code: 'HOST_AI_ACTION_FAILED' }
-        : {}),
+      ...(errorMessage ? { error: errorMessage, code: 'HOST_AI_ACTION_FAILED' } : {}),
     };
 
     for (const target of editingRun.targetRefs) {
       if (services.agentBridge.setExternalEditingTerminalStateByElementKey) {
-        services.agentBridge.setExternalEditingTerminalStateByElementKey(
-          target,
-          'error',
-          taskRef,
-        );
+        services.agentBridge.setExternalEditingTerminalStateByElementKey(target, 'error', taskRef);
         continue;
       }
 
       const element = resolveHostExternalEditingElement(target);
       if (!element) continue;
       if (services.agentBridge.setExternalEditingTerminalState) {
-        services.agentBridge.setExternalEditingTerminalState(
-          element,
-          'error',
-          taskRef,
-        );
+        services.agentBridge.setExternalEditingTerminalState(element, 'error', taskRef);
       } else {
-        services.agentBridge.clearExternalEditingState?.(
-          element,
-          editingRun.taskRef,
-        );
+        services.agentBridge.clearExternalEditingState?.(element, editingRun.taskRef);
       }
     }
 
@@ -289,9 +235,7 @@ export function createLifecycleService(
 
   let lastHostAiActionError: string | null = null;
 
-  async function runHostAiAction(
-    action: CommentaryHostToolbarAction,
-  ): Promise<boolean> {
+  async function runHostAiAction(action: CommentaryHostToolbarAction): Promise<boolean> {
     if (!shouldDelegateAiActionToHost()) {
       return false;
     }
@@ -341,10 +285,7 @@ export function createLifecycleService(
     }
 
     const activeElement = document.activeElement;
-    if (
-      !(activeElement instanceof Node) ||
-      !inlineTextEditingElement.contains(activeElement)
-    ) {
+    if (!(activeElement instanceof Node) || !inlineTextEditingElement.contains(activeElement)) {
       return false;
     }
 
@@ -358,10 +299,7 @@ export function createLifecycleService(
     );
   }
 
-  function sendCommentContextSync(
-    element: Element | null,
-    mode: 'append' | 'replace',
-  ): void {
+  function sendCommentContextSync(element: Element | null, mode: 'append' | 'replace'): void {
     void services.agentBridge
       .handleSyncCommentContextToAgent(element, mode)
       .then(() => {
@@ -372,18 +310,13 @@ export function createLifecycleService(
       .catch((error) => {
         pendingCommentContextSync = true;
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(
-          `${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync comment context:`,
-          message,
-        );
+        console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to sync comment context:`, message);
       });
   }
 
   function hasCommentContextToSync(): boolean {
     try {
-      return (
-        (services.changes.buildCommentCommentsContext?.() ?? []).length > 0
-      );
+      return (services.changes.buildCommentCommentsContext?.() ?? []).length > 0;
     } catch {
       return pendingCommentContextSync;
     }
@@ -400,10 +333,7 @@ export function createLifecycleService(
     sendCommentContextSync(null, 'replace');
   }
 
-  function syncCommentContextAfterNoteSave(
-    element: Element | null,
-    note: string,
-  ): void {
+  function syncCommentContextAfterNoteSave(element: Element | null, note: string): void {
     const mode = String(note ?? '').trim() ? 'append' : 'replace';
     if (!options.agentBridge.enabled) {
       return;
@@ -416,9 +346,7 @@ export function createLifecycleService(
     sendCommentContextSync(element, mode);
   }
 
-  async function handleDeleteCurrentAnnotationNode(
-    element: Element,
-  ): Promise<void> {
+  async function handleDeleteCurrentAnnotationNode(element: Element): Promise<void> {
     if (options.host.onDeleteAnnotationNode) {
       await options.host.onDeleteAnnotationNode(element);
     } else if (options.host.onAnnotationMarkdownChange) {
@@ -471,9 +399,7 @@ export function createLifecycleService(
       .map(toExternalEditingTarget);
   }
 
-  function resolvePromptTargetRefs(
-    preferredElement?: Element | null,
-  ): ExternalEditingElementTarget[] {
+  function resolvePromptTargetRefs(preferredElement?: Element | null): ExternalEditingElementTarget[] {
     const recoveredTargets = resolvePromptTargetRefsFromEditHistory();
     if (recoveredTargets.length > 0) {
       return recoveredTargets;
@@ -483,23 +409,17 @@ export function createLifecycleService(
       : state.selectedElement?.isConnected
         ? state.selectedElement
         : null;
-    const fallbackMeta = fallbackElement
-      ? services.changes.getMetaForElement(fallbackElement)
-      : null;
+    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
     return fallbackMeta ? [toExternalEditingTarget(fallbackMeta)] : [];
   }
 
-  function resolvePromptTargetRef(
-    preferredElement?: Element | null,
-  ): ExternalEditingElementTarget | null {
+  function resolvePromptTargetRef(preferredElement?: Element | null): ExternalEditingElementTarget | null {
     const fallbackElement = preferredElement?.isConnected
       ? preferredElement
       : state.selectedElement?.isConnected
         ? state.selectedElement
         : null;
-    const fallbackMeta = fallbackElement
-      ? services.changes.getMetaForElement(fallbackElement)
-      : null;
+    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
     if (fallbackMeta) {
       return toExternalEditingTarget(fallbackMeta);
     }
@@ -520,9 +440,7 @@ export function createLifecycleService(
     return [];
   }
 
-  function resolvePromptTarget(
-    preferredElement?: Element | null,
-  ): Element | null {
+  function resolvePromptTarget(preferredElement?: Element | null): Element | null {
     if (preferredElement?.isConnected) {
       return preferredElement;
     }
@@ -552,24 +470,16 @@ export function createLifecycleService(
     return null;
   }
 
-  function resolveInterruptTarget(
-    preferredElement?: Element | null,
-  ): Element | null {
+  function resolveInterruptTarget(preferredElement?: Element | null): Element | null {
     const preferredTarget = resolvePromptTarget(preferredElement);
-    if (
-      preferredTarget &&
-      services.agentBridge.canInterruptElementTask(preferredTarget)
-    ) {
+    if (preferredTarget && services.agentBridge.canInterruptElementTask(preferredTarget)) {
       return preferredTarget;
     }
     return resolveVisibleRunningTaskTarget();
   }
 
   function handleTransactionError(error: unknown): void {
-    console.error(
-      `${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`,
-      error,
-    );
+    console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`, error);
   }
 
   function dismissVisibleElementAgentTaskStates(): void {
@@ -603,6 +513,18 @@ export function createLifecycleService(
     }
 
     return clearableElementKeys.size;
+  }
+
+  function hasPrototypeComments(): boolean {
+    const document = services.persistence.getPersistedPrototypeCommentsDocument?.() ?? null;
+    return Boolean(
+      document &&
+      (
+        document.comments.length > 0 ||
+        document.images.length > 0 ||
+        Object.keys(document.tasks).length > 0
+      ),
+    );
   }
 
   function getTweakProtocol() {
@@ -716,29 +638,23 @@ export function createLifecycleService(
     return key === 's';
   }
 
-  function isParentSelectShortcut(event: KeyboardEvent): boolean {
-    if (
-      event.repeat ||
-      event.altKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.shiftKey
-    ) {
-      return false;
+  type ParentNavigationAction = 'select-parent' | 'return-previous';
+
+  function getParentNavigationAction(event: KeyboardEvent): ParentNavigationAction | null {
+    if (event.repeat || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return null;
     }
-    return event.key === 'ArrowUp';
+    if (event.key === 'ArrowUp') return 'select-parent';
+    if (event.key === 'ArrowDown') return 'return-previous';
+    return null;
   }
 
-  const PARENT_SELECT_EDITABLE_SELECTOR =
-    'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
-  const PARENT_SELECT_INPUT_TOUCHED_ATTR =
-    'data-we-parent-select-input-touched';
+  const PARENT_SELECT_EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const PARENT_SELECT_INPUT_TOUCHED_ATTR = 'data-we-parent-select-input-touched';
 
   function isTextualInputType(type: string | null | undefined): boolean {
     const normalizedType = (type || 'text').toLowerCase();
-    return ['', 'email', 'password', 'search', 'tel', 'text', 'url'].includes(
-      normalizedType,
-    );
+    return ['', 'email', 'password', 'search', 'tel', 'text', 'url'].includes(normalizedType);
   }
 
   function isEmptyTextEntryControl(control: HTMLElement): boolean {
@@ -762,29 +678,20 @@ export function createLifecycleService(
 
   function getTextEntryControlValue(control: HTMLElement): string {
     const tagName = control.tagName.toLowerCase();
-    if (tagName === 'textarea')
-      return (control as HTMLTextAreaElement).value ?? '';
+    if (tagName === 'textarea') return (control as HTMLTextAreaElement).value ?? '';
     if (tagName === 'input') return (control as HTMLInputElement).value ?? '';
     return control.textContent ?? '';
   }
 
-  function getParentSelectEditableControlFromNode(
-    node: EventTarget | null,
-  ): HTMLElement | null {
+  function getParentSelectEditableControlFromNode(node: EventTarget | null): HTMLElement | null {
     if (typeof HTMLElement === 'undefined' || !(node instanceof HTMLElement)) {
       return null;
     }
     if (node.isContentEditable) return node;
-    if (
-      typeof node.matches === 'function' &&
-      node.matches(PARENT_SELECT_EDITABLE_SELECTOR)
-    ) {
+    if (typeof node.matches === 'function' && node.matches(PARENT_SELECT_EDITABLE_SELECTOR)) {
       return node;
     }
-    const nearestControl =
-      typeof node.closest === 'function'
-        ? node.closest(PARENT_SELECT_EDITABLE_SELECTOR)
-        : null;
+    const nearestControl = typeof node.closest === 'function' ? node.closest(PARENT_SELECT_EDITABLE_SELECTOR) : null;
     if (!(nearestControl instanceof HTMLElement)) {
       return null;
     }
@@ -806,18 +713,12 @@ export function createLifecycleService(
     return getParentSelectEditableControlFromNode(event.target);
   }
 
-  function shouldBlockParentSelectEvent(
-    event: KeyboardEvent,
-    eventFromEditorUi: boolean,
-  ): boolean {
+  function shouldBlockParentSelectEvent(event: KeyboardEvent, eventFromEditorUi: boolean): boolean {
     const editableControl = getParentSelectEditableControl(event);
     if (editableControl) {
       if (!isTextEntryControl(editableControl)) return true;
       if (eventFromEditorUi) {
-        return (
-          editableControl.getAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR) ===
-          'true'
-        );
+        return editableControl.getAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR) === 'true';
       }
       return !isEmptyTextEntryControl(editableControl);
     }
@@ -857,9 +758,7 @@ export function createLifecycleService(
     return `${tagName}${id}${className}${role ? `[role="${role}"]` : ''}`;
   }
 
-  function cloneSelectionModeHotkeyDebug(
-    debug: SelectionModeHotkeyDebugApi,
-  ): SelectionModeHotkeyDebugSnapshot {
+  function cloneSelectionModeHotkeyDebug(debug: SelectionModeHotkeyDebugApi): SelectionModeHotkeyDebugSnapshot {
     return {
       installed: debug.installed,
       installCount: debug.installCount,
@@ -950,11 +849,7 @@ export function createLifecycleService(
       }
       if (!isSelectionModeToggleShortcut(event)) {
         debug && (debug.ignoredMismatchCount += 1);
-        recordSelectionModeHotkeyEvent(
-          debug,
-          event,
-          'ignored-shortcut-mismatch',
-        );
+        recordSelectionModeHotkeyEvent(debug, event, 'ignored-shortcut-mismatch');
         return;
       }
       debug && (debug.matchedCount += 1);
@@ -1014,13 +909,16 @@ export function createLifecycleService(
 
     const handler = (event: KeyboardEvent): void => {
       if (!state.active) return;
-      if (!isParentSelectShortcut(event)) return;
+      const action = getParentNavigationAction(event);
+      if (!action) return;
       const eventFromEditorUi = state.shadowHost?.isEventFromUi(event) ?? false;
       if (shouldBlockParentSelectEvent(event, eventFromEditorUi)) return;
 
-      const didSelectParent =
-        state.parentSelectController?.selectParent() ?? false;
-      if (!didSelectParent) return;
+      const didNavigate =
+        action === 'select-parent'
+          ? (state.parentSelectController?.selectParent() ?? false)
+          : (state.parentSelectController?.selectPrevious() ?? false);
+      if (!didNavigate) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -1036,28 +934,12 @@ export function createLifecycleService(
       passive: true,
     };
     window.addEventListener('keydown', handler, hotkeyOptions);
-    window.addEventListener(
-      'focusin',
-      markParentSelectTextEntryControlUntouched,
-      inputStateOptions,
-    );
-    window.addEventListener(
-      'input',
-      markParentSelectTextEntryControlTouched,
-      inputStateOptions,
-    );
+    window.addEventListener('focusin', markParentSelectTextEntryControlUntouched, inputStateOptions);
+    window.addEventListener('input', markParentSelectTextEntryControlTouched, inputStateOptions);
     state.parentSelectHotkeyCleanup = () => {
       window.removeEventListener('keydown', handler, hotkeyOptions);
-      window.removeEventListener(
-        'focusin',
-        markParentSelectTextEntryControlUntouched,
-        inputStateOptions,
-      );
-      window.removeEventListener(
-        'input',
-        markParentSelectTextEntryControlTouched,
-        inputStateOptions,
-      );
+      window.removeEventListener('focusin', markParentSelectTextEntryControlUntouched, inputStateOptions);
+      window.removeEventListener('input', markParentSelectTextEntryControlTouched, inputStateOptions);
     };
   }
 
@@ -1087,8 +969,7 @@ export function createLifecycleService(
       });
     };
 
-    const canListenOnDocument =
-      typeof document?.addEventListener === 'function';
+    const canListenOnDocument = typeof document?.addEventListener === 'function';
 
     window.addEventListener('resize', onWindowResize, { passive: true });
     window.addEventListener('resize', syncChangeMarkersToViewport, {
@@ -1109,11 +990,7 @@ export function createLifecycleService(
       window.removeEventListener('resize', syncChangeMarkersToViewport);
       window.removeEventListener('scroll', syncChangeMarkersToViewport, true);
       if (canListenOnDocument) {
-        document.removeEventListener(
-          'scroll',
-          syncChangeMarkersToViewport,
-          true,
-        );
+        document.removeEventListener('scroll', syncChangeMarkersToViewport, true);
       }
       if (uiResizeRafId !== null) {
         window.cancelAnimationFrame(uiResizeRafId);
@@ -1153,10 +1030,7 @@ export function createLifecycleService(
             onStatusChange?.();
           })
           .catch((error) => {
-            console.warn(
-              `${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`,
-              error,
-            );
+            console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`, error);
             services.changes.renderChangeMarkers();
           });
       });
@@ -1167,12 +1041,7 @@ export function createLifecycleService(
     };
 
     if (historyRef && typeof originalPushState === 'function') {
-      wrappedPushState = function pushState(
-        this: History,
-        data: unknown,
-        unused: string,
-        url?: string | URL | null,
-      ) {
+      wrappedPushState = function pushState(this: History, data: unknown, unused: string, url?: string | URL | null) {
         const result = originalPushState.call(this, data, unused, url);
         dispatchRouteChange();
         return result;
@@ -1206,18 +1075,10 @@ export function createLifecycleService(
         window.cancelAnimationFrame(routeChangeRafId);
         routeChangeRafId = null;
       }
-      if (
-        historyRef &&
-        wrappedPushState &&
-        historyRef.pushState === wrappedPushState
-      ) {
+      if (historyRef && wrappedPushState && historyRef.pushState === wrappedPushState) {
         historyRef.pushState = originalPushState;
       }
-      if (
-        historyRef &&
-        wrappedReplaceState &&
-        historyRef.replaceState === wrappedReplaceState
-      ) {
+      if (historyRef && wrappedReplaceState && historyRef.replaceState === wrappedReplaceState) {
         historyRef.replaceState = originalReplaceState;
       }
     };
@@ -1236,10 +1097,7 @@ export function createLifecycleService(
         upgradeFromPanelOnly();
         return;
       } catch (error) {
-        console.error(
-          `${WEB_EDITOR_V2_LOG_PREFIX} Failed to upgrade from panel-only:`,
-          error,
-        );
+        console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to upgrade from panel-only:`, error);
         // Fall through to a clean full start below.
         cleanupMountedRuntime();
         state.active = false;
@@ -1264,8 +1122,7 @@ export function createLifecycleService(
 
       state.changeMarkersVisible = services.persistence.readMarkerVisibility();
       ensureMarkersVisible();
-      state.commentShortcutSettings =
-        services.persistence.readCommentShortcutSettings();
+      state.commentShortcutSettings = services.persistence.readCommentShortcutSettings();
       state.uiSettings = {
         ...services.persistence.readUiSettings(),
         darkMode: options.ui.initialDarkMode,
@@ -1343,10 +1200,7 @@ export function createLifecycleService(
           onStatusChange?.();
         })
         .catch((error) => {
-          console.warn(
-            `${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`,
-            error,
-          );
+          console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`, error);
           services.agentBridge.rehydratePersistedAgentState();
           ensureMarkersVisible();
           services.persistence.persistFromTransactions();
@@ -1361,43 +1215,37 @@ export function createLifecycleService(
 
       state.parentSelectController = createParentSelectCorner({
         container: elements.overlayRoot,
-        getParentCandidate: (element) =>
-          state.selectionEngine?.getParentCandidate(element) ?? null,
-        onSelectParent: (parent) => {
-          const rect = parent.getBoundingClientRect();
-          const clientX = Number.isFinite(rect.left)
-            ? rect.left + rect.width / 2
-            : undefined;
+        getParentCandidate: (element) => state.selectionEngine?.getParentCandidate(element) ?? null,
+        onNavigate: (target) => {
+          if (services.agentBridge.isElementInteractionLocked(target)) return false;
+          const rect = target.getBoundingClientRect();
+          const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : undefined;
           const clientY = Number.isFinite(rect.top)
             ? rect.top + Math.min(18, Math.max(10, rect.height / 2))
             : undefined;
 
           void services.interaction.handleSelect(
-            parent,
+            target,
             {
               alt: false,
               shift: false,
               ctrl: false,
               meta: false,
             },
-            clientX !== undefined && clientY !== undefined
-              ? { clientX, clientY }
-              : undefined,
+            clientX !== undefined && clientY !== undefined ? { clientX, clientY } : undefined,
           );
+          return true;
         },
       });
 
       state.eventController = createEventController({
         isOverlayElement: state.shadowHost.isOverlayElement,
         shouldAllowPageEvent: (event) =>
-          Boolean(options.host.shouldAllowPageEvent?.(event)) ||
-          shouldAllowInlineEditingPageEvent(event),
+          Boolean(options.host.shouldAllowPageEvent?.(event)) || shouldAllowInlineEditingPageEvent(event),
         allowNativeTextSelection: isTextComment,
         onHover: isTextComment ? () => {} : services.interaction.handleHover,
         onSelect: (event) => {
-          const target = services.agentBridge.resolveSelectableElement(
-            event.element,
-          );
+          const target = services.agentBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
           void services.interaction.handleSelect(target, event.modifiers, {
             clientX: event.clientX,
@@ -1408,10 +1256,7 @@ export function createLifecycleService(
           ? undefined
           : (event) => {
               if (!services.textSession.isEditable(event.element)) return;
-              if (
-                services.agentBridge.isElementInteractionLocked(event.element)
-              )
-                return;
+              if (services.agentBridge.isElementInteractionLocked(event.element)) return;
               state.breadcrumbs?.enterInlineTextEdit?.();
               state.propertyPanel?.enterInlineTextEdit?.();
             },
@@ -1422,16 +1267,11 @@ export function createLifecycleService(
         findTargetForSelect: isTextComment
           ? undefined
           : (_x, _y, modifiers, event) => {
-              const target =
-                state.selectionEngine?.findBestTargetFromEvent(
-                  event,
-                  modifiers,
-                ) ?? null;
+              const target = state.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
               return services.agentBridge.resolveSelectableElement(target);
             },
         getSelectedElement: () => state.selectedElement,
-        isElementInteractionLocked: (element) =>
-          services.agentBridge.isElementInteractionLocked(element),
+        isElementInteractionLocked: (element) => services.agentBridge.isElementInteractionLocked(element),
       });
       if (!options.ui.initialSelectionModeActive) {
         state.eventController.setMode('interaction', {
@@ -1458,11 +1298,8 @@ export function createLifecycleService(
 
             state.activeTextComment = comment;
 
-            const usedNativeHighlight =
-              textCommentManager.setActiveHighlight(comment);
-            state.canvasOverlay?.setTextHighlightRects(
-              usedNativeHighlight ? null : comment.clientRects,
-            );
+            const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
+            state.canvasOverlay?.setTextHighlightRects(usedNativeHighlight ? null : comment.clientRects);
             state.canvasOverlay?.render();
 
             // Compute an anchor for the bubble card from the bounding rect
@@ -1509,9 +1346,7 @@ export function createLifecycleService(
         const selectElementWithCenterAnchor = (element: Element): void => {
           if (!element.isConnected) return;
           const rect = element.getBoundingClientRect();
-          const clientX = Number.isFinite(rect.left)
-            ? rect.left + rect.width / 2
-            : undefined;
+          const clientX = Number.isFinite(rect.left) ? rect.left + rect.width / 2 : undefined;
           const clientY = Number.isFinite(rect.top)
             ? rect.top + Math.min(18, Math.max(10, rect.height / 2))
             : undefined;
@@ -1524,9 +1359,7 @@ export function createLifecycleService(
               ctrl: false,
               meta: false,
             },
-            clientX !== undefined && clientY !== undefined
-              ? { clientX, clientY }
-              : undefined,
+            clientX !== undefined && clientY !== undefined ? { clientX, clientY } : undefined,
           );
         };
 
@@ -1557,8 +1390,7 @@ export function createLifecycleService(
             services.persistence.setUiSettings(settings);
           },
           onLocateElement: (element) => {
-            const target =
-              services.agentBridge.resolveSelectableElement(element) ?? element;
+            const target = services.agentBridge.resolveSelectableElement(element) ?? element;
             if (!target?.isConnected) return;
             services.interaction.clearSelection();
             state.eventController?.setMode('hover');
@@ -1582,8 +1414,7 @@ export function createLifecycleService(
                   try {
                     return await services.agentBridge.requestWake();
                   } catch (error) {
-                    const message =
-                      error instanceof Error ? error.message : String(error);
+                    const message = error instanceof Error ? error.message : String(error);
                     if (message) {
                       services.feedback.toast('warning', message);
                     }
@@ -1595,12 +1426,9 @@ export function createLifecycleService(
             if (shouldDelegateAiActionToHost()) {
               const targetRefs = resolvePromptTargetRefs(element);
               const editingRun = beginHostExternalEditing(targetRefs);
-              const handled = await runHostAiAction(
-                buildHostSendToAgentAction(element),
-              );
+              const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
-                const message =
-                  lastHostAiActionError || '宿主暂未处理 AI 执行请求。';
+                const message = lastHostAiActionError || '宿主暂未处理 AI 执行请求。';
                 markHostExternalEditingError(editingRun, message);
                 throw new Error(message);
               }
@@ -1622,15 +1450,10 @@ export function createLifecycleService(
           onSendCurrentElementPromptToAgent: async (element) => {
             if (shouldDelegateAiActionToHost()) {
               const targetRef = resolvePromptTargetRef(element);
-              const editingRun = beginHostExternalEditing(
-                targetRef ? [targetRef] : [],
-              );
-              const handled = await runHostAiAction(
-                buildHostSendToAgentAction(element),
-              );
+              const editingRun = beginHostExternalEditing(targetRef ? [targetRef] : []);
+              const handled = await runHostAiAction(buildHostSendToAgentAction(element));
               if (!handled) {
-                const message =
-                  lastHostAiActionError || '宿主暂未处理 AI 执行请求。';
+                const message = lastHostAiActionError || '宿主暂未处理 AI 执行请求。';
                 markHostExternalEditingError(editingRun, message);
                 throw new Error(message);
               }
@@ -1644,25 +1467,19 @@ export function createLifecycleService(
               throw new Error('当前元素没有可发送给 AI 的编辑。');
             }
             try {
-              await services.agentBridge.handleSendPromptToAgentForElement(
-                element,
-                prompt,
-              );
+              await services.agentBridge.handleSendPromptToAgentForElement(element, prompt);
             } finally {
               state.positionTracker?.forceUpdate(true);
             }
           },
           onAbortAgentPrompt: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const locallyInterrupted =
-                element === null ? await interruptVisibleTasksLocally() : false;
+              const locallyInterrupted = element === null ? await interruptVisibleTasksLocally() : false;
               const handled = await runHostAiAction({
                 type: 'interrupt-agent',
               });
               if (!handled && !locallyInterrupted) {
-                throw new Error(
-                  lastHostAiActionError || '宿主暂未处理 AI 终止请求。',
-                );
+                throw new Error(lastHostAiActionError || '宿主暂未处理 AI 终止请求。');
               }
               return;
             }
@@ -1691,9 +1508,9 @@ export function createLifecycleService(
             services.agentBridge.invalidateCurrentConversation?.();
             dismissVisibleElementAgentTaskStates();
           },
+          hasPrototypeComments,
           onClearCurrentElementEdits: async (element) => {
-            const didClear =
-              await services.localActions.handleClearElementEdits(element);
+            const didClear = await services.localActions.handleClearElementEdits(element);
             if (didClear) {
               services.agentBridge.dismissElementTaskState(element, {
                 includeRunning: true,
@@ -1702,8 +1519,7 @@ export function createLifecycleService(
             return didClear;
           },
           onDeleteCurrentAnnotationNode:
-            options.host.onDeleteAnnotationNode ||
-            options.host.onAnnotationMarkdownChange
+            options.host.onDeleteAnnotationNode || options.host.onAnnotationMarkdownChange
               ? handleDeleteCurrentAnnotationNode
               : undefined,
           getCopyPromptBlockReason: services.summaries.getCopyPromptBlockReason,
@@ -1717,50 +1533,35 @@ export function createLifecycleService(
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
           onHostToolbarAction: options.ui.onHostToolbarAction,
-          externalEditingStatusDescription:
-            options.ui.externalEditingStatusDescription,
+          externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
           commentarySkillOptions: options.ui.commentarySkillOptions,
           commentarySelectedSkillIds: options.ui.commentarySelectedSkillIds,
-          commentarySkillSettingsConfigured:
-            options.ui.commentarySkillSettingsConfigured,
-          onCommentarySkillSelectionLoad:
-            options.ui.onCommentarySkillSelectionLoad,
-          onCommentarySkillSelectionChange:
-            options.ui.onCommentarySkillSelectionChange,
+          commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
+          onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
+          onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
           getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
           getAgentBridgeConnected: () => services.agentBridge.isConnected(),
           getCanAbortAgentPrompt: (element) => {
             if (element === null) {
               return (
                 services.agentBridge.canInterruptVisibleTasks?.() ??
-                services.agentBridge.canInterruptElementTask(
-                  resolveVisibleRunningTaskTarget(),
-                )
+                services.agentBridge.canInterruptElementTask(resolveVisibleRunningTaskTarget())
               );
             }
-            return services.agentBridge.canInterruptElementTask(
-              resolveInterruptTarget(element),
-            );
+            return services.agentBridge.canInterruptElementTask(resolveInterruptTarget(element));
           },
-          getHasReusableAgentConversation: () =>
-            services.agentBridge.hasReusableConversation(),
-          getCurrentAgentConversationState: () =>
-            services.agentBridge.getCurrentConversationState(),
-          getElementAgentTaskState: (element) =>
-            services.agentBridge.getElementTaskState(element),
-          getVisibleElementAgentTaskStates: () =>
-            services.agentBridge.getVisibleTaskStates(),
-          getAgentProviderAvailability: (provider) =>
-            services.agentBridge.getProviderAvailability(provider),
-          getAgentProviderAvailabilities: () =>
-            services.agentBridge.getProviderAvailabilities(),
+          getHasReusableAgentConversation: () => services.agentBridge.hasReusableConversation(),
+          getCurrentAgentConversationState: () => services.agentBridge.getCurrentConversationState(),
+          getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+          getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+          getAgentProviderAvailability: (provider) => services.agentBridge.getProviderAvailability(provider),
+          getAgentProviderAvailabilities: () => services.agentBridge.getProviderAvailabilities(),
           refreshAgentProviderAvailabilities: (providers) =>
             services.agentBridge.refreshProviderAvailabilities(providers),
           subscribeSessionActivity: (target, listener) =>
             services.agentBridge.subscribeSessionActivity(target, listener),
-          dismissElementAgentTaskState: (element) =>
-            services.agentBridge.dismissElementTaskState(element),
+          dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
           dismissVisibleElementAgentTaskStates,
           getSendPromptToAgentBlockReason: (element) => {
             const targetElements = resolvePromptTargets(element);
@@ -1773,9 +1574,7 @@ export function createLifecycleService(
             if (!element?.isConnected) {
               return '当前元素已失效，请重新选择后再试。';
             }
-            return services.summaries.getSaveRunPromptForElementBlockReason(
-              element,
-            );
+            return services.summaries.getSaveRunPromptForElementBlockReason(element);
           },
           canExportSelectionToDesignTool: (_tool, element) => {
             const targetElement = resolvePromptTarget(element);
@@ -1790,12 +1589,8 @@ export function createLifecycleService(
               await exportSelectionToDesignTool(tool, targetElement);
               services.feedback.toast('success', `已导出到 ${tool}`);
             } catch (error) {
-              const message =
-                error instanceof Error ? error.message : String(error);
-              services.feedback.toast(
-                'error',
-                message || `导出到 ${tool} 失败`,
-              );
+              const message = error instanceof Error ? error.message : String(error);
+              services.feedback.toast('error', message || `导出到 ${tool} 失败`);
             }
           },
           getExportSelectionToDesignToolBlockReason: (_tool, element) => {
@@ -1803,9 +1598,7 @@ export function createLifecycleService(
             if (!targetElement) {
               return '当前没有可导出的元素';
             }
-            if (
-              services.agentBridge.isElementInteractionLocked(targetElement)
-            ) {
+            if (services.agentBridge.isElementInteractionLocked(targetElement)) {
               return '当前元素正在由 AI 更新';
             }
             return getDesignToolExportBlockReason(targetElement);
@@ -1820,12 +1613,9 @@ export function createLifecycleService(
             state.inlineTextEditingActive = Boolean(inlineTextEditingElement);
             state.positionTracker?.forceUpdate(true);
           },
-          getTweakSchema: (element) =>
-            getTweakProtocol()?.getSchema(element) ?? null,
-          getTweakValues: (element) =>
-            getTweakProtocol()?.getValues(element) ?? null,
-          getPageTweakEntries: () =>
-            getTweakProtocol()?.listEntries(document) ?? [],
+          getTweakSchema: (element) => getTweakProtocol()?.getSchema(element) ?? null,
+          getTweakValues: (element) => getTweakProtocol()?.getValues(element) ?? null,
+          getPageTweakEntries: () => getTweakProtocol()?.listEntries(document) ?? [],
           onUpdateTweakValues: async (element, patch) => {
             const protocol = getTweakProtocol();
             if (!protocol) {
@@ -1843,16 +1633,12 @@ export function createLifecycleService(
             state.positionTracker?.forceUpdate(true);
             onStatusChange?.();
           },
-          subscribeTweak: (listener) =>
-            getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
-          getAiNote: (element) =>
-            services.changes.getMetaForElement(element)?.note ?? '',
-          getAiNoteSkillIds: (element) =>
-            services.changes.getMetaForElement(element)?.skillIds?.slice() ??
-            [],
+          subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
+          getAiNote: (element) => services.changes.getMetaForElement(element)?.note ?? '',
+          getAiNoteSkillIds: (element) => services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
           enableImageAttachments: options.ui.enableImageAttachments,
-          getAiNoteImages: (element) =>
-            services.changes.getImagesForElement(element),
+          onPrepareAiNoteImages: options.ui.onPrepareImageAttachments,
+          getAiNoteImages: (element) => services.changes.getImagesForElement(element),
           getHoveredElement: () => state.hoveredElement,
           onRememberSelectionAnchor: (element, selectionAnchor) => {
             services.changes.rememberSelectionAnchor(element, selectionAnchor);
@@ -1871,8 +1657,7 @@ export function createLifecycleService(
             state.positionTracker?.forceUpdate(true);
           },
           canEditAnnotationMarkdown: options.host.canEditAnnotationMarkdown,
-          getAnnotationDocumentEditUrl:
-            options.host.getAnnotationDocumentEditUrl,
+          getAnnotationDocumentEditUrl: options.host.getAnnotationDocumentEditUrl,
           getAnnotationMarkdown: options.host.getAnnotationMarkdown,
           onAnnotationMarkdownChange: options.host.onAnnotationMarkdownChange,
           onDismissSelection: services.interaction.clearSelection,
@@ -1901,22 +1686,18 @@ export function createLifecycleService(
           },
           onToggleSelectionMode: (enabled, toggleOptions) => {
             const selectedElement = state.selectedElement;
-            const hasSelection =
-              !!selectedElement && selectedElement.isConnected;
+            const hasSelection = !!selectedElement && selectedElement.isConnected;
             if (!state.eventController) {
               return;
             }
 
             if (enabled) {
-              state.eventController.setMode(
-                hasSelection ? 'selecting' : 'hover',
-              );
+              state.eventController.setMode(hasSelection ? 'selecting' : 'hover');
               return;
             }
 
             state.eventController.setMode('interaction', {
-              allowPageInteraction:
-                toggleOptions?.allowPageInteraction ?? !hasSelection,
+              allowPageInteraction: toggleOptions?.allowPageInteraction ?? !hasSelection,
             });
           },
         };
@@ -1933,45 +1714,33 @@ export function createLifecycleService(
                 dock: 'top',
                 onSelect: selectElementWithCenterAnchor,
                 getAssistantPanelOpen: options.ui.getAssistantPanelOpen,
-                getAgentBridgeAvailable: () =>
-                  services.agentBridge.isAvailable(),
+                getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
                 hideExecutionControls: options.ui.hideExecutionControls,
                 getCommentShortcutSettings: () => state.commentShortcutSettings,
-                getElementAgentTaskState: (element) =>
-                  services.agentBridge.getElementTaskState(element),
-                getVisibleElementAgentTaskStates: () =>
-                  services.agentBridge.getVisibleTaskStates(),
-                dismissElementAgentTaskState: (element) =>
-                  services.agentBridge.dismissElementTaskState(element),
-                externalEditingStatusDescription:
-                  options.ui.externalEditingStatusDescription,
-                onAppendElementToAgentContext: options.agentBridge
-                  .enableContextAppend
+                getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+                getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
+                dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
+                externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
+                onAppendElementToAgentContext: options.agentBridge.enableContextAppend
                   ? (element) => {
                       if (!element.isConnected) return;
-                      void services.agentBridge.handleSendSelectionToAgent(
-                        element,
-                      );
+                      void services.agentBridge.handleSendSelectionToAgent(element);
                     }
                   : undefined,
                 getElementStyleSummaryLines: (element) =>
-                  services.changes.getMetaForElement(element)
-                    ?.styleSummaryLines ?? [],
-                canEditAnnotationMarkdown:
-                  options.host.canEditAnnotationMarkdown,
-                getAnnotationDocumentEditUrl:
-                  options.host.getAnnotationDocumentEditUrl,
+                  services.changes.getMetaForElement(element)?.styleSummaryLines ?? [],
+                getElementTools: options.host.getElementTools,
+                onElementToolAction: options.host.onElementToolAction,
+                canEditAnnotationMarkdown: options.host.canEditAnnotationMarkdown,
+                getAnnotationDocumentEditUrl: options.host.getAnnotationDocumentEditUrl,
                 getAnnotationMarkdown: options.host.getAnnotationMarkdown,
-                onAnnotationMarkdownChange:
-                  options.host.onAnnotationMarkdownChange,
+                onAnnotationMarkdownChange: options.host.onAnnotationMarkdownChange,
                 onDeleteCurrentAnnotationNode:
-                  options.host.onDeleteAnnotationNode ||
-                  options.host.onAnnotationMarkdownChange
+                  options.host.onDeleteAnnotationNode || options.host.onAnnotationMarkdownChange
                     ? handleDeleteCurrentAnnotationNode
                     : undefined,
                 onSelectParent: (element) => {
-                  const parent =
-                    state.selectionEngine?.getParentCandidate(element) ?? null;
+                  const parent = state.selectionEngine?.getParentCandidate(element) ?? null;
                   if (parent) {
                     selectElementWithCenterAnchor(parent);
                   }
@@ -2106,15 +1875,10 @@ export function createLifecycleService(
         state.promptCardVisible = false;
         state.propertyPanel?.refresh();
         onStatusChange?.();
-        console.log(
-          `${WEB_EDITOR_V2_LOG_PREFIX} Downgraded to panel-only mode`,
-        );
+        console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Downgraded to panel-only mode`);
         return;
       } catch (error) {
-        console.error(
-          `${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`,
-          error,
-        );
+        console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`, error);
         // Fall through to full stop below.
       }
     }
@@ -2144,9 +1908,7 @@ export function createLifecycleService(
       if (state.panelOnlyMode) {
         console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Already in panel-only mode`);
       } else {
-        console.log(
-          `${WEB_EDITOR_V2_LOG_PREFIX} Already fully active, ignoring startPanelOnly`,
-        );
+        console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Already fully active, ignoring startPanelOnly`);
       }
       return;
     }
@@ -2222,17 +1984,13 @@ export function createLifecycleService(
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
           onHostToolbarAction: options.ui.onHostToolbarAction,
-          externalEditingStatusDescription:
-            options.ui.externalEditingStatusDescription,
+          externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
           commentarySkillOptions: options.ui.commentarySkillOptions,
           commentarySelectedSkillIds: options.ui.commentarySelectedSkillIds,
-          commentarySkillSettingsConfigured:
-            options.ui.commentarySkillSettingsConfigured,
-          onCommentarySkillSelectionLoad:
-            options.ui.onCommentarySkillSelectionLoad,
-          onCommentarySkillSelectionChange:
-            options.ui.onCommentarySkillSelectionChange,
+          commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
+          onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
+          onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
           getAgentBridgeAvailable: () => false,
           getAgentBridgeConnected: () => false,
           getCanAbortAgentPrompt: () => false,
@@ -2247,22 +2005,17 @@ export function createLifecycleService(
           dismissElementAgentTaskState: () => {},
           dismissVisibleElementAgentTaskStates: () => {},
           getSendPromptToAgentBlockReason: () => '属性面板仅预览模式，不可发送',
-          getSendCurrentElementPromptToAgentBlockReason: () =>
-            '属性面板仅预览模式，不可发送',
+          getSendCurrentElementPromptToAgentBlockReason: () => '属性面板仅预览模式，不可发送',
           canExportSelectionToDesignTool: () => false,
           onExportSelectionToDesignTool: async () => {},
-          getExportSelectionToDesignToolBlockReason: () =>
-            '属性面板仅预览模式，不可导出',
+          getExportSelectionToDesignToolBlockReason: () => '属性面板仅预览模式，不可导出',
           canEditText: () => false,
           getTextValue: () => '',
           onTextValueChange: () => {},
           onInlineTextEditingElementChange: () => {},
-          getTweakSchema: (element) =>
-            getTweakProtocol()?.getSchema(element) ?? null,
-          getTweakValues: (element) =>
-            getTweakProtocol()?.getValues(element) ?? null,
-          getPageTweakEntries: () =>
-            getTweakProtocol()?.listEntries(document) ?? [],
+          getTweakSchema: (element) => getTweakProtocol()?.getSchema(element) ?? null,
+          getTweakValues: (element) => getTweakProtocol()?.getValues(element) ?? null,
+          getPageTweakEntries: () => getTweakProtocol()?.listEntries(document) ?? [],
           onUpdateTweakValues: async (element, patch) => {
             const protocol = getTweakProtocol();
             if (!protocol) {
@@ -2271,8 +2024,7 @@ export function createLifecycleService(
             await protocol.update(element, patch);
             onStatusChange?.();
           },
-          subscribeTweak: (listener) =>
-            getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
+          subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
           getAiNote: () => '',
           getAiNoteSkillIds: () => [],
           getAiNoteImages: () => [],
@@ -2281,13 +2033,11 @@ export function createLifecycleService(
           onAiNoteChange: () => {},
           onAiNoteImagesChange: () => {},
           canEditAnnotationMarkdown: options.host.canEditAnnotationMarkdown,
-          getAnnotationDocumentEditUrl:
-            options.host.getAnnotationDocumentEditUrl,
+          getAnnotationDocumentEditUrl: options.host.getAnnotationDocumentEditUrl,
           getAnnotationMarkdown: options.host.getAnnotationMarkdown,
           onAnnotationMarkdownChange: options.host.onAnnotationMarkdownChange,
           onDeleteCurrentAnnotationNode:
-            options.host.onDeleteAnnotationNode ||
-            options.host.onAnnotationMarkdownChange
+            options.host.onDeleteAnnotationNode || options.host.onAnnotationMarkdownChange
               ? handleDeleteCurrentAnnotationNode
               : undefined,
           onDismissSelection: () => {},
@@ -2326,10 +2076,7 @@ export function createLifecycleService(
       state.active = false;
       state.panelOnlyMode = false;
       onStatusChange?.();
-      console.error(
-        `${WEB_EDITOR_V2_LOG_PREFIX} Failed to start panel-only:`,
-        error,
-      );
+      console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to start panel-only:`, error);
     }
   }
 
@@ -2375,10 +2122,7 @@ export function createLifecycleService(
       onStatusChange?.();
       console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Stopped panel-only mode`);
     } catch (error) {
-      console.error(
-        `${WEB_EDITOR_V2_LOG_PREFIX} Error during panel-only cleanup:`,
-        error,
-      );
+      console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Error during panel-only cleanup:`, error);
       cleanupMountedRuntime();
       onStatusChange?.();
     }

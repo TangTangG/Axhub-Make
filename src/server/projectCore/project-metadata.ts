@@ -14,14 +14,10 @@ export interface PrototypeResourceArtifacts {
   [key: string]: unknown;
 }
 
-export interface PrototypeResourceSpec {
-  path: string;
-  title?: string;
-}
-
 export interface PrototypeResourcePage {
   id: string;
   title: string;
+  group?: string;
 }
 
 export interface PrototypePlaceholderGuide {
@@ -47,7 +43,6 @@ export interface PrototypeResource {
   generationStatus?: PrototypeGenerationStatus;
   filePath?: string;
   absoluteFilePath?: string;
-  spec?: PrototypeResourceSpec;
   artifacts?: PrototypeResourceArtifacts;
   pages?: PrototypeResourcePage[];
   defaultPageId?: string;
@@ -294,40 +289,6 @@ function normalizeGenericResources(value: unknown): GenericProjectResource[] {
     .filter((item): item is GenericProjectResource => Boolean(item));
 }
 
-function isInsideProjectRoot(projectRoot: string, targetPath: string): boolean {
-  const relative = path.relative(projectRoot, targetPath);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
-
-function normalizePrototypeSpec(projectRoot: string, resourceId: string, value: unknown): PrototypeResourceSpec | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const raw = value as Record<string, unknown>;
-  const specPath = stringValue(raw.path);
-  if (!specPath) {
-    return undefined;
-  }
-
-  const normalizedSpecPath = specPath.replace(/\\/g, path.sep);
-  const resolvedSpecPath = path.resolve(path.isAbsolute(normalizedSpecPath)
-    ? normalizedSpecPath
-    : path.join(projectRoot, normalizedSpecPath));
-  if (!isInsideProjectRoot(projectRoot, resolvedSpecPath)) {
-    throw new Error(`Prototype spec ${resourceId} is outside project root`);
-  }
-  if (path.extname(resolvedSpecPath).toLowerCase() !== '.md') {
-    throw new Error(`Prototype spec ${resourceId} must use a Markdown path`);
-  }
-
-  const title = stringValue(raw.title);
-  return {
-    path: resolvedSpecPath,
-    ...(title ? { title } : {}),
-  };
-}
-
 function normalizePrototypePlaceholderGuide(value: unknown): PrototypePlaceholderGuide | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
@@ -358,7 +319,8 @@ function normalizePrototypeRoutePages(value: unknown): PrototypeResourcePage[] {
     .map((item) => {
       const id = normalizePageId(item.id);
       const title = stringValue(item.title);
-      return id && title ? { id, title } : null;
+      const group = stringValue(item.group);
+      return id && title ? { id, title, ...(group ? { group } : {}) } : null;
     })
     .filter((item): item is PrototypeResourcePage => Boolean(item));
 }
@@ -367,7 +329,7 @@ function normalizePrototypeGenerationStatus(value: unknown): PrototypeGeneration
   return value === 'waiting' ? 'waiting' : undefined;
 }
 
-function normalizePrototypeResources(value: unknown, projectRoot: string): PrototypeResource[] {
+function normalizePrototypeResources(value: unknown): PrototypeResource[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -386,7 +348,6 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
       const artifacts = item.artifacts && typeof item.artifacts === 'object' && !Array.isArray(item.artifacts)
         ? item.artifacts as PrototypeResourceArtifacts
         : null;
-      const spec = normalizePrototypeSpec(projectRoot, id, item.spec);
       const placeholderGuide = normalizePrototypePlaceholderGuide(item.placeholderGuide);
       const generationStatus = normalizePrototypeGenerationStatus(item.generationStatus);
       const pages = normalizePrototypeRoutePages(item.pages);
@@ -410,7 +371,6 @@ function normalizePrototypeResources(value: unknown, projectRoot: string): Proto
         ...(generationStatus ? { generationStatus } : {}),
         ...(filePath ? { filePath } : {}),
         ...(absoluteFilePath ? { absoluteFilePath } : {}),
-        ...(spec ? { spec } : {}),
         ...(artifacts ? { artifacts } : {}),
         ...(pages.length > 0 ? { pages, defaultPageId } : {}),
         ...(importReport ? { importReport } : {}),
@@ -488,7 +448,7 @@ function normalizeMetadata(data: unknown, projectRoot: string): ProjectMetadata 
       name: typeof project.name === 'string' ? project.name.trim() : stringValue(project.id) || defaults.project.name,
     },
     resources: {
-      prototypes: normalizePrototypeResources(resources.prototypes, projectRoot),
+      prototypes: normalizePrototypeResources(resources.prototypes),
       themes: normalizeGenericResources(resources.themes),
     },
     navigation: {

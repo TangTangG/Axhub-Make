@@ -32,10 +32,12 @@ vite.config.*.timestamp-*
 **/.axhub/make/.dev-server-info.json
 **/.axhub/make/axhub.config.json
 !client/.axhub/make/axhub.config.json
+!client/template-seed/.axhub/make/axhub.config.json
 **/.axhub/make/review-reports.json
 **/.axhub/make/entries.json
 **/.axhub/make/sidebar-tree.json
 !client/.axhub/make/sidebar-tree.json
+!client/template-seed/.axhub/make/sidebar-tree.json
 **/.axhub/make/sessions/
 **/.axhub/make/exports/
 **/.axhub/make/artifacts/
@@ -65,6 +67,8 @@ vite.config.*.timestamp-*
 **/.drawio-tmp/
 automation-reports/
 **/automation-reports/
+midscene_run/
+**/.sessions/
 temp/
 **/temp/
 tmp/

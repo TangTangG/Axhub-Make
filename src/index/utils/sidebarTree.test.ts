@@ -465,6 +465,98 @@ describe('sidebarTree', () => {
         ]);
     });
 
+    it('keeps nested filesystem resource titles as basenames when metadata display names include the folder path', () => {
+        const items = [
+            createPrototype({
+                name: 'new-folder/fabu.md',
+                displayName: 'new-folder/fabu',
+                filePath: 'new-folder/fabu.md',
+            }),
+            createPrototype({
+                name: 'new-folder/新建.md',
+                displayName: 'new-folder/新建',
+                filePath: 'new-folder/新建.md',
+            }),
+        ];
+        const scannedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-new-folder',
+                kind: 'folder',
+                title: 'new-folder',
+                path: 'new-folder',
+                folderPath: 'new-folder',
+                children: [
+                    {
+                        id: 'item-docs-new-folder-fabu-md',
+                        kind: 'item',
+                        title: 'fabu',
+                        itemKey: 'docs/new-folder/fabu.md',
+                        path: 'new-folder/fabu.md',
+                    },
+                    {
+                        id: 'item-docs-new-folder-new-md',
+                        kind: 'item',
+                        title: 'new-folder/新建',
+                        itemKey: 'docs/new-folder/新建.md',
+                        path: 'new-folder/新建.md',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual([
+            {
+                id: 'folder-docs-new-folder',
+                kind: 'folder',
+                title: 'new-folder',
+                path: 'new-folder',
+                folderPath: 'new-folder',
+                children: [
+                    {
+                        id: 'item-docs-new-folder-fabu-md',
+                        kind: 'item',
+                        title: 'fabu',
+                        itemKey: 'docs/new-folder/fabu.md',
+                        path: 'new-folder/fabu.md',
+                    },
+                    {
+                        id: 'item-docs-new-folder-new-md',
+                        kind: 'item',
+                        title: '新建',
+                        itemKey: 'docs/new-folder/新建.md',
+                        path: 'new-folder/新建.md',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('preserves extensionless markdown item identity when resolving filesystem tree nodes', () => {
+        const items = [
+            createPrototype({
+                name: 'new-folder/plain',
+                displayName: 'plain',
+                filePath: 'src/resources/new-folder/plain.md',
+                resourceId: 'new-folder/plain',
+            }),
+        ];
+        const lookup = createSidebarTreeItemLookup('docs', items);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-new-folder-plain-md',
+            kind: 'item',
+            title: 'plain',
+            itemKey: 'docs/new-folder/plain.md',
+            path: 'new-folder/plain.md',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toEqual(expect.objectContaining({
+            name: 'new-folder/plain',
+            displayName: 'plain',
+            filePath: 'src/resources/new-folder/plain.md',
+            resourceId: 'new-folder/plain',
+        }));
+    });
+
     it('drops stale root README resource nodes from docs trees', () => {
         const lookup = createSidebarTreeItemLookup('docs', []);
         const node: SidebarTreeNode = {
@@ -702,9 +794,6 @@ describe('sidebarTree', () => {
             itemKey: 'docs/assets/icons/photos/2026-04-03-10.20.43.md',
         }, lookup);
 
-        expect(resolved).toEqual({
-            ...item,
-            name: 'assets/icons/photos/2026-04-03-10.20.43.md',
-        });
+        expect(resolved).toEqual(item);
     });
 });

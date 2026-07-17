@@ -153,9 +153,17 @@ describe('useIndexPageSidebarPropsBuilder', () => {
   it('keeps canvas visible when only switching resource tabs but opens the document when a document is selected', () => {
     const setViewMode = vi.fn();
     const previewHandleSelectDoc = vi.fn();
+    const setSelectedResourceFolder = vi.fn();
     const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
       state: { sidebarTab: 'document' },
-      deps: { setViewMode, previewHandleSelectDoc },
+      deps: {
+        setViewMode,
+        previewHandleSelectDoc,
+        resources: {
+          ...createBuilderParams().deps.resources,
+          setSelectedResourceFolder,
+        },
+      },
     }));
 
     props.actions.onSidebarTabChange('document');
@@ -164,6 +172,7 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     props.actions.onSelectDoc(createItem('doc-b'));
 
     expect(previewHandleSelectDoc).toHaveBeenCalledWith(expect.objectContaining({ name: 'doc-b' }));
+    expect(setSelectedResourceFolder).toHaveBeenCalledWith(null);
     expect(setViewMode).toHaveBeenCalledWith('demo');
   });
 

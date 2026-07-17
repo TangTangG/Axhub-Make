@@ -129,7 +129,7 @@ src/prototypes/{prototype-id}/.spec/reviews/ui-review.md
 
 【执行要求】
 1. 按 rules/prototype-review-guide.md 的需求评审流程做评审，不要引用 Impeccable。
-2. 优先读取需求规范文件 src/prototypes/{prototype-id}/.spec/requirements.md；如果没有该文件，则按项目资料、.spec 决策和 src/resources 资料做常规需求评审。
+2. 依次读取 src/prototypes/{prototype-id}/.spec/spec.html、spec.md，同时存在时以 HTML 为准；再按主规格链接读取必要子文档。
 5. Markdown 至少包含：总体点评、P0-P3 优先级问题、完整性与项目对齐。
 ```
 

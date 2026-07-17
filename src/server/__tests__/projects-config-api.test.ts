@@ -398,7 +398,12 @@ describe('make-server project config APIs', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          server: { host: 'localhost', allowLAN: true, lanHost: '10.0.8.42' },
+          server: {
+            host: 'localhost',
+            allowLAN: true,
+            lanHost: '10.0.8.42',
+            skipLanPreviewAuth: true,
+          },
           projectInfo: { name: 'LAN Config Client' },
         }),
       }).then(async (response) => ({ status: response.status, body: await response.json() }));
@@ -408,12 +413,14 @@ describe('make-server project config APIs', () => {
       expect(projectConfig.server).toEqual({
         host: 'localhost',
         lanHost: '10.0.8.42',
+        skipLanPreviewAuth: true,
       });
 
       const after = await fetch(`${server.origin}/api/config`).then((response) => response.json());
       expect(after.server).toEqual(expect.objectContaining({
         host: 'localhost',
         lanHost: '10.0.8.42',
+        skipLanPreviewAuth: true,
       }));
       expect(after.server).not.toHaveProperty('allowLAN');
       expect(after.availableLANHosts).toEqual(expect.any(Array));
@@ -751,6 +758,7 @@ describe('make-server project config APIs', () => {
       await saveAndExpectDefaultPromptClient('qoder', 'acp:qoder');
       await saveAndExpectDefaultPromptClient('codebuddy', 'acp:codebuddy');
       await saveAndExpectDefaultPromptClient('reasonix', 'acp:reasonix');
+      await saveAndExpectDefaultPromptClient('grok-build', 'acp:grok-build');
 
       const savedWithoutAnnotationProvider = await fetch(`${server.origin}/api/config`, {
         method: 'POST',
