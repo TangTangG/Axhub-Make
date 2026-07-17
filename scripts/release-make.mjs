@@ -342,6 +342,23 @@ function walkFiles(rootDir) {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+export function assertAdminBundleCopy(adminDir) {
+  const bundleSource = walkFiles(adminDir)
+    .filter((filePath) => path.extname(filePath).toLowerCase() === '.js')
+    .map((filePath) => fs.readFileSync(filePath, 'utf8'))
+    .join('\n');
+
+  if (!bundleSource.includes('输入需求标注，支持 Markdown 格式')) {
+    throw new Error('Admin build is missing required demand annotation copy');
+  }
+
+  for (const legacyCopy of ['标注 Markdown', '输入需求标注 Markdown']) {
+    if (bundleSource.includes(legacyCopy)) {
+      throw new Error(`Admin build includes legacy demand annotation copy: ${legacyCopy}`);
+    }
+  }
+}
+
 function isTextLikeArtifactPath(filePath) {
   return textLikeArtifactExtensions.has(path.extname(filePath).toLowerCase());
 }
@@ -1518,6 +1535,7 @@ function prepareRelease(options = {}) {
   if (!fs.existsSync(path.join(builtAdminDir, 'index.html'))) {
     throw new Error(`Admin build output is missing index.html: ${builtAdminDir}`);
   }
+  assertAdminBundleCopy(builtAdminDir);
   copyDir(builtAdminDir, releaseAdminDir);
   copyOpenCodeWebUiToRelease();
 

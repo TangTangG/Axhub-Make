@@ -127,6 +127,26 @@ afterEach(() => {
 });
 
 describe('release make artifact helpers', () => {
+  it('validates demand annotation copy in the built admin bundle', () => {
+    const root = createTempRoot('axhub-release-admin-copy-');
+    const bundlePath = path.join(root, 'assets', 'admin.js');
+
+    writeFile(bundlePath, 'const placeholder = "输入需求标注，支持 Markdown 格式";\n');
+    assert.doesNotThrow(() => releaseMake.assertAdminBundleCopy(root));
+
+    writeFile(bundlePath, 'const placeholder = "输入需求";\n');
+    assert.throws(
+      () => releaseMake.assertAdminBundleCopy(root),
+      /Admin build is missing required demand annotation copy/u,
+    );
+
+    writeFile(bundlePath, 'const placeholder = "输入需求标注，支持 Markdown 格式"; const legacy = "标注 Markdown";\n');
+    assert.throws(
+      () => releaseMake.assertAdminBundleCopy(root),
+      /Admin build includes legacy demand annotation copy/u,
+    );
+  });
+
   it('keeps tracked source files free of local machine paths', () => {
     assert.equal(containsLocalMachinePath(`/${'Users'}/example/project`), true);
     assert.equal(containsLocalMachinePath(`/${'Volumes'}/ExampleDisk/project`), true);

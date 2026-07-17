@@ -14,22 +14,6 @@ import {
 
 const appRoot = path.resolve(__dirname, '..', '..');
 
-function collectFiles(root: string): string[] {
-  if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
-    const filePath = path.join(root, entry.name);
-    return entry.isDirectory() ? collectFiles(filePath) : [filePath];
-  });
-}
-
-function readAdminBundleJavaScript(): string {
-  const adminRoot = path.join(appRoot, 'dist', 'admin');
-  return collectFiles(adminRoot)
-    .filter((filePath) => filePath.endsWith('.js'))
-    .map((filePath) => fs.readFileSync(filePath, 'utf8'))
-    .join('\n');
-}
-
 describe('make-server vendor packages', () => {
   it('uses vendored packages from make-server config instead of workspace paths', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
@@ -115,14 +99,6 @@ describe('make-server vendor packages', () => {
     const importMap = buildVendorImportMap(appRoot, config);
     expect(importMap.paths).not.toHaveProperty('@axhub/annotation');
     expect(importMap.paths['tiptap-editor']).toEqual(['./vendor/tiptap-editor/dist/index.d.ts']);
-  });
-
-  it('ships demand annotation copy in the prebuilt admin bundle', () => {
-    const bundleSource = readAdminBundleJavaScript();
-
-    expect(bundleSource).toContain('输入需求标注，支持 Markdown 格式');
-    expect(bundleSource).not.toContain('标注 Markdown');
-    expect(bundleSource).not.toContain('输入需求标注 Markdown');
   });
 
   it('keeps vendored commentary from showing the AI note composer while annotation editing is open', () => {
