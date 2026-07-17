@@ -1682,7 +1682,7 @@ function installedBinPath(tempInstallDir, binName) {
 }
 
 export function createNpmExecSmokeArgs(tarballPath) {
-  return ['exec', '--yes', tarballPath, '--', '--help'];
+  return ['exec', '--yes', `--package=${tarballPath}`, '--', 'make', '--help'];
 }
 
 function findFreePort() {

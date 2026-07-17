@@ -79,6 +79,21 @@ function listSourceFiles(rootDir) {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
+function findAncestorFile(relativePath) {
+  let currentDir = path.resolve('.');
+  while (true) {
+    const candidate = path.join(currentDir, relativePath);
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
 function readTrackedFiles() {
   const result = spawnSync('git', ['ls-files'], {
     cwd: process.cwd(),
@@ -822,9 +837,16 @@ describe('release make artifact helpers', () => {
     );
     assert(Number.isInteger(releaseTypescriptMajor), 'release TypeScript major version must be detectable');
 
-    const exportCoreTsconfig = JSON.parse(
-      fs.readFileSync(path.resolve('../../packages/axhub-export-core/tsconfig.json'), 'utf8'),
-    );
+    const exportCoreTsconfigPath = path.resolve('vendor/axhub-export-core/tsconfig.json');
+    const sourceExportCoreTsconfigPath = findAncestorFile('packages/axhub-export-core/tsconfig.json');
+    const tsconfigPath = fs.existsSync(exportCoreTsconfigPath)
+      ? exportCoreTsconfigPath
+      : sourceExportCoreTsconfigPath;
+    if (!tsconfigPath) {
+      return;
+    }
+
+    const exportCoreTsconfig = JSON.parse(fs.readFileSync(tsconfigPath, 'utf8'));
     const ignoreDeprecations = exportCoreTsconfig.compilerOptions?.ignoreDeprecations;
     if (ignoreDeprecations === undefined) {
       return;
@@ -1175,10 +1197,17 @@ describe('release make artifact helpers', () => {
     assert.equal(result.codesigned, false);
   });
 
-  it('builds npm exec smoke args that exercise the default npx make bin', () => {
+  it('builds npm exec smoke args that preserve tarball paths and exercise the make bin', () => {
     assert.deepEqual(
-      releaseMake.createNpmExecSmokeArgs('/tmp/axhub-make-1.2.3.tgz'),
-      ['exec', '--yes', '/tmp/axhub-make-1.2.3.tgz', '--', '--help'],
+      releaseMake.createNpmExecSmokeArgs('/tmp/release artifacts/axhub-make-1.2.3.tgz'),
+      [
+        'exec',
+        '--yes',
+        '--package=/tmp/release artifacts/axhub-make-1.2.3.tgz',
+        '--',
+        'make',
+        '--help',
+      ],
     );
   });
 
