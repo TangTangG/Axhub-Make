@@ -36,12 +36,13 @@ describe('localDirectoryPicker', () => {
   });
 
   it('uses zenity on Linux when available', async () => {
+    const selectedPath = path.posix.join('/', 'home', 'demo', 'Axhub Runtime');
     const executor: LocalCommandExecutor = vi.fn(async (command: string, args: string[]) => {
       if (command === 'which' && args[0] === 'zenity') {
         return { stdout: '/usr/bin/zenity\n', stderr: '' };
       }
       if (command === 'zenity') {
-        return { stdout: '/home/demo/Axhub Runtime\n', stderr: '' };
+        return { stdout: `${selectedPath}\n`, stderr: '' };
       }
       return { stdout: '', stderr: '' };
     });
@@ -50,7 +51,7 @@ describe('localDirectoryPicker', () => {
       prompt: '选择 Axhub Make 客户端项目目录',
       platform: 'linux',
       executor,
-    })).resolves.toBe(path.resolve('/home/demo/Axhub Runtime'));
+    })).resolves.toBe(path.resolve(selectedPath));
     expect(executor).toHaveBeenCalledWith('which', ['zenity'], expect.any(Object));
     expect(executor).toHaveBeenCalledWith('zenity', [
       '--file-selection',
@@ -61,6 +62,8 @@ describe('localDirectoryPicker', () => {
   });
 
   it('uses kdialog on Linux when zenity is unavailable', async () => {
+    const homePath = path.posix.join('/', 'home', 'demo');
+    const selectedPath = path.posix.join(homePath, 'Make Project');
     const executor: LocalCommandExecutor = vi.fn(async (command: string, args: string[]) => {
       if (command === 'which' && args[0] === 'zenity') {
         throw new Error('zenity missing');
@@ -69,7 +72,7 @@ describe('localDirectoryPicker', () => {
         return { stdout: '/usr/bin/kdialog\n', stderr: '' };
       }
       if (command === 'kdialog') {
-        return { stdout: '/home/demo/Make Project\n', stderr: '' };
+        return { stdout: `${selectedPath}\n`, stderr: '' };
       }
       return { stdout: '', stderr: '' };
     });
@@ -77,12 +80,12 @@ describe('localDirectoryPicker', () => {
     await expect(selectLocalDirectory({
       prompt: '选择 Axhub Make 客户端项目目录',
       platform: 'linux',
-      env: { HOME: '/home/demo' },
+      env: { HOME: homePath },
       executor,
-    })).resolves.toBe(path.resolve('/home/demo/Make Project'));
+    })).resolves.toBe(path.resolve(selectedPath));
     expect(executor).toHaveBeenCalledWith('kdialog', [
       '--getexistingdirectory',
-      '/home/demo',
+      homePath,
       '--title',
       '选择 Axhub Make 客户端项目目录',
     ], expect.objectContaining({ shell: false }));

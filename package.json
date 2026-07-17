@@ -32,6 +32,7 @@
     "package.json"
   ],
   "scripts": {
+    "audit:open-source": "node scripts/open-source-audit.mjs",
     "vendor:sync": "node scripts/sync-vendor-package.mjs",
     "dev": "pnpm --filter @axhub/make-client dev",
     "server:dev": "pnpm vendor:sync && AXHUB_ONLINE_BASE_URL=${AXHUB_ONLINE_BASE_URL:-https://axhub.im} tsx watch --ignore './src/index/**' --ignore './dist/**' --ignore './vendor/**' --ignore './src/dev-template/**' --ignore './src/spec-template/**' --ignore './src/canvas-template/**' --ignore './src/html-template/**' --ignore './*.timestamp-*' src/server/cli.ts -- ./client --dev",
