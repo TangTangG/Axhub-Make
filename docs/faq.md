@@ -30,3 +30,19 @@ Axhub Make 默认通过 `http://localhost:32767` 连接 Axure Bridge：可用性
 
 - **无法复制：** 不要继续反复尝试复制，改用 [Runtime 元件库](https://axhub-work.feishu.cn/file/ZR2UboHQ9oBsQsx48lscSMpenue) 的下载封面方法。下载 Runtime 封面，回到 Axure，双击对应 Runtime 元件，用下载的封面替换原图片。
 - **可以复制但不显示：** 通常是 Axure 客户端兼容问题。升级 Axure，或下载 SVG 替换对应内容；前提是字体已按“使用说明”正确配置。
+
+## 如何设置和使用本地 AI Agent？
+
+进入“项目设置 → AI 设置”，先连接本地 ACP 服务，再按下面的情况处理。
+
+### 常用 Agent 不在列表中
+
+AI 设置中的网页调用依赖 ACP，只支持当前列表中的 Claude Code、Codex CLI、OpenCode、Cursor CLI、Qoder CLI、CodeBuddy CLI、Reasonix CLI 和 Grok Build。TRAE 目前不支持这条 ACP 调用路径，不能强行接入。优先继续使用用户已有的 Agent；打开当前 Make 客户端目录后，仍可完成绝大多数功能。
+
+### 列表中有，但检测不到或测试失败
+
+检测的是 CLI，不是桌面 APP。先确认对应 CLI 已安装，并在 CLI 中完成登录、授权和一次成功对话；Make 不代替用户处理第三方账号登录和授权。然后回到“AI 设置”刷新版本并测试。仍失败时，再由 AI 检查 PATH、安装路径、命令执行权限和 ACP 连接。
+
+### 怎样在本地 Agent 中打开当前项目
+
+支持自动唤起时使用“打开 AI”。无法自动打开时，在 Agent 中新建对话并选择工作空间，或新建项目并把创建 Make 客户端时使用的目录设为项目根目录。不同软件可能叫“工作空间”“项目”或“工作目录”，但不要猜目录，必须选择当前 Make 客户端目录。
