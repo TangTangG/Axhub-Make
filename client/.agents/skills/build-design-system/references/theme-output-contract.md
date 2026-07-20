@@ -1,12 +1,12 @@
-# 主题创建与验收指南
+# 主题产物与验收契约
 
-本文档约束 `make-client` 中主题资源的创建、更新、派生与验收。主题只面向当前标准结构。
+本文档约束 `make-client` 中主题资源的创建、更新、派生与验收。执行前由 `SKILL.md` 完成来源和任务规划；本文只定义当前标准结构和验收要求。
 
 ## 核心原则
 
 - `DESIGN.md` 是主题事实源：品牌定位、设计原则、色彩、字体、圆角、间距、边框、阴影、组件规则和禁用做法，均优先按它判断。
 - `theme.json` 是运行时与管理端消费的结构化摘要；`assets/tokens.json` 是轻量 token 快照；`style.css` 是演示页可见样式。三者必须与 `DESIGN.md` 保持一致。
-- 用户当前消息或附件的优先级高于已有文件；若用户要求与 `DESIGN.md` 冲突，先更新 `DESIGN.md`，再同步派生文件。
+- 用户当前明确修改意图优先；附件、截图和链接只按 `references/source-handlers.md` 的证据优先级处理。若明确要求与 `DESIGN.md` 冲突，先更新 `DESIGN.md`，再同步派生文件。
 - 不根据截图、元数据或自动推断结果覆盖明确写在 `DESIGN.md` 中的规则；只能在 `DESIGN.md` 缺失信息时补充合理假设，并在文档或交付说明中写清楚。
 - 主题代码、CSS 和 `theme.json` 中的本地资源引用必须使用主题内相对路径，禁止根路径、本机绝对路径或 `../` 逃逸到其他目录。
 - 主题演示页不得引入与该主题无关的 UI 库，避免污染视觉表达。
@@ -48,11 +48,11 @@ node scripts/review-design-md-theme-pages.mjs
 
 如果用户已经提供了 Design.md 线索、品牌名或详情页链接，就先按上面两类来源定位，再进入采集、生成和复查。
 
-## 网页采集分流
+## 来源采集分流
 
-当用户提供官网、产品页、落地页或其他网页地址，并要求“参考这个网站”“提取主题”“生成主题”“分析设计风格”时，先读取 `rules/theme-source-capture-guide.md`，完成必要的截图、token、响应式和资源证据采集，再回到本文档生成标准主题。
+出现网页、Axure、Figma、截图、现有原型或主题来源时，先读取 `references/source-handlers.md`，完成来源登记和必要证据采集，再按本文档生成标准主题。
 
-采集只是补充来源证据，不替代主题工作流。若用户已经提供明确的 `DESIGN.md`、设计规范、品牌手册或当前主题事实源充分，则不要默认重新采集网页；只有证据不足、用户指定 URL、预览图缺失或需要校准视觉风格时才进入采集分文档。
+采集只是补充来源证据，不替代主题工作流。若用户已经提供明确的 `DESIGN.md`、设计规范、品牌手册或当前主题事实源充分，则不要默认重复采集；只有证据不足、用户指定来源、预览图缺失或需要校准视觉风格时才进入相应来源分支。
 
 ## 标准交付物
 
@@ -60,6 +60,8 @@ node scripts/review-design-md-theme-pages.mjs
 
 ```text
 src/themes/<theme-key>/
+├── SOURCES.md             # 必需，来源与证据台账
+├── PLAN.md                # 必需，任务、依赖与状态台账
 ├── DESIGN.md              # 必需，主题事实依据
 ├── theme.json             # 必需，结构化主题元数据与展示配置
 ├── assets/
@@ -135,16 +137,10 @@ src/themes/<theme-key>/
 4. 同步派生：更新 `theme.json.tokens/display`、`assets/tokens.json`、`style.css`、`tw.css` 和预览资源引用。
 5. 检查一致性：主色是否来自 `DESIGN.md`，字体角色是否完整，圆角/间距/边框/阴影是否没有丢失，使用建议是否非泛化。
 6. 查找和导入：优先从 `getdesign.md` 和 `styles.refero.design` 定位主题，再用 `collect`、`generate`、`review` 三个脚本串起导入流程。
-7. 网页采集：仅在用户提供网页地址或现有证据不足时读取 `rules/theme-source-capture-guide.md`，把采集结果作为 `DESIGN.md` 的证据来源。
+7. 来源采集：仅在用户提供来源或现有证据不足时读取 `references/source-handlers.md`，把登记后的采集结果作为 `DESIGN.md` 的证据来源。
 8. 验收预览：运行主题 ready 检查并打开目标页面做视觉回归，确认字体、颜色、间距、建议项和预览图都能完整渲染。
 
-输入来源优先级：
-
-1. 用户当前明确要求、附件、截图和链接。
-2. 当前主题 `DESIGN.md`。
-3. 当前主题 `theme.json`、`assets/tokens.json`、`style.css`、`tw.css`、`index.tsx`。
-4. 官方设计资料或原始 Design.md 来源。
-5. 标准参考主题 `src/themes/linear/` 和同类主题。
+来源证据优先级遵循 `references/source-handlers.md`：用户当前明确要求和确认结论优先，其次是更新任务中已确认的 `DESIGN.md`、结构化设计来源、网页和截图、自动提取 token。当前派生文件只用于检查漂移；`src/themes/linear/` 和同类主题只提供结构参考。
 
 ## 验收流程
 
@@ -160,4 +156,4 @@ node scripts/check-app-ready.mjs /themes/[主题名]
 - 向用户提供主题预览时使用 ready 检查返回的 `targetUrl`；`/themes/<theme-key>` 只作为脚本参数或运行时路径。
 - 若出现 `ERROR`，优先修复入口、资源路径、JSON 结构和 CSS 导入。
 - 若出现 `TIMEOUT`，排查 dev server、依赖安装、构建缓存或长任务。
-- 视觉问题按 `DESIGN.md`、用户要求、`rules/requirements-alignment-guide.md` 的顺序判断，不以自动生成结果为准。
+- 视觉问题按用户当前明确要求、`DESIGN.md`、`rules/requirements-alignment-guide.md` 的顺序判断，不以自动生成结果为准。

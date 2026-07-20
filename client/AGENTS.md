@@ -14,7 +14,7 @@
 - 如果目标、范围、内容来源、验收重点、信息架构、交互路径、视觉方向或设计基底存在会改变产出方向的多种选择，停在对应阶段与用户确认。
 - 详细对齐方法见 `rules/requirements-alignment-guide.md`。
 - 原型主规格、确认门槛和双向同步统一遵循该指南的“原型主规格”。
-- 主题和项目资料不使用原型主规格流程，分别遵循 `rules/theme-guide.md` 和 `rules/resource-management-guide.md`。
+- 主题和项目资料不使用原型主规格流程，分别使用 `$build-design-system` 和遵循 `rules/resource-management-guide.md`。
 
 验收后由用户按需发起的可选阶段：
 
@@ -31,9 +31,11 @@ Review（可选） -> 标注（可选） -> 发布（可选）
    - 本项目中的「原型」默认是可运行、接近正式产品的前端页面，不是黑白灰线框图或低保真草稿；只有用户明确要求时才使用低保真、wireframe、placeholder 等表达。
 2. **先读上下文，再做判断**
    - 优先结合用户说明、项目资料、现有代码、组件和设计系统判断；截图只作为视觉参考，不是唯一依据。
-3. **尽早展示关键决策**
+3. **图片素材与生成**
+   - 适当使用项目已有素材、AI 生成图或可合法使用的第三方图片提升原型质量；生成或编辑位图素材时，优先使用 `$ui-image-generation`。
+4. **尽早展示关键决策**
    - 需要用户选择页面结构、交互路径或设计方向时，优先用简短摘要或结构化文字对齐；文字难以表达时再用 ASCII Wireframe/Diagram 或 Mermaid。
-4. **代理负责验收**
+5. **代理负责验收**
    - 代理应自行完成可执行的检查，并向用户提供可打开的预览链接；不要把 CLI 验收步骤交给用户。
    - 明确进入 review 环节时，优先由未参与实现的子代理独立审查，不以实现者自检代替 review。
 
@@ -42,6 +44,7 @@ Review（可选） -> 标注（可选） -> 发布（可选）
 | 场景 | 位置 | 参考文档 |
 |------|------|----------|
 | 原型开发与验收 | `src/prototypes/<prototype-id>/` | `rules/prototype-development-guide.md` |
-| 主题 | `src/themes/<theme-key>/` | `rules/theme-guide.md` |
+| 主题、设计系统、设计规范 | `src/themes/<theme-key>/` | `$build-design-system 技能` |
+| PRD 文档 | `src/resources/` | `$plan-prds 技能` / `$write-prd 技能` |
 | 项目资料、文档、普通资源和画布 | `src/resources/` | `rules/resource-management-guide.md` |
 | 原型 Review（业务/UI） | 原型 `.spec/reviews/` | `rules/prototype-review-guide.md` / `rules/ui-review-guide.md` |

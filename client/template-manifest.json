@@ -105,6 +105,7 @@
       "src/resources/.gitkeep",
       "src/resources/README.md",
       "src/resources/templates/prd-template.md",
+      "src/resources/templates/prd-comprehensive-template.md",
       "src/resources/templates/prototype-review-report-template.md",
       "src/resources/templates/ui-review-report-template.md",
       "src/resources/templates/规格文档 HTML 模板.html",

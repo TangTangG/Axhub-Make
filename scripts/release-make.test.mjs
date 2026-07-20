@@ -369,7 +369,7 @@ describe('release make artifact helpers', () => {
   it('pins the Make client release dependencies and pnpm version', () => {
     const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
 
-    assert.equal(clientPackageJson.version, '0.1.13');
+    assert.equal(clientPackageJson.version, '0.1.14');
     assert.equal(clientPackageJson.packageManager, 'pnpm@10.20.0');
     assert.equal(clientPackageJson.dependencies['@axhub/annotation'], '1.0.16');
     assert.equal(clientPackageJson.dependencies['lucide-react'], '0.562.0');
