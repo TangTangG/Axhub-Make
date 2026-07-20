@@ -35,6 +35,16 @@ npx -y @axhub/make@latest
 https://raw.githubusercontent.com/lintendo/Axhub-Make/main/docs/start-axhub-make-with-ai.md
 ```
 
+## 让 AI 指导你使用
+
+把下面这段发给你的 AI Agent，让它读取使用指导，然后结合你当前的页面和项目指导你使用 Axhub Make：
+
+```
+请读取这个文档，并按里面的要求指导我使用 Axhub Make：
+
+https://raw.githubusercontent.com/lintendo/Axhub-Make/main/docs/guide-users-with-axhub-make.md
+```
+
 ## 产品流程
 
 Axhub Make 把需求挖掘、Spec 对齐、设计规范、原型生成、批注编辑、AI 评审、交付标注和发布串成一条产品工作流。
