@@ -61,7 +61,7 @@ GET /api/git/workspace/status?branch=<local-branch>&remoteBranch=<remote-branch>
 后端先读取分支概览，再验证请求值：
 
 - `branch` 必须完整匹配 `branchOverview.localBranches` 中的一项。
-- `remoteBranch` 必须规范化掉 `remotes/` 和 `origin/` 前缀，并完整匹配已读取的 `origin/*` 分支。
+- `remoteBranch` 先规范化掉 `remotes/` 和 `origin/` 前缀，再与已读取的 `origin/*` 分支完整匹配；不匹配时按线上分支不存在处理，不执行包含该 ref 的 Git 命令。
 - 所有 Git 命令继续使用参数数组执行，不拼接 shell 字符串。
 - 未传 `branch` 时使用 `currentBranch`。
 - 未传 `remoteBranch` 时，优先使用与 `viewedBranch` 同名的线上分支；同名分支不存在时，不自动回退到默认分支进行比较。
