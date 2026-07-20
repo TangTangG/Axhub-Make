@@ -39,6 +39,12 @@ Axhub Make 默认通过 `http://localhost:32767` 连接 Axure Bridge：可用性
 
 AI 设置中的网页调用依赖 ACP，只支持当前列表中的 Claude Code、Codex CLI、OpenCode、Cursor CLI、Qoder CLI、CodeBuddy CLI、Reasonix CLI 和 Grok Build。TRAE 目前不支持这条 ACP 调用路径，不能强行接入。优先继续使用用户已有的 Agent；打开当前 Make 客户端目录后，仍可完成绝大多数功能。
 
+### 网页 Agent 的常用场景怎样用本地 Agent 代替
+
+- **批注直接执行：** 确认本地 Agent 已打开当前 Make 客户端目录，再让它使用 `$prototype-comments` 处理批注。
+- **侧边栏对话：** 直接在本地 Agent 的对话中继续相同任务，并保持当前 Make 客户端目录为工作目录。
+- **新建场景的提示词和配置生成：** 光标位于提示词输入框且没有选中文字时，Windows 按 `Ctrl+C`，macOS 按 `⌘C`，即可复制包含当前场景设置的完整提示词，再粘贴到本地 Agent 中执行。该快捷键提示位于发送按钮的悬停提示中，入口较隐蔽。
+
 ### 列表中有，但检测不到或测试失败
 
 检测的是 CLI，不是桌面 APP。先确认对应 CLI 已安装，并在 CLI 中完成登录、授权和一次成功对话；Make 不代替用户处理第三方账号登录和授权。然后回到“AI 设置”刷新版本并测试。仍失败时，再由 AI 检查 PATH、安装路径、命令执行权限和 ACP 连接。
