@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 const clientRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const templatesRoot = path.join(clientRoot, 'src/resources/templates');
+const agentWritePrdPath = path.join(clientRoot, '.agents/skills/write-prd/SKILL.md');
+const claudeWritePrdPath = path.join(clientRoot, '.claude/skills/write-prd/SKILL.md');
 
 function readTemplate(fileName: string): string {
   return fs.readFileSync(path.join(templatesRoot, fileName), 'utf8');
@@ -50,5 +52,21 @@ describe('PRD template profiles', () => {
     expect(template).toContain('按需');
     expect(template).toContain('不是固定生成清单');
     expect(template).toContain('主 PRD 保留与当前需求相关的结论摘要');
+  });
+
+  it('makes write-prd consume one selected template entry and only needed references', () => {
+    const agentSkill = fs.readFileSync(agentWritePrdPath, 'utf8');
+    const claudeSkill = fs.readFileSync(claudeWritePrdPath, 'utf8');
+
+    expect(agentSkill).toBe(claudeSkill);
+    expect(agentSkill).toContain('每次只读取一个明确的模板入口文件');
+    expect(agentSkill).toContain('src/resources/templates/prd-template.md');
+    expect(agentSkill).toContain('任务级模板覆盖');
+    expect(agentSkill).toContain('计划默认模板');
+    expect(agentSkill).toContain('只按需读取当前 PRD 使用的链接文档');
+    expect(agentSkill).toContain('主 PRD 保留与当前需求相关的结论摘要');
+    expect(agentSkill).toContain('模板文件不存在或不可读');
+    expect(agentSkill).toContain('不得静默切换');
+    expect(agentSkill).not.toContain('## 默认结构');
   });
 });
