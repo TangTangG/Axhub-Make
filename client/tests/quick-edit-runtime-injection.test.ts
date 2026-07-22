@@ -69,9 +69,7 @@ describe('quick edit runtime injection', () => {
       '<head></head>',
       '<body>',
       '  <div id="root"></div>',
-      '  <script type="module">',
-      '{{PREVIEW_LOADER}}',
-      '  </script>',
+      '  <script type="module" data-axhub-preview-loader src="/prototypes/home/__axhub-preview-loader.js"></script>',
       '</body>',
       '</html>',
     ].join('\n');
@@ -81,24 +79,14 @@ describe('quick edit runtime injection', () => {
     expect(nextHtml).toContain('http://localhost:5174/assets/dev-template-bootstrap.js');
     expect(nextHtml).toContain('http://localhost:5174/runtime/quick-edit.js');
     expect(nextHtml.match(/data-axhub-management-runtime/g)).toHaveLength(1);
-    expect(nextHtml.indexOf('data-axhub-management-runtime')).toBeLessThan(nextHtml.indexOf('{{PREVIEW_LOADER}}'));
+    expect(nextHtml.indexOf('data-axhub-management-runtime')).toBeLessThan(nextHtml.indexOf('data-axhub-preview-loader'));
     expect(injectManagementRuntimeScript(nextHtml, 'http://localhost:5174')).toBe(nextHtml);
   });
 
-  it('injects the management runtime before the final preview loader script', () => {
-    const html = [
-      '<!doctype html>',
-      '<html>',
-      '<head></head>',
-      '<body>',
-      '  <div id="root"></div>',
-      '  <script type="module" data-axhub-preview-loader src="/prototypes/home/__axhub-preview-loader.js"></script>',
-      '</body>',
-      '</html>',
-    ].join('\n');
-    const nextHtml = injectManagementRuntimeScript(html, 'http://localhost:5174');
+  it('does not inject before Vite produces the final preview loader marker', () => {
+    const html = '<!doctype html><html><head></head><body><div id="root"></div></body></html>';
 
-    expect(nextHtml.indexOf('data-axhub-management-runtime')).toBeLessThan(nextHtml.indexOf('data-axhub-preview-loader'));
+    expect(injectManagementRuntimeScript(html, 'http://localhost:5174')).toBe(html);
   });
 
   it('does not emit a loader without a discovered origin', () => {
@@ -180,7 +168,7 @@ describe('quick edit runtime injection', () => {
   });
 
   it('injects the React refresh preamble once before the management runtime module', () => {
-    const html = '<!doctype html><html><head></head><body><div id="root"></div></body></html>';
+    const html = '<!doctype html><html><head></head><body><script type="module" data-axhub-preview-loader src="/__axhub-preview-loader.js"></script></body></html>';
     const withRuntime = injectManagementRuntimeScript(html, 'http://localhost:5174');
     const nextHtml = injectReactRefreshPreambleScript(withRuntime);
 

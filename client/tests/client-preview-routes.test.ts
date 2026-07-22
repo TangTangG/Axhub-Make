@@ -1064,7 +1064,7 @@ describe('client preview routes', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it('does not inject management runtimes into a direct network preview', async () => {
+  it('does not inject management runtimes into a direct network preview with an admin referer', async () => {
     const projectRoot = createFixtureProject();
     stubAdminHealth(['http://192.168.31.79:5174'], { acceptSessionToken: 'valid-client-session' });
     writeServerInfo(projectRoot, 'admin', {
@@ -1084,6 +1084,7 @@ describe('client preview routes', () => {
       headers: {
         host: '192.168.31.79:51720',
         cookie: 'axhub_lan_auth=valid-client-session',
+        referer: 'http://192.168.31.79:5174/?projectId=make-project',
       },
     };
     const res = {

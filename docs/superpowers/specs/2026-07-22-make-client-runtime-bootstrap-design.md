@@ -69,6 +69,14 @@ Refresh preamble injection remains ahead of all module scripts, including the
 new management runtime loader, so importing the React-based editor bootstrap
 continues to run with the refresh globals installed.
 
+The preview plugin first replaces the template placeholder with the external
+preview loader, identified by `data-axhub-preview-loader`, and lets Vite
+transform that HTML. It then injects the management loader into the transformed
+HTML immediately before the marked preview loader. The injection helper does
+nothing when the final preview-loader marker is absent. This keeps the inline
+management module outside Vite's HTML transform and prevents Vite from
+rewriting it to an `html-proxy` module.
+
 ## Activation And Origin Resolution
 
 Activation and origin discovery remain separate concerns:
@@ -133,9 +141,12 @@ Replace source-order assertions with lifecycle assertions:
 - Trigger the dynamically appended script error callback and assert a
   `quick-edit-load` error.
 - Keep route coverage proving that `agentToolbar=host` injects the loader and a
-  direct network preview does not.
+  direct network preview does not, even when the request has a healthy admin
+  `Referer`.
 - Keep coverage proving the React Refresh preamble precedes the management
   runtime module.
+- Keep real-Vite route coverage proving the final management loader remains
+  inline and the response contains no management-runtime `html-proxy` module.
 
 Run the focused Make client injection and preview-route tests, followed by the
 client typecheck. No Server test is required because Server behavior and

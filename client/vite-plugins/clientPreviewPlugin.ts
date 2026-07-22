@@ -457,33 +457,22 @@ export function createManagementRuntimeScriptTag(serverOrigin: string | null | u
 }
 
 export function injectManagementRuntimeScript(html: string, serverOrigin: string | null | undefined): string {
-  if (!serverOrigin || html.includes(MANAGEMENT_RUNTIME_MARKER)) {
+  if (
+    !serverOrigin
+    || html.includes(MANAGEMENT_RUNTIME_MARKER)
+    || !html.includes(PREVIEW_LOADER_MARKER)
+  ) {
     return html;
   }
   const tag = createManagementRuntimeScriptTag(serverOrigin);
   if (!tag) {
     return html;
   }
-  const previewLoaderModuleScriptPattern = /(\s*<script\b[^>]*type=["']module["'][^>]*>\s*)\{\{PREVIEW_LOADER\}\}/u;
-  if (previewLoaderModuleScriptPattern.test(html)) {
-    return html.replace(previewLoaderModuleScriptPattern, (match, scriptStart: string) => {
-      const leadingWhitespace = scriptStart.match(/^\s*/u)?.[0] ?? '\n';
-      return `${leadingWhitespace}${tag}${scriptStart.slice(leadingWhitespace.length)}{{PREVIEW_LOADER}}`;
-    });
-  }
-  if (html.includes('{{PREVIEW_LOADER}}')) {
-    return html.replace('{{PREVIEW_LOADER}}', `${tag}\n{{PREVIEW_LOADER}}`);
-  }
   const finalPreviewLoaderScriptPattern = /(\s*)(<script\b[^>]*\bdata-axhub-preview-loader\b[^>]*>)/u;
-  if (finalPreviewLoaderScriptPattern.test(html)) {
-    return html.replace(
-      finalPreviewLoaderScriptPattern,
-      (_match, leadingWhitespace: string, scriptStart: string) => `${leadingWhitespace}${tag}${leadingWhitespace}${scriptStart}`,
-    );
-  }
-  return html.includes('</body>')
-    ? html.replace('</body>', `  ${tag}\n</body>`)
-    : `${html}\n${tag}`;
+  return html.replace(
+    finalPreviewLoaderScriptPattern,
+    (_match, leadingWhitespace: string, scriptStart: string) => `${leadingWhitespace}${tag}${leadingWhitespace}${scriptStart}`,
+  );
 }
 
 export function injectReactRefreshPreambleScript(html: string): string {
