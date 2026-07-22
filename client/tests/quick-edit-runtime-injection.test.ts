@@ -85,6 +85,22 @@ describe('quick edit runtime injection', () => {
     expect(injectManagementRuntimeScript(nextHtml, 'http://localhost:5174')).toBe(nextHtml);
   });
 
+  it('injects the management runtime before the final preview loader script', () => {
+    const html = [
+      '<!doctype html>',
+      '<html>',
+      '<head></head>',
+      '<body>',
+      '  <div id="root"></div>',
+      '  <script type="module" data-axhub-preview-loader src="/prototypes/home/__axhub-preview-loader.js"></script>',
+      '</body>',
+      '</html>',
+    ].join('\n');
+    const nextHtml = injectManagementRuntimeScript(html, 'http://localhost:5174');
+
+    expect(nextHtml.indexOf('data-axhub-management-runtime')).toBeLessThan(nextHtml.indexOf('data-axhub-preview-loader'));
+  });
+
   it('does not emit a loader without a discovered origin', () => {
     expect(createManagementRuntimeLoaderSource(null)).toBe('');
     expect(createManagementRuntimeScriptTag(null)).toBe('');

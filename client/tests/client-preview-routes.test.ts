@@ -247,14 +247,17 @@ describe('client preview routes', () => {
       '/prototypes/home/',
       expect.stringContaining('<div id="root"></div>'),
     );
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain('data-axhub-dev-template-bootstrap');
-    expect(html).toContain('src="http://localhost:5174/assets/dev-template-bootstrap.js"');
-    expect(html).toContain('data-axhub-quick-edit-runtime');
+    const transformInput = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    const html = res.end.mock.calls[0]?.[0] as string;
+    expect(transformInput).not.toContain('data-axhub-management-runtime');
+    expect(html).toContain('data-axhub-management-runtime');
+    expect(html).toContain('http://localhost:5174/assets/dev-template-bootstrap.js');
+    expect(html).toContain('http://localhost:5174/runtime/quick-edit.js');
+    expect(html.match(/data-axhub-management-runtime/g)).toHaveLength(1);
     expect(html).toContain('/prototypes/home/__axhub-preview-loader.js');
-    expect(html.indexOf('data-axhub-dev-template-bootstrap')).toBeLessThan(html.indexOf('__axhub-preview-loader.js'));
-    expect(html.indexOf('data-axhub-quick-edit-runtime')).toBeLessThan(html.indexOf('__axhub-preview-loader.js'));
-    expect(html.indexOf('data-axhub-quick-edit-runtime')).toBeLessThan(html.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(html.indexOf('data-axhub-management-runtime')).toBeLessThan(html.indexOf('data-axhub-preview-loader'));
+    expect(html).not.toMatch(/<script\b[^>]*src="http:\/\/localhost:5174\/runtime\/quick-edit\.js"/u);
+    expect(html).not.toMatch(/<script\b[^>]*src="http:\/\/localhost:5174\/assets\/dev-template-bootstrap\.js"/u);
     expect(html).not.toContain('import PreviewComponent');
     expect(next).not.toHaveBeenCalled();
   });
@@ -305,7 +308,7 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    const html = res.end.mock.calls[0]?.[0] as string;
     expect(html).not.toContain('http://localhost:53817/assets/dev-template-bootstrap.js');
     expect(html).not.toContain('http://localhost:53817/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
@@ -331,7 +334,8 @@ describe('client preview routes', () => {
     const html = await response.text();
 
     expect(response.status).toBe(200);
-    expect(html).toContain('/prototypes/home/__axhub-preview-loader.js?projectId=make-project"></script>');
+    expect(html).toContain('<script type="module" data-axhub-preview-loader src="/prototypes/home/__axhub-preview-loader.js?projectId=make-project"></script>');
+    expect(html.match(/data-axhub-management-runtime/g)).toHaveLength(1);
     expect(html).not.toContain('html-proxy');
   });
 
@@ -612,7 +616,7 @@ describe('client preview routes', () => {
     expect(html).toContain('data-axhub-react-refresh-preamble');
     expect(html).toContain('import { injectIntoGlobalHook } from "/@react-refresh";');
     expect(html).toContain('window.$RefreshReg$ = () => {};');
-    expect(html.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(html.indexOf('data-axhub-dev-template-bootstrap'));
+    expect(html.indexOf('data-axhub-react-refresh-preamble')).toBeLessThan(html.indexOf('data-axhub-management-runtime'));
     expect(html).not.toContain('preamble?html-proxy');
   });
 
@@ -969,9 +973,9 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain('src="http://localhost:5176/assets/dev-template-bootstrap.js"');
-    expect(html).toContain('src="http://localhost:5176/runtime/quick-edit.js"');
+    const html = res.end.mock.calls[0]?.[0] as string;
+    expect(html).toContain('http://localhost:5176/assets/dev-template-bootstrap.js');
+    expect(html).toContain('http://localhost:5176/runtime/quick-edit.js');
     expect(html).not.toContain('http://localhost:5174/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
   });
@@ -1010,9 +1014,9 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain('src="http://localhost:53817/assets/dev-template-bootstrap.js"');
-    expect(html).toContain('src="http://localhost:53817/runtime/quick-edit.js"');
+    const html = res.end.mock.calls[0]?.[0] as string;
+    expect(html).toContain('http://localhost:53817/assets/dev-template-bootstrap.js');
+    expect(html).toContain('http://localhost:53817/runtime/quick-edit.js');
     expect(html).not.toContain('http://127.0.0.1:61847/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
   });
@@ -1053,9 +1057,9 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
-    expect(html).toContain('src="http://localhost:53817/assets/dev-template-bootstrap.js"');
-    expect(html).toContain('src="http://localhost:53817/runtime/quick-edit.js"');
+    const html = res.end.mock.calls[0]?.[0] as string;
+    expect(html).toContain('http://localhost:53817/assets/dev-template-bootstrap.js');
+    expect(html).toContain('http://localhost:53817/runtime/quick-edit.js');
     expect(html).not.toContain('http://localhost:59431/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
   });
@@ -1097,7 +1101,8 @@ describe('client preview routes', () => {
     }
     await getMiddleware()(req, res, next);
 
-    const html = server.transformIndexHtml.mock.calls[0]?.[1] as string;
+    const html = res.end.mock.calls[0]?.[0] as string;
+    expect(html).not.toContain('data-axhub-management-runtime');
     expect(html).not.toContain('/assets/dev-template-bootstrap.js');
     expect(html).not.toContain('/runtime/quick-edit.js');
     expect(next).not.toHaveBeenCalled();
