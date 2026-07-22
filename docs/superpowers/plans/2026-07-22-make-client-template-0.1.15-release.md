@@ -14,6 +14,7 @@
 - Do not publish GitHub or Gitee releases.
 - Do not modify `client/.axhub/make/sidebar-tree.json` or project-specific prototypes, PRDs, themes, or comment data.
 - Include `handle-comments`; exclude `prototype-comments` even if a stale copy is present.
+- Keep live comment data ignored in the source checkout; add trackable comment rules only to the packaged `.gitignore`.
 - Generate the packaged sidebar from `client/template-seed/.axhub/make/sidebar-tree.json` and `client/template-manifest.json`.
 - Preserve unrelated staged, unstaged, and untracked changes.
 
@@ -22,14 +23,15 @@
 ### Task 1: Lock the template content boundary
 
 **Files:**
+- Modify: `scripts/release-make.mjs`
 - Modify: `scripts/release-make.test.mjs`
 - Modify: `client/template-manifest.json`
 
 **Interfaces:**
 - Consumes: `runtime.fileRules` from `client/template-manifest.json`.
-- Produces: a template ZIP in which `handle-comments` is present, stale `prototype-comments` is absent, and live comment/PRD data is absent.
+- Produces: a template ZIP in which `handle-comments` is present, stale `prototype-comments` is absent, live comment/PRD data is absent, and generated user projects can track shared comments.
 
-- [ ] **Step 1: Add failing release-fixture coverage**
+- [x] **Step 1: Add failing release-fixture coverage**
 
 Add both skill names and project-only data to the `packages the make client template zip without local runtime artifacts` fixture:
 
@@ -52,13 +54,13 @@ assert(!entries.some((entry) => entry.startsWith('.axhub/make/comments/')));
 assert(!entries.some((entry) => entry.startsWith('src/resources/prd/')));
 ```
 
-- [ ] **Step 2: Run the focused test and verify the stale skill assertion fails**
+- [x] **Step 2: Run the focused test and verify the stale skill assertion fails**
 
 Run: `node --test --test-name-pattern="packages the make client template zip" scripts/release-make.test.mjs`
 
 Expected: FAIL because `prototype-comments` is still copied from the generic skill directory.
 
-- [ ] **Step 3: Add an explicit stale-skill exclusion**
+- [x] **Step 3: Add an explicit stale-skill exclusion**
 
 Add this rule to `runtime.fileRules` in both the production manifest and test fixture:
 
@@ -70,11 +72,25 @@ Add this rule to `runtime.fileRules` in both the production manifest and test fi
 }
 ```
 
-- [ ] **Step 4: Run the focused release test**
+- [x] **Step 4: Run the focused release test**
 
 Run: `node --test --test-name-pattern="packages the make client template zip" scripts/release-make.test.mjs`
 
 Expected: PASS with one matching test and no failures.
+
+- [x] **Step 5: Add failing coverage for source-only ignore policy and comment assets**
+
+Include `.gitignore` in the fixture, add both live comment stores, and assert the ZIP excludes their data while its generated `.gitignore` contains the four comment-tracking negations.
+
+Run: `node --test --test-name-pattern="packages the make client template zip" scripts/release-make.test.mjs`
+
+Expected: FAIL because the release helper still copies the source `.gitignore` unchanged.
+
+- [x] **Step 6: Generate the user-project Git ignore rules during ZIP assembly**
+
+Keep the source checkout's `.axhub/make/*` rule intact. During template assembly, append the four comment/comment-asset negations to the packaged `.gitignore`, then rerun the focused release test.
+
+Expected: PASS, with source comment files ignored and packaged comment directories trackable.
 
 ---
 
@@ -91,7 +107,7 @@ Expected: PASS with one matching test and no failures.
 - Consumes: client package version and release notes.
 - Produces: synchronized default-template version and release-note constants for Make.
 
-- [ ] **Step 1: Update the release-helper version assertion first**
+- [x] **Step 1: Update the release-helper version assertion first**
 
 Change the real client package assertion to:
 
@@ -99,13 +115,13 @@ Change the real client package assertion to:
 assert.equal(clientPackageJson.version, '0.1.15');
 ```
 
-- [ ] **Step 2: Run the assertion and verify it fails**
+- [x] **Step 2: Run the assertion and verify it fails**
 
 Run: `node --test --test-name-pattern="pins the Make client release dependencies" scripts/release-make.test.mjs`
 
 Expected: FAIL because `client/package.json` still contains `0.1.14`.
 
-- [ ] **Step 3: Update package version and release notes**
+- [x] **Step 3: Update package version and release notes**
 
 Set `client/package.json` to `0.1.15` and replace `client/RELEASE_NOTES.md` with:
 
@@ -118,7 +134,7 @@ Set `client/package.json` to `0.1.15` and replace `client/RELEASE_NOTES.md` with
 - 保持发布模板仅包含官方原型、主题、规则与资源模板
 ```
 
-- [ ] **Step 4: Document shared comment storage in the template seed**
+- [x] **Step 4: Document shared comment storage in the template seed**
 
 Append to `client/template-seed/.axhub/make/README.md`:
 
@@ -128,7 +144,7 @@ Append to `client/template-seed/.axhub/make/README.md`:
 `.axhub/make/comments/` 和 `.axhub/make/comment-assets/` 保存原型、Markdown、HTML 及原型规格文档的共享本地 Commentary 批注。用户项目可将这两个目录纳入 Git；发布模板不会携带当前项目的实际批注数据。
 ```
 
-- [ ] **Step 5: Run the version assertion and full release-helper suite**
+- [x] **Step 5: Run the version assertion and full release-helper suite**
 
 Run: `node --test --test-name-pattern="pins the Make client release dependencies" scripts/release-make.test.mjs`
 
@@ -152,25 +168,25 @@ Expected: all release helper tests pass.
 - Consumes: the reviewed source tree and version `0.1.15`.
 - Produces: an audited local release candidate and SHA-256 manifest.
 
-- [ ] **Step 1: Run focused client runtime tests**
+- [x] **Step 1: Run focused client runtime tests**
 
 Run: `pnpm --dir client exec vitest run tests/client-preview-routes.test.ts tests/quick-edit-runtime-injection.test.ts`
 
 Expected: both test files pass.
 
-- [ ] **Step 2: Prepare fresh template artifacts**
+- [x] **Step 2: Prepare fresh template artifacts**
 
 Run: `pnpm release:make-client-template:prepare`
 
 Expected: exit 0, synchronized version/release-note constants, and a fresh `.release/make-client-template/manifest.json` for `0.1.15`.
 
-- [ ] **Step 3: Run the template-only dry run**
+- [x] **Step 3: Run the template-only dry run**
 
 Run: `pnpm release:make-client-template -- --github-repo lintendo/Axhub-Make --dry-run`
 
 Expected: exit 0 without creating or changing an external release.
 
-- [ ] **Step 4: Audit ZIP entries and generated sidebar**
+- [x] **Step 4: Audit ZIP entries and generated sidebar**
 
 Inspect the ZIP with Node and `fflate`. Verify:
 
@@ -185,11 +201,11 @@ src/themes/trae/*                                             absent
 .axhub/make/sidebar-tree.json                                 present and manifest-filtered
 ```
 
-- [ ] **Step 5: Verify manifest consistency**
+- [x] **Step 5: Verify manifest consistency**
 
 Confirm `templateVersion`, `tagName`, latest-manifest version, source URLs, release notes, and the ZIP SHA-256 all describe `0.1.15` and the freshly generated artifact.
 
-- [ ] **Step 6: Review the final diff**
+- [x] **Step 6: Review the final diff**
 
 Run: `git diff --check` and `git diff -- client/package.json client/RELEASE_NOTES.md client/template-manifest.json client/template-seed/.axhub/make/README.md scripts/release-make.test.mjs src/common/makeClientTemplate.ts`.
 

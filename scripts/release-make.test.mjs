@@ -369,10 +369,17 @@ describe('release make artifact helpers', () => {
   it('pins the Make client release dependencies and pnpm version', () => {
     const clientPackageJson = JSON.parse(fs.readFileSync(path.resolve('client/package.json'), 'utf8'));
 
-    assert.equal(clientPackageJson.version, '0.1.14');
+    assert.equal(clientPackageJson.version, '0.1.15');
     assert.equal(clientPackageJson.packageManager, 'pnpm@10.20.0');
     assert.equal(clientPackageJson.dependencies['@axhub/annotation'], '1.0.16');
     assert.equal(clientPackageJson.dependencies['lucide-react'], '0.562.0');
+  });
+
+  it('keeps live comments ignored in the publishing checkout', () => {
+    const sourceGitignore = fs.readFileSync(path.resolve('client/.gitignore'), 'utf8');
+
+    assert.match(sourceGitignore, /^\.axhub\/make\/\*$/mu);
+    assert.doesNotMatch(sourceGitignore, /^!\.axhub\/make\/(?:comments|comment-assets)(?:\/|\/\*\*)$/mu);
   });
 
   it('creates a lean pnpm-only package manifest for released client templates', () => {
@@ -496,12 +503,16 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, 'template-manifest.json'), `${JSON.stringify({
       schemaVersion: 1,
       runtime: {
-        files: ['package.json'],
+        files: ['.gitignore', 'package.json'],
         directories: ['.agents/skills', '.claude/skills', 'scripts'],
         fileRules: [{
           action: 'exclude',
           pattern: '^scripts/subset-beginner-guide-fonts\\.mjs$',
           description: 'Do not publish the font development tool.',
+        }, {
+          action: 'exclude',
+          pattern: '^\\.(?:agents|claude)/skills/prototype-comments(?:/|$)',
+          description: 'Do not publish the replaced prototype comments skill.',
         }],
       },
       makeMetadata: {
@@ -548,6 +559,14 @@ describe('release make artifact helpers', () => {
         files: ['src/resources/README.md'],
       },
     }, null, 2)}\n`);
+    writeFile(path.join(clientRoot, '.gitignore'), [
+      '.axhub/make/*',
+      '!.axhub/make/client.json',
+      '!.axhub/make/axhub.config.json',
+      '!.axhub/make/README.md',
+      '!.axhub/make/sidebar-tree.json',
+      '',
+    ].join('\n'));
     writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/index.tsx'), 'export {};\n');
     writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/annotation-source.json'), '{}\n');
     writeFile(path.join(clientRoot, 'src/prototypes/annotation-demo/.spec/spec.md'), '# Annotation spec\n');
@@ -583,6 +602,10 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, 'dist/build.js'), 'console.log("built");\n');
     writeFile(path.join(clientRoot, '.agents/skills/local/SKILL.md'), 'npm run typecheck\n');
     writeFile(path.join(clientRoot, '.claude/skills/local/SKILL.md'), 'npm run typecheck\n');
+    writeFile(path.join(clientRoot, '.agents/skills/handle-comments/SKILL.md'), '# Handle comments\n');
+    writeFile(path.join(clientRoot, '.claude/skills/handle-comments/SKILL.md'), '# Handle comments\n');
+    writeFile(path.join(clientRoot, '.agents/skills/prototype-comments/SKILL.md'), '# Stale skill\n');
+    writeFile(path.join(clientRoot, '.claude/skills/prototype-comments/SKILL.md'), '# Stale skill\n');
     writeFile(path.join(clientRoot, '.trae/local.json'), '{}\n');
     writeFile(path.join(clientRoot, '.codex/session.json'), '{}\n');
     writeFile(path.join(clientRoot, '.workbuddy/state.json'), '{}\n');
@@ -601,10 +624,13 @@ describe('release make artifact helpers', () => {
     writeFile(path.join(clientRoot, '.axhub/make/entries.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/.dev-server-info.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/axhub.config.json'), '{"server":{"host":"live-host"}}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/comments/local.json'), '{}\n');
+    writeFile(path.join(clientRoot, '.axhub/make/comment-assets/local/image.png'), 'image\n');
     writeFile(path.join(clientRoot, '.axhub/make/sessions/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/exports/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/make/edit-history/stale.json'), '{}\n');
     writeFile(path.join(clientRoot, '.axhub/sessions/conversations.json'), '{}\n');
+    writeFile(path.join(clientRoot, 'src/resources/prd/PROJECT.md'), '# Local project\n');
     writeFile(path.join(clientRoot, 'src/prototypes/beginner-guide/.spec/reviews/config.json'), '{"reviewer":"local"}\n');
     writeFile(path.join(clientRoot, 'template-seed/.axhub/make/README.md'), '# Seed Make client\n');
     writeFile(path.join(clientRoot, 'template-seed/.axhub/make/client.json'), '{"kind":"seed-client"}\n');
@@ -643,6 +669,7 @@ describe('release make artifact helpers', () => {
     const zipEntries = unzipSync(new Uint8Array(fs.readFileSync(result.path)));
     const packagedPackageJson = JSON.parse(Buffer.from(zipEntries['package.json']).toString('utf8'));
     const packagedLockfile = Buffer.from(zipEntries['pnpm-lock.yaml']).toString('utf8');
+    const packagedGitignore = Buffer.from(zipEntries['.gitignore']).toString('utf8');
     assert(entries.includes('package.json'));
     assert(entries.includes('pnpm-lock.yaml'));
     assert.equal(packagedPackageJson.packageManager, 'pnpm@10.20.0');
@@ -686,6 +713,13 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('dist/')));
     assert(entries.includes('.agents/skills/local/SKILL.md'));
     assert(entries.includes('.claude/skills/local/SKILL.md'));
+    assert(entries.includes('.agents/skills/handle-comments/SKILL.md'));
+    assert(entries.includes('.claude/skills/handle-comments/SKILL.md'));
+    assert(!entries.some((entry) => entry.includes('/skills/prototype-comments/')));
+    assert.match(packagedGitignore, /^!\.axhub\/make\/comments\/$/mu);
+    assert.match(packagedGitignore, /^!\.axhub\/make\/comments\/\*\*$/mu);
+    assert.match(packagedGitignore, /^!\.axhub\/make\/comment-assets\/$/mu);
+    assert.match(packagedGitignore, /^!\.axhub\/make\/comment-assets\/\*\*$/mu);
     assert(!entries.some((entry) => entry.startsWith('.trae/')));
     assert(!entries.some((entry) => entry.startsWith('.codex/')));
     assert(!entries.some((entry) => entry.startsWith('.workbuddy/')));
@@ -720,7 +754,10 @@ describe('release make artifact helpers', () => {
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/sessions/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/exports/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/make/edit-history/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/comments/')));
+    assert(!entries.some((entry) => entry.startsWith('.axhub/make/comment-assets/')));
     assert(!entries.some((entry) => entry.startsWith('.axhub/sessions/')));
+    assert(!entries.some((entry) => entry.startsWith('src/resources/prd/')));
     assert(!entries.includes('src/prototypes/beginner-guide/.spec/reviews/config.json'));
   });
 

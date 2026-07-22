@@ -32,6 +32,11 @@
         "action": "exclude",
         "pattern": "^scripts/subset-beginner-guide-fonts\\.mjs$",
         "description": "发布包只保留已裁剪字体，不携带字体裁剪开发工具。"
+      },
+      {
+        "action": "exclude",
+        "pattern": "^\\.(?:agents|claude)/skills/prototype-comments(?:/|$)",
+        "description": "旧版 prototype-comments 已由 handle-comments 替代，不进入发布模板。"
       }
     ]
   },
