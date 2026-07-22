@@ -84,8 +84,8 @@ function normalizeLocalMarkdownPath(value: string): string {
     return pathValue;
 }
 
-function buildMarkdownFileUrl(markdownPath: string): string {
-    return `/api/markdown-file?path=${encodeURIComponent(markdownPath)}`;
+function buildMarkdownFileUrl(markdownPath: string, projectId: string): string {
+    return withProjectScope(`/api/markdown-file?path=${encodeURIComponent(markdownPath)}`, { projectId });
 }
 
 function isMarkdownFileApiUrl(value: string): boolean {
@@ -302,6 +302,7 @@ function shouldProxyRuntimeDocumentUrl(options: {
 }
 
 export function resolveCanvasEmbedPreviewUrl(options: {
+    projectId: string;
     previewUrl: string;
     resourceType?: unknown;
     runtimeOrigin?: string;
@@ -320,7 +321,10 @@ export function resolveCanvasEmbedPreviewUrl(options: {
     const explicitOrigin = hasExplicitUrlOrigin(previewUrl);
     const markdownPath = normalizeLocalMarkdownPath(previewUrl);
     if (markdownPath) {
-        return buildMarkdownFileUrl(markdownPath);
+        return buildMarkdownFileUrl(markdownPath, options.projectId);
+    }
+    if (isMarkdownFileApiUrl(previewUrl)) {
+        return withProjectScope(previewUrl, { projectId: options.projectId });
     }
 
     if (!shouldUseRuntimeOrigin && !explicitOrigin) {
@@ -343,3 +347,4 @@ export function resolveCanvasEmbedPreviewUrl(options: {
         return previewUrl;
     }
 }
+import { withProjectScope } from '../../../services/projectScope';

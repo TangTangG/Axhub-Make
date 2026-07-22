@@ -338,12 +338,22 @@ describe('CanvasAiGenerationTool source', () => {
     expect(source).toContain('setCanvasStartPrototypeNeedsRequirementsAnalysis(false);');
     expect(source).toContain('setCanvasStartImageParams({ ...DEFAULT_CANVAS_START_IMAGE_SETTINGS });');
     expect(source).toContain("setCanvasStartDocumentFormat('');");
-    expect(source).toContain('setCanvasStartDocumentNeedsRequirementsAnalysis(false);');
+    expect(source).toContain('setCanvasStartDocumentUsePrdPlanning(false);');
     expect(source).toContain('canvasStartUserSelectedThemeRef.current = false;');
     expect(submitBody).toContain('resetCanvasStartSubmitState();');
     expect(submitBody.indexOf('const startResult = controller?.start(request);')).toBeLessThan(
       submitBody.indexOf('resetCanvasStartSubmitState();'),
     );
+  });
+
+  it('labels the document workflow by PRD planning rather than document count or generic analysis', () => {
+    const source = readToolSource();
+
+    expect(source).toContain('PRD 规划');
+    expect(source).toContain('画布 AI 文档使用 PRD 规划流程');
+    expect(source).not.toContain('画布 AI 文档需要需求分析');
+    expect(source).not.toContain('单篇 PRD');
+    expect(source).not.toContain('多篇 PRD');
   });
 
   it('clears and closes the canvas start composer after submitting a prompt', () => {
@@ -459,6 +469,22 @@ describe('CanvasAiGenerationTool source', () => {
     expect(optimizeSegment).toContain('model: request.model');
     expect(optimizeSegment).toContain('mode: request.mode');
     expect(optimizeSegment).toContain('thought: request.thought');
+  });
+
+  it('copies the canvas start prompt with the same scene settings used by direct creation', () => {
+    const source = readToolSource();
+    const copySegment = source.slice(
+      source.indexOf('const copyCanvasStartPrompt = useCallback'),
+      source.indexOf('const submitCanvasStartPrompt = useCallback'),
+    );
+
+    expect(copySegment).toContain('const startSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(canvasStartScene);');
+    expect(copySegment).toContain('const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(trimmedPrompt, startSystemPrompt);');
+    expect(copySegment).toContain('return appendCanvasGenerationPromptSettings({');
+    expect(copySegment).toContain('scene: canvasStartScene');
+    expect(copySegment).toContain("settings: canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings");
+    expect(copySegment).toContain("finalGuide: 'local-ai-acknowledgement'");
+    expect(source).toContain('onCopyPrompt={copyCanvasStartPrompt}');
   });
 
   it('uses subdued canvas scene switch styling instead of a black primary active state', () => {

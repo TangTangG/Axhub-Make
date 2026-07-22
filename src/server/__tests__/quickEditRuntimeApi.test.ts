@@ -590,9 +590,14 @@ describe('quick edit runtime script', () => {
         projectId: 'project-1',
         resourceId: 'home',
         resourceType: 'prototypes',
-        targetWidth: 390,
-        targetHeight: 846,
-        targetPixelRatio: 1,
+        payload: {
+          targetWidth: 390,
+          targetHeight: 846,
+          targetPixelRatio: 1,
+          format: 'jpeg',
+          quality: 0.92,
+          maxBytes: 8 * 1024 * 1024,
+        },
       },
     });
     await vi.waitFor(() => {
@@ -603,6 +608,9 @@ describe('quick edit runtime script', () => {
       targetWidth: 390,
       targetHeight: 846,
       targetPixelRatio: 1,
+      format: 'jpeg',
+      quality: 0.92,
+      maxBytes: 8 * 1024 * 1024,
     });
     expect(messages.at(-1)).toEqual({
       targetOrigin: '*',

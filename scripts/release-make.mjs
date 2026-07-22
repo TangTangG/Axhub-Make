@@ -63,6 +63,12 @@ const makeClientTemplateIgnoredDevDependencies = new Set([
   '@vitest/coverage-v8',
   'subset-font',
 ]);
+const makeClientTemplateTrackableCommentGitignoreEntries = [
+  '!.axhub/make/comments/',
+  '!.axhub/make/comments/**',
+  '!.axhub/make/comment-assets/',
+  '!.axhub/make/comment-assets/**',
+];
 const includeOpenCodeWebUi = false;
 const npmPackagePackedSizeLimit = 35 * 1024 * 1024;
 const npmPackageUnpackedSizeLimit = 80 * 1024 * 1024;
@@ -693,6 +699,14 @@ function addTemplateSourceDirectory(entries, sourceClientDir, relativeDirectory,
   }
 }
 
+function createMakeClientTemplateGitignore(source) {
+  const normalized = Buffer.from(source).toString('utf8').trimEnd();
+  const existingEntries = new Set(normalized.split(/\r?\n/u));
+  const missingEntries = makeClientTemplateTrackableCommentGitignoreEntries
+    .filter((entry) => !existingEntries.has(entry));
+  return Buffer.from(`${normalized}\n${missingEntries.join('\n')}\n`, 'utf8');
+}
+
 function pruneMakeClientTemplateSidebarItems(items, allowedItemKeys) {
   if (!Array.isArray(items)) {
     return [];
@@ -809,6 +823,10 @@ function buildTemplateZippable(sourceClientDir) {
   const entries = {};
   for (const relativePath of manifest.runtime.files) {
     addTemplateSourceFile(entries, sourceClientDir, relativePath);
+  }
+  // The source checkout keeps live comments local; generated user projects may track them.
+  if (entries['.gitignore']) {
+    entries['.gitignore'] = new Uint8Array(createMakeClientTemplateGitignore(entries['.gitignore']));
   }
   for (const relativeDirectory of manifest.runtime.directories) {
     addTemplateSourceDirectory(entries, sourceClientDir, relativeDirectory, manifest.runtime.fileRules);

@@ -29,6 +29,11 @@ import {
     type MarkdownQuickEditMeta,
 } from './quickEdit';
 import {
+    createDocumentCommentsPersistenceAdapter,
+    createDocumentCommentsPersistenceScope,
+    type DocumentCommentContext,
+} from '../common/documentCommentsPersistence';
+import {
     resolvePrototypeSpecAssetUrl,
     resolvePrototypeSpecDocumentLink,
     resolvePrototypeSpecResourceUrl,
@@ -67,8 +72,8 @@ type SpecQuickEditMode = 'none' | 'comment' | 'edit';
 const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
     '.agents/skills/explore-options/SKILL.md',
     '.claude/skills/explore-options/SKILL.md',
-    '.agents/skills/prototype-comments/SKILL.md',
-    '.claude/skills/prototype-comments/SKILL.md',
+    '.agents/skills/handle-comments/SKILL.md',
+    '.claude/skills/handle-comments/SKILL.md',
 ].join('\n');
 
 interface SpecPromptRequestResult {
@@ -90,6 +95,7 @@ export interface MarkdownViewerHandle {
     getHostToolbarState: () => CommentaryHostToolbarState | null;
     subscribeHostToolbarState: (listener: (state: CommentaryHostToolbarState) => void) => () => void;
     runHostToolbarAction: (action: CommentaryHostToolbarAction) => Promise<boolean>;
+    setContext: (context: DocumentCommentContext | null) => void;
     setQuickEditMode: (mode: 'comment' | 'edit', options?: { saveBehavior?: 'none' | 'save' | 'discard' }) => Promise<boolean>;
     getQuickEditStatus: () => {
         enabled: boolean;
@@ -99,6 +105,7 @@ export interface MarkdownViewerHandle {
         activeDocKey: string;
         quickEditMode: SpecQuickEditMode;
     };
+    getCopyPromptText: () => string;
     handleCopyPrompt: () => Promise<SpecPromptRequestResult>;
     saveCurrentDoc: (options?: {
         exitAfterSave?: boolean;
@@ -618,6 +625,7 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     const localDocumentsRef = useRef(localDocuments);
     const savedContentsRef = useRef(savedContents);
     const currentDocRef = useRef<MarkdownDocument | undefined>(undefined);
+    const documentContextRef = useRef<DocumentCommentContext | null>(null);
     const quickEditModeRef = useRef<SpecQuickEditMode>(quickEditMode);
     const draftPersistTimerRef = useRef<number | null>(null);
     const draftPromptedDocKeysRef = useRef<Set<string>>(new Set());
@@ -670,7 +678,8 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
     const buildCommentResourceContext = useCallback((doc: MarkdownDocument | undefined) => {
         if (!doc) return null;
         const meta = resolveMarkdownQuickEditMeta(doc.url);
-        const targetPath = meta.docPath;
+        const explicitContext = documentContextRef.current;
+        const targetPath = explicitContext?.documentPath || meta.docPath;
         return {
             kind: 'markdown-document',
             id: meta.docPath || doc.url || doc.key,
@@ -682,12 +691,13 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                 entryName: meta.entryName,
                 docType: meta.docType,
                 targetPath,
-                currentFilePath: meta.docPath,
-                docPath: meta.docPath,
+                currentFilePath: targetPath,
+                docPath: targetPath,
                 prototypeFilePath: meta.prototypePath,
-                storageScope: meta.docPath
-                    ? `markdown-doc:${meta.docPath}`
+                storageScope: targetPath
+                    ? `document:${targetPath}`
                     : `markdown-doc:${doc.key}`,
+                ...(explicitContext?.projectId ? { projectId: explicitContext.projectId } : {}),
             },
         };
     }, []);
@@ -718,6 +728,19 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             },
             host: {
                 getResourceContext: () => buildCommentResourceContext(currentDocRef.current),
+                getPersistenceScope: () => {
+                    const context = documentContextRef.current;
+                    return context
+                        ? createDocumentCommentsPersistenceScope(
+                            context,
+                            buildCommentResourceContext(currentDocRef.current),
+                        )
+                        : null;
+                },
+                persistenceAdapter: createDocumentCommentsPersistenceAdapter(
+                    () => documentContextRef.current,
+                ),
+                commentPersistenceMode: 'adapter-only',
             },
         });
         commentEditorRef.current = editor;
@@ -1383,6 +1406,17 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
             draftPromptedDocKeysRef.current.clear();
             setQuickEditModeState('comment');
         },
+        setContext(context) {
+            documentContextRef.current = context && context.documentPath && context.projectId
+                ? {
+                    projectId: context.projectId.trim(),
+                    documentPath: context.documentPath.replace(/\\/g, '/').trim(),
+                    commentFilePath: context.commentFilePath,
+                    commentAssetRoot: context.commentAssetRoot,
+                }
+                : null;
+            commentEditorRef.current?.refresh?.();
+        },
         disableQuickEdit(options) {
             if (options?.discardChanges) {
                 restoreDirtyChanges();
@@ -1427,6 +1461,9 @@ export const MarkdownViewer = React.forwardRef<MarkdownViewerHandle, MarkdownVie
                 activeDocKey: activeKey,
                 quickEditMode,
             };
+        },
+        getCopyPromptText() {
+            return buildCommentPromptPayload().prompt;
         },
         handleCopyPrompt() {
             return Promise.resolve(buildCommentPromptPayload());

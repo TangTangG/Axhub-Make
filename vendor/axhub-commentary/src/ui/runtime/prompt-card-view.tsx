@@ -38,6 +38,7 @@ import {
   deserializePromptCardSkillSelection,
   filterPromptCardSkills,
   findPromptCardSkillTrigger,
+  mergePromptCardSkills,
   type PromptCardSkill,
 } from './prompt-card-skills';
 import { promptCardStyle } from './styles';
@@ -179,9 +180,9 @@ export function getAnnotationManualEditLocatorState(
 async function copyPromptCardTextToClipboard(text: string): Promise<void> {
   try {
     if (
-      typeof navigator !== 'undefined'
-      && navigator.clipboard
-      && typeof navigator.clipboard.writeText === 'function'
+      typeof navigator !== 'undefined' &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === 'function'
     ) {
       await navigator.clipboard.writeText(text);
       return;
@@ -241,37 +242,38 @@ export function buildPromptCardTaskErrorMessage(options: {
     }
   };
   const taskSessionId = String(taskRef?.sessionId ?? sessionId ?? '').trim();
-  return [
-    ...(currentTaskDescription ? [currentTaskDescription] : []),
-    taskSessionId ? `Session ${taskSessionId}` : '',
-    taskRef?.provider ? `Provider ${taskRef.provider}` : '',
-    taskRef?.requestId ? `Request ${taskRef.requestId}` : '',
-    taskRef?.code ? `Code ${taskRef.code}` : '',
-    taskRef?.error ? `Error ${taskRef.error}` : '',
-    taskRef?.output ? `Output ${taskRef.output}` : '',
-    serializeDiagnosticValue(taskRef?.chunk) ? `Chunk ${serializeDiagnosticValue(taskRef?.chunk)}` : '',
-    serializeDiagnosticValue(taskRef?.details) ? `Details ${serializeDiagnosticValue(taskRef?.details)}` : '',
-  ].filter(Boolean).join('\n') || 'AI 修改失败';
+  return (
+    [
+      ...(currentTaskDescription ? [currentTaskDescription] : []),
+      taskSessionId ? `Session ${taskSessionId}` : '',
+      taskRef?.provider ? `Provider ${taskRef.provider}` : '',
+      taskRef?.requestId ? `Request ${taskRef.requestId}` : '',
+      taskRef?.code ? `Code ${taskRef.code}` : '',
+      taskRef?.error ? `Error ${taskRef.error}` : '',
+      taskRef?.output ? `Output ${taskRef.output}` : '',
+      serializeDiagnosticValue(taskRef?.chunk)
+        ? `Chunk ${serializeDiagnosticValue(taskRef?.chunk)}`
+        : '',
+      serializeDiagnosticValue(taskRef?.details)
+        ? `Details ${serializeDiagnosticValue(taskRef?.details)}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n') || 'AI 修改失败'
+  );
 }
 
 export function dismissPromptCardTerminalState(options: {
   currentTarget: Element | null;
   currentTaskTerminal: boolean;
-  dismissElementAgentTaskState?: (element: Element) => void;
   onDismissSelection?: () => void;
 }): boolean {
-  const {
-    currentTarget,
-    currentTaskTerminal,
-    dismissElementAgentTaskState,
-    onDismissSelection,
-  } = options;
+  const { currentTarget, currentTaskTerminal, onDismissSelection } = options;
 
   if (!currentTaskTerminal || !currentTarget) {
     return false;
   }
 
-  dismissElementAgentTaskState?.(currentTarget);
   onDismissSelection?.();
   return true;
 }
@@ -305,6 +307,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       hideExecutionControls = false,
       hideContextAppendAction = false,
       enabledSkillIds,
+      skillOptions,
       onHoverSelectionSuppressedChange,
       onSelectionInteractionLockChange,
       onTargetChange,
@@ -356,13 +359,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const [elementToolError, setElementToolError] = React.useState('');
     const elementTools = options.getElementTools?.(currentTarget) ?? [];
     const hasElementTools = elementTools.length > 0;
-    const skillTrigger = React.useMemo(
-      () => findPromptCardSkillTrigger(draftNote),
-      [draftNote],
+    const skillTrigger = React.useMemo(() => findPromptCardSkillTrigger(draftNote), [draftNote]);
+    const promptCardSkills = React.useMemo(
+      () => mergePromptCardSkills(skillOptions ?? []),
+      [skillOptions],
     );
     const filteredSkills = React.useMemo(
-      () => filterPromptCardSkills(skillTrigger?.query ?? '', enabledSkillIds),
-      [enabledSkillIds, skillTrigger?.query],
+      () => filterPromptCardSkills(skillTrigger?.query ?? '', enabledSkillIds, promptCardSkills),
+      [enabledSkillIds, promptCardSkills, skillTrigger?.query],
     );
     const selectedSkillsDirty = React.useMemo(() => {
       const savedSkillIds = savedNoteMeta?.skillIds ?? [];
@@ -370,10 +374,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       return selectedSkillIds.join('\0') !== savedSkillIds.join('\0');
     }, [savedNoteMeta?.skillIds, selectedSkills]);
     const skillMenuOpen = Boolean(
-      skillTrigger
-      && !inlineTextEditing
-      && canEditNote
-      && filteredSkills.length > 0,
+      skillTrigger && !inlineTextEditing && canEditNote && filteredSkills.length > 0,
     );
 
     React.useEffect(() => {
@@ -381,10 +382,12 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     }, [inlineTextEditing]);
 
     React.useEffect(() => {
-      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds));
+      setSelectedSkills(
+        deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds, skillOptions ?? []),
+      );
       setRunningElementToolId(null);
       setElementToolError('');
-    }, [enabledSkillIds, savedNoteMeta, currentTarget]);
+    }, [enabledSkillIds, savedNoteMeta, currentTarget, skillOptions]);
 
     const onConfirmNoteWithSelectedSkills = React.useCallback(async () => {
       const payload = buildPromptCardSkillSavePayload(draftNote, selectedSkills);
@@ -434,7 +437,6 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       }
       return true;
     }, [inlineTextEditing]);
-
 
     const focusPromptTextarea = React.useCallback(() => {
       if (inlineTextEditing) return false;
@@ -574,10 +576,22 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         anchorGapPx: ANCHOR_GAP_PX,
       });
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [anchorRect, currentTarget, promptCardSize, propertyPanelEnabled, toolMinimized, uiMode, visualViewportKey]);
+    }, [
+      anchorRect,
+      currentTarget,
+      promptCardSize,
+      propertyPanelEnabled,
+      toolMinimized,
+      uiMode,
+      visualViewportKey,
+    ]);
 
     const promptVisible = Boolean(
-      currentTarget && promptPosition && promptCardSize && !toolMinimized && uiMode === 'bubble-card',
+      currentTarget &&
+        promptPosition &&
+        promptCardSize &&
+        !toolMinimized &&
+        uiMode === 'bubble-card',
     );
 
     React.useEffect(() => {
@@ -624,7 +638,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       return () => {
         window.clearTimeout(timerId);
       };
-    }, [currentTarget, ensurePromptPrimaryFocus, inlineTextEditing, promptVisible, toolMinimized, uiMode]);
+    }, [
+      currentTarget,
+      ensurePromptPrimaryFocus,
+      inlineTextEditing,
+      promptVisible,
+      toolMinimized,
+      uiMode,
+    ]);
 
     React.useEffect(() => {
       if (!inlineTextEditing || promptVisible) return;
@@ -654,7 +675,10 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         event.stopPropagation();
       };
 
-      window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
+      window.addEventListener('wheel', handleWheel, {
+        capture: true,
+        passive: false,
+      });
       return () => {
         window.removeEventListener('wheel', handleWheel, true);
       };
@@ -684,7 +708,13 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       }
 
       onDismissSelection?.();
-    }, [currentTarget, onConfirmAnnotationMarkdown, onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
+    }, [
+      currentTarget,
+      onConfirmAnnotationMarkdown,
+      onConfirmNoteWithSelectedSkills,
+      onConfirmText,
+      onDismissSelection,
+    ]);
 
     const saveAndCloseAnnotationMarkdownComposer = React.useCallback(async () => {
       if (getAnnotationManualEditLocatorState(currentTarget).disabled) {
@@ -720,7 +750,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
 
     React.useEffect(() => {
       setPortalContainer(
-        options.container.querySelector(`[${WEB_EDITOR_POPUP_ROOT_ATTR}="true"]`) as HTMLElement | null,
+        options.container.querySelector(
+          `[${WEB_EDITOR_POPUP_ROOT_ATTR}="true"]`,
+        ) as HTMLElement | null,
       );
     }, [options.container]);
 
@@ -742,7 +774,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       currentTarget,
       uiMode,
       toolMinimized,
-      onAppendElementToAgentContext: hideContextAppendAction ? undefined : options.onAppendElementToAgentContext,
+      onAppendElementToAgentContext: hideContextAppendAction
+        ? undefined
+        : options.onAppendElementToAgentContext,
       getAgentBridgeAvailable: options.getAgentBridgeAvailable,
       getAssistantPanelOpen: options.getAssistantPanelOpen,
     });
@@ -774,27 +808,32 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
       getAgentBridgeConnected,
     });
     const dismissTerminalTaskAndSelection = React.useCallback(
-      () => dismissPromptCardTerminalState({
+      () =>
+        dismissPromptCardTerminalState({
+          currentTarget,
+          currentTaskTerminal,
+          onDismissSelection,
+        }),
+      [
         currentTarget,
         currentTaskTerminal,
-        dismissElementAgentTaskState: options.dismissElementAgentTaskState,
         onDismissSelection,
-      }),
-      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementAgentTaskState],
+      ],
     );
-    const currentTaskSessionHref = currentAgentTask?.sessionUrl
-      ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : '');
+    const currentTaskSessionHref =
+      currentAgentTask?.sessionUrl ??
+      (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : '');
     const currentTaskDescription = resolveExternalEditingStatusDescription(
       currentAgentTask,
       options.externalEditingStatusDescription,
     );
     const currentTaskErrorMessage = currentAgentTask?.status === 'error'
-      ? buildPromptCardTaskErrorMessage({
-        currentTaskDescription,
-        sessionId: currentAgentTask.sessionId,
-        taskRef: currentAgentTask.taskRef,
-      })
-      : '';
+        ? buildPromptCardTaskErrorMessage({
+            currentTaskDescription,
+            sessionId: currentAgentTask.sessionId,
+            taskRef: currentAgentTask.taskRef,
+          })
+        : '';
     const styleSummaryLines = compactPromptStyleSummaryLines(
       options.getElementStyleSummaryLines?.(currentTarget) ?? [],
     );
@@ -923,13 +962,16 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
         if (dismissTerminalTaskAndSelection()) return;
         void saveAndCloseNoteComposer();
       },
-      [
-        dismissTerminalTaskAndSelection,
-        saveAndCloseNoteComposer,
-      ],
+      [dismissTerminalTaskAndSelection, saveAndCloseNoteComposer],
     );
 
-    if (!promptPositionBaseVisible || !currentTarget || !promptPosition || toolMinimized || uiMode !== 'bubble-card') {
+    if (
+      !promptPositionBaseVisible ||
+      !currentTarget ||
+      !promptPosition ||
+      toolMinimized ||
+      uiMode !== 'bubble-card'
+    ) {
       return <div ref={rootRef} style={{ ...promptCardStyle, visibility: 'hidden' }} />;
     }
 
@@ -950,19 +992,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const showPromptTextInput = false;
     const isCurrentAnnotationPanelTarget = isAnnotationPanelTarget(currentTarget);
     const showAnnotationMarkdownEditorButton = Boolean(
-      annotationEnabled
-      && canEditAnnotationMarkdown
-      && currentTarget,
+      annotationEnabled && canEditAnnotationMarkdown && currentTarget,
     );
-    const showAnnotationDocumentEditButton = Boolean(
-      currentTarget
-      && annotationDocumentEditUrl,
-    );
+    const showAnnotationDocumentEditButton = Boolean(currentTarget && annotationDocumentEditUrl);
     const showNoteComposer = !annotationEditorOpen && !bubbleStyleEditorOpen;
     const showAnnotationMarkdownEditor = Boolean(
       annotationEditorOpen
       && showAnnotationMarkdownEditorButton
-      && !bubbleStyleEditorOpen
+      && !bubbleStyleEditorOpen,
     );
     const annotationManualEditLocatorState = showAnnotationMarkdownEditor
       ? getAnnotationManualEditLocatorState(currentTarget)
@@ -971,23 +1008,24 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
     const annotationManualEditMessage = annotationManualEditLocatorState.message;
     const showPromptDesignEditor = Boolean(
       currentTarget &&
-      transactionManager &&
-      bubbleStyleEditorOpen &&
-      styleDesignEnabled &&
-      !isCurrentAnnotationPanelTarget &&
-      !textCommentMode,
+        transactionManager &&
+        bubbleStyleEditorOpen &&
+        styleDesignEnabled &&
+        !isCurrentAnnotationPanelTarget &&
+        !textCommentMode,
     );
     const styleEditorToggleTitle = bubbleStyleEditorOpen ? '关闭样式编辑' : '打开样式编辑';
     const promptCardSendActionTitle = currentElementPromptAction.title;
     const agentSelectionShortcutSettings = options.getCommentShortcutSettings?.();
     const agentSelectionShortcutLabels = agentSelectionShortcutSettings?.enabled
       ? agentSelectionShortcutSettings.shortcuts
-        .filter((shortcut): shortcut is NonNullable<typeof shortcut> => Boolean(shortcut))
-        .map((shortcut) => formatModifierShortcutLabel(shortcut))
+          .filter((shortcut): shortcut is NonNullable<typeof shortcut> => Boolean(shortcut))
+          .map((shortcut) => formatModifierShortcutLabel(shortcut))
       : [];
-    const agentSelectionShortcutHint = agentSelectionShortcutLabels.length > 0
-      ? `，长按 ${agentSelectionShortcutLabels.join(' / ')} 也可唤起`
-      : '';
+    const agentSelectionShortcutHint =
+      agentSelectionShortcutLabels.length > 0
+        ? `，长按 ${agentSelectionShortcutLabels.join(' / ')} 也可唤起`
+        : '';
     const agentSelectionActionTitle = currentTaskRunning
       ? '添加到 AI 对话'
       : `添加到 AI 对话${agentSelectionShortcutHint}`;
@@ -1005,11 +1043,13 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
           top: promptPosition.top,
           visibility: promptVisible ? 'visible' : 'hidden',
           // Mobile: full width prompt card
-          ...(isMobileDevice() ? {
-            width: 'calc(100vw - 16px)',
-            maxWidth: 'calc(100vw - 16px)',
-            borderRadius: 16,
-          } : {}),
+          ...(isMobileDevice()
+            ? {
+                width: 'calc(100vw - 16px)',
+                maxWidth: 'calc(100vw - 16px)',
+                borderRadius: 16,
+              }
+            : {}),
         }}
         onPointerDownCapture={() => onSelectionInteractionLockChange(true)}
         onFocusCapture={() => onSelectionInteractionLockChange(true)}
@@ -1117,7 +1157,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                 </span>
               );
             })}
-            {propertyPanelEnabled && styleDesignEnabled && !hasElementTools && !textCommentMode && !isCurrentAnnotationPanelTarget ? (
+            {propertyPanelEnabled && styleDesignEnabled && !hasElementTools &&
+            !textCommentMode &&
+            !isCurrentAnnotationPanelTarget ? (
               <IconActionButton
                 title={styleEditorToggleTitle}
                 icon={<FormatPainterOutlined />}
@@ -1186,7 +1228,7 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
               padding: '6px 10px',
               borderRadius: 8,
               background: 'rgba(255, 77, 79, 0.12)',
-              color: EDITOR_CHROME.danger,
+              color: EDITOR_CHROME.textDanger,
               fontSize: 11,
               lineHeight: 1.45,
               overflowWrap: 'anywhere',
@@ -1305,7 +1347,14 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                         }}
                         onClick={() => handleSkillRemove(skill.id)}
                       >
-                        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span
+                          style={{
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           {skill.label}
                         </span>
                         <CloseOutlined style={{ fontSize: 9, color: EDITOR_CHROME.textMuted }} />
@@ -1351,7 +1400,10 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                   onKeyDown={handlePromptKeyDown}
                   onBlur={(event) => {
                     const nextTarget = event.relatedTarget;
-                    if (nextTarget instanceof Node && noteComposerRef.current?.contains(nextTarget)) {
+                    if (
+                      nextTarget instanceof Node &&
+                      noteComposerRef.current?.contains(nextTarget)
+                    ) {
                       return;
                     }
                     if (!noteDirty && !selectedSkillsDirty) return;
@@ -1377,7 +1429,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                     }}
                   >
                     {filteredSkills.map((skill) => {
-                      const selected = selectedSkills.some((selectedSkill) => selectedSkill.id === skill.id);
+                      const selected = selectedSkills.some(
+                        (selectedSkill) => selectedSkill.id === skill.id,
+                      );
                       return (
                         <button
                           key={skill.id}
@@ -1404,10 +1458,22 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                             }
                           }}
                         >
-                          <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 600,
+                              lineHeight: 1.35,
+                            }}
+                          >
                             {skill.label}
                           </span>
-                          <span style={{ fontSize: 11, lineHeight: 1.35, color: EDITOR_CHROME.textMuted }}>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              lineHeight: 1.35,
+                              color: EDITOR_CHROME.textMuted,
+                            }}
+                          >
                             {skill.description}
                           </span>
                         </button>
@@ -1416,9 +1482,12 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                   </div>
                 ) : null}
               </div>
-              <PromptImageStrip images={images} onRemoveImage={(imageId) => {
-                void onRemoveImage(imageId);
-              }} />
+              <PromptImageStrip
+                images={images}
+                onRemoveImage={(imageId) => {
+                  void onRemoveImage(imageId);
+                }}
+              />
             </>
           ) : null}
           {showAnnotationMarkdownEditor ? (
@@ -1464,7 +1533,9 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
                       title="删除标注"
                       icon={<DeleteOutlined />}
                       tone="dark"
-                      disabled={annotationLoading || annotationSaving || !onDeleteCurrentAnnotationNode}
+                      disabled={
+                        annotationLoading || annotationSaving || !onDeleteCurrentAnnotationNode
+                      }
                     />
                   </span>
                 </Popconfirm>
@@ -1571,17 +1642,49 @@ export const PromptCardView = React.forwardRef<BreadcrumbsHandle, PromptCardView
             </div>
           ) : null}
           {currentAgentTask ? (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '2px 4px 0', marginTop: -2 }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 6,
+                padding: '2px 4px 0',
+                marginTop: -2,
+              }}
+            >
               {currentAgentTask.status === 'completed' ? (
                 <CheckCircleFilled style={{ color: '#22c55e', fontSize: 13, marginTop: 3 }} />
               ) : currentAgentTask.status === 'error' ? (
                 <ExclamationCircleFilled style={{ color: '#ef4444', fontSize: 13, marginTop: 3 }} />
               ) : (
-                <div style={{ marginTop: 2 }}><AgentSparkleIcon /></div>
+                <div style={{ marginTop: 2 }}>
+                  <AgentSparkleIcon />
+                </div>
               )}
-              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: currentAgentTask.status === 'error' ? '#ef4444' : EDITOR_CHROME.textPrimary }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 500,
+                      color:
+                        currentAgentTask.status === 'error' ? '#ef4444' : EDITOR_CHROME.textPrimary,
+                    }}
+                  >
                     {currentAgentTask.status === 'pending'
                       ? 'AI 准备中'
                       : currentAgentTask.status === 'created'

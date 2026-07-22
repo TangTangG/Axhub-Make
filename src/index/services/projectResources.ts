@@ -480,7 +480,9 @@ export function normalizeProjectDocResource(
     const itemName = directDocsFileUrl && docFileRouteName ? docFileRouteName : name;
     const markdownUrl = isMarkdown && contentEndpoint
         ? contentEndpoint
-        : directDocsFileUrl || buildMarkdownFileUrl(markdownPath) || contentEndpoint;
+        : directDocsFileUrl
+            || (projectId && markdownPath ? buildMarkdownFileUrl(markdownPath, projectId) : '')
+            || contentEndpoint;
     const shouldUseSpecTemplatePreview = isMarkdown || (!markdownPath && !directDocsFileUrl);
     const resourceRelativePath = getDocRelativePathFromResourcePath(markdownPath);
     const filePath = explicitFilePath

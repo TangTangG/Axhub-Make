@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ChevronDown, CircleHelp, Copy, ExternalLink, FileIcon, Globe, ImageIcon, LayoutDashboard, Monitor, Network, PencilRuler, Play, Rocket, SlidersHorizontal, Smartphone, UploadCloud } from 'lucide-react';
 import { toast } from 'sonner';
 import { Segmented } from 'antd';
@@ -90,11 +90,20 @@ import {
 } from '../../domains/ai-generation/canvasGenerationPromptSettings';
 import { optimizeCanvasPrompt } from '../../domains/ai-generation/canvasPromptOptimization';
 import { apiService } from '../../services/index.api';
-import { documentTemplatesApi, type DocumentTemplateOption } from '../../services/documentTemplates';
+import { requireProjectScope, withProjectScope } from '../../services/projectScope';
+import {
+    documentTemplatesApi,
+    filterCompatibleDocumentTemplates,
+    isDocumentTemplateCompatibleWithFormat,
+    type DocumentTemplateOption,
+} from '../../services/documentTemplates';
 import { generateTemplateImportPrompt, type TemplateLibraryPromptItem } from '../../utils/templateImportPrompts';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
 import { resolveMarkdownPreviewIframeUrl } from '../../utils/markdownPreview';
 import { lazyWithRetry } from '../../utils/lazyWithRetry';
+import { ResourceStartPromptGrid, type ResourceStartPromptCard } from './ResourceStartPromptGrid';
+import { applyResourceStartImageSize } from './resourceStartPromptSelection';
+import { ThemeStartPromptGrid, type ThemeStartPromptCard } from './ThemeStartPromptGrid';
 
 const ExcalidrawCanvas = React.lazy(() => lazyWithRetry(() => import('./ExcalidrawCanvas')));
 
@@ -237,12 +246,12 @@ const PLACEHOLDER_TEMPLATE_CASE_LIMIT = 9;
 type StartGuideKind = 'prototype' | 'resource' | 'design';
 const START_GUIDE_SCENES = {
     prototype: ['page'],
-    resource: ['design', 'document'],
+    resource: ['document', 'design'],
     design: ['design'],
 } as const satisfies Record<StartGuideKind, readonly CanvasAiScene[]>;
 const START_GUIDE_DEFAULT_SCENE = {
     prototype: 'page',
-    resource: 'design',
+    resource: 'document',
     design: 'design',
 } as const satisfies Record<StartGuideKind, CanvasAiScene>;
 const START_GUIDE_SOURCE = {
@@ -255,6 +264,118 @@ const START_GUIDE_SETTINGS_STORAGE_KEY_SUFFIX = {
     resource: 'resource-start-settings',
     design: 'theme-start-settings',
 } as const satisfies Record<StartGuideKind, string>;
+
+const RESOURCE_START_PROMPT_CARDS = [
+    {
+        id: 'city-roaming-app-design',
+        scene: 'design',
+        title: '生成 APP 设计图',
+        prompt: '从零设计一款名为「城市漫游」的内容社区 APP，不复刻任何现有产品；生成首页、内容流、发布和个人主页的移动端设计图。',
+        icon: Smartphone,
+        imageSize: '1152x2048',
+    },
+    {
+        id: 'park-control-dashboard',
+        scene: 'design',
+        title: '生成驾驶舱大屏',
+        prompt: '从零设计「园区智控」运营驾驶舱大屏设计图，包含园区总览、实时告警、能耗趋势和设备状态。',
+        icon: Monitor,
+        imageSize: '2048x1152',
+    },
+    {
+        id: 'axure-warehouse-prd',
+        scene: 'document',
+        title: 'Axure 转产品文档',
+        prompt: '请根据我提供的 Axure 原型（在线链接或本地导出的 HTML 文件），基于原型中的真实内容，梳理页面结构、交互、字段和状态，生成产品需求文档和相关资料；信息不足处请标注待确认，不要虚构产品名称或原型中未包含的信息。',
+        icon: FileIcon,
+        prdPlanning: 'enable',
+    },
+    {
+        id: 'webpage-link-prd',
+        scene: 'document',
+        title: '网页链接转产品文档',
+        prompt: '请访问并分析我提供的网页链接，基于网页中的真实内容，梳理页面结构、内容信息、功能模块、交互流程和关键状态，生成产品需求文档和相关资料；仅整理网页中可以确认的信息，信息不足处请标注待确认，不要虚构产品名称、功能或数据。',
+        icon: Globe,
+        prdPlanning: 'enable',
+    },
+    {
+        id: 'meal-app-screenshot-prd',
+        scene: 'document',
+        title: 'APP 截图转产品文档',
+        prompt: '请根据我上传的 APP 截图，基于截图中的真实内容，梳理页面结构、用户流程、功能模块和关键状态，生成产品需求文档和相关资料；信息不足处请标注待确认，不要虚构产品名称或截图中未展示的信息。',
+        icon: ImageIcon,
+        prdPlanning: 'enable',
+    },
+    {
+        id: 'collaboration-prd',
+        scene: 'document',
+        title: '生成产品需求文档',
+        prompt: '请从零生成「协作台」团队任务管理工具的产品需求文档，包含背景、目标用户、功能范围、核心流程、页面说明、数据字段和验收标准。',
+        icon: FileIcon,
+        prdPlanning: 'enable',
+    },
+    {
+        id: 'after-sales-flow',
+        scene: 'document',
+        title: '生成业务流程图',
+        prompt: '请生成「商城售后」从申请、审核、退货、退款到关闭的完整业务流程图，并标注关键分支和异常状态。',
+        icon: Network,
+        prdPlanning: 'disable',
+    },
+    {
+        id: 'park-control-drawio',
+        scene: 'document',
+        title: '生成 Drawio 图表',
+        prompt: '请生成「园区智控」的业务架构 Drawio 可编辑图表，包含用户、业务模块、数据流和系统边界，并输出可继续编辑的 Drawio 文件。',
+        icon: LayoutDashboard,
+        prdPlanning: 'disable',
+    },
+] as const satisfies readonly ResourceStartPromptCard[];
+
+const THEME_START_PROMPT_CARDS = [
+    {
+        id: 'theme-generate',
+        title: '生成设计规范',
+        prompt: '请为「漫屿」精品旅行住宿预订产品生成一套主题。品牌面向 25–40 岁、重视设计感的城市旅行者，整体气质温暖、克制、有编辑感；使用奶油白背景、深墨色正文和陶土橙强调色，标题使用高对比衬线体，正文使用清晰的无衬线体，卡片圆角 12px。请覆盖搜索、房源卡片、预订表单和订单状态等核心组件。',
+        icon: PencilRuler,
+    },
+    {
+        id: 'theme-refero-import',
+        title: '从 Refero 导入',
+        prompt: '请从 https://styles.refero.design/ 选择一套适合 B2B 数据分析产品的主题并导入当前项目。希望整体克制、专业、易读，重点关注数据对比、状态识别和密集信息下的层级关系；如果来源不可用或信息不足，请先说明，不要自行补猜。',
+        icon: UploadCloud,
+    },
+    {
+        id: 'theme-web-capture',
+        title: '网页链接采集',
+        prompt: '请参考这个网页的设计风格并生成一套可复用主题：<粘贴网页链接>。重点提取页面的颜色、字体、间距、圆角、边框、阴影、组件状态和响应式布局；只根据页面中实际看到的内容整理，缺少的信息请标注待确认。',
+        icon: Globe,
+    },
+    {
+        id: 'theme-axure-resource-capture',
+        title: '从 Axure 资源采集',
+        prompt: '请基于我提供的 Axure 原型资源（在线链接或本地导出的 HTML）生成一套主题。先处理并分析原型中的真实页面结构、交互、组件状态和视觉样式，再提取颜色、字体、间距、圆角、边框和阴影等可复用规则；原型中没有体现的信息请标注待确认，不要根据产品名称自行补猜。',
+        icon: FileIcon,
+    },
+    {
+        id: 'theme-prototype-extraction',
+        title: '从原型生成',
+        prompt: '请基于我选择的一个或多个项目内原型，反推一套统一的设计规范。对比不同原型中的颜色、字体、间距、圆角、边框、阴影和常用组件，识别一致规则与差异；以重复出现且稳定的样式为主，冲突或缺失处请标注待确认。',
+        icon: Monitor,
+    },
+    {
+        id: 'theme-figma-import',
+        title: 'Figma 导入',
+        prompt: '请根据我提供的 Figma 链接或上传的 Figma 导出文件整理一套主题。请从其中真实可见的页面、组件、颜色、字体、间距和状态提取可复用规则，并保留原有的视觉层级；看不到或无法确认的设计信息请标注待确认。',
+        icon: LayoutDashboard,
+    },
+    {
+        id: 'theme-screenshot-import',
+        title: '截图导入',
+        prompt: '请根据我上传的界面截图整理一套主题。请提取截图中真实可见的色彩、字体、层级、间距、圆角、边框、阴影和组件状态，并整理成可复用的视觉规则；截图没有展示的信息请标注待确认，不要虚构产品名称或功能。',
+        icon: ImageIcon,
+    },
+] as const satisfies readonly ThemeStartPromptCard[];
 type ImageStartParams = Omit<AiImageTaskParams, 'n' | 'output_format'> & {
     n?: AiImageTaskParams['n'];
     output_format?: AiImageTaskParams['output_format'];
@@ -378,7 +499,7 @@ function FieldLabelWithHint({ label, hint }: { label: string; hint: string }) {
 const PROTOTYPE_START_FIELD_HINTS = {
     count: '选择后会按方案数量生成，并在最终提示词中加载本地 explore-options（多方案探索）技能提示。',
     theme: '选择一个设计系统后，原型会尽量沿用该资源的视觉风格和组件约束。',
-    requirements: '开启后会加载 $requirements-exploration 技能来分析并完善需求。',
+    requirements: '开启后会按共享需求对齐指南补齐目标用户、核心任务、范围、关键流程和验收口径。',
 } as const;
 
 const IMAGE_START_FIELD_HINTS = {
@@ -393,9 +514,9 @@ const IMAGE_START_FIELD_HINTS = {
 
 const DOCUMENT_START_FIELD_HINTS = {
     format: 'Markdown 更轻量；HTML 文档有更好的视觉效果，但会消耗更多 token；Drawio 图表支持更丰富的图形和在线编辑，也会消耗更多 token。',
-    template: '可以在资源的 templates 目录下设置文档模板。',
+    template: '可以在资源的 templates 目录下设置文档模板；HTML 支持 Markdown 和 HTML 模板，Markdown 仅支持 Markdown 模板。',
     visualSpec: 'HTML 文档可选择视觉规范技能，让排版更接近对应模板风格。',
-    requirements: '开启后会加载 $requirements-exploration 技能来分析并完善需求。',
+    prdPlanning: '需要整理产品资料、反推现状、划分新增范围，或不确定最终需要几篇 PRD 时开启；需求和目标文档已经明确时关闭。',
 } as const;
 
 interface CanvasErrorBoundaryProps {
@@ -1043,11 +1164,11 @@ function DocumentStartSettingsPopover({
     templates,
     templatesLoading,
     templateError,
-    needsRequirementsAnalysis,
+    usePrdPlanning,
     onFormatChange,
     onHtmlVisualSpecChange,
     onTemplateChange,
-    onNeedsRequirementsAnalysisChange,
+    onUsePrdPlanningChange,
 }: {
     format: CanvasDocumentFormat | '';
     htmlVisualSpec: HtmlVisualSpecSkillId | '';
@@ -1055,18 +1176,19 @@ function DocumentStartSettingsPopover({
     templates: DocumentTemplateOption[];
     templatesLoading?: boolean;
     templateError?: string;
-    needsRequirementsAnalysis: boolean;
+    usePrdPlanning: boolean;
     onFormatChange: (format: CanvasDocumentFormat | '') => void;
     onHtmlVisualSpecChange: (visualSpec: HtmlVisualSpecSkillId | '') => void;
     onTemplateChange: (templateName: string) => void;
-    onNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+    onUsePrdPlanningChange: (usePrdPlanning: boolean) => void;
 }) {
     const formatLabel = DOCUMENT_START_FORMAT_OPTIONS.find((option) => option.value === format)?.label || '';
     const visualSpecOption = DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === htmlVisualSpec) || null;
     const visualSpecSummaryLabel = format === 'html' ? visualSpecOption?.label : '';
-    const selectedTemplate = templates.find((template) => template.name === selectedTemplateName) || null;
-    const templateLabel = selectedTemplate?.displayName || selectedTemplateName || '';
-    const summary = [formatLabel, visualSpecSummaryLabel, templateLabel].filter(Boolean).join(' · ') || '未指定';
+    const compatibleTemplates = filterCompatibleDocumentTemplates(templates, format);
+    const selectedTemplate = compatibleTemplates.find((template) => template.name === selectedTemplateName) || null;
+    const templateLabel = selectedTemplate?.displayName || '';
+    const summary = [formatLabel, visualSpecSummaryLabel, templateLabel, usePrdPlanning ? 'PRD 规划' : ''].filter(Boolean).join(' · ') || '未指定';
     return (
         <Popover>
             <PopoverTrigger asChild>
@@ -1116,7 +1238,7 @@ function DocumentStartSettingsPopover({
                             <Select
                                 value={selectedTemplateName || UNSPECIFIED_START_SETTING_VALUE}
                                 onValueChange={(value) => onTemplateChange(value === UNSPECIFIED_START_SETTING_VALUE ? '' : value)}
-                                disabled={templatesLoading || templates.length === 0}
+                                disabled={templatesLoading || compatibleTemplates.length === 0}
                             >
                                 <SelectTrigger className="h-8 text-xs">
                                     <SelectValue />
@@ -1125,8 +1247,8 @@ function DocumentStartSettingsPopover({
                                     <SelectItem value={UNSPECIFIED_START_SETTING_VALUE}>
                                         {templatesLoading ? '加载中' : '未指定'}
                                     </SelectItem>
-                                    {templates.length === 0 ? null : (
-                                        templates.map((template) => (
+                                    {compatibleTemplates.length === 0 ? null : (
+                                        compatibleTemplates.map((template) => (
                                             <SelectItem key={template.name} value={template.name}>
                                                 {template.displayName}
                                             </SelectItem>
@@ -1165,12 +1287,12 @@ function DocumentStartSettingsPopover({
                             </label>
                         ) : null}
                         <label className="col-span-2 space-y-1.5">
-                            <FieldLabelWithHint label="需求分析" hint={DOCUMENT_START_FIELD_HINTS.requirements} />
+                            <FieldLabelWithHint label="PRD 规划" hint={DOCUMENT_START_FIELD_HINTS.prdPlanning} />
                             <div className="flex h-8 items-center gap-2 text-xs font-medium text-foreground">
                                 <Switch
-                                    checked={needsRequirementsAnalysis}
-                                    onCheckedChange={(checked) => onNeedsRequirementsAnalysisChange(checked === true)}
-                                    aria-label="文档需要需求分析"
+                                    checked={usePrdPlanning}
+                                    onCheckedChange={(checked) => onUsePrdPlanningChange(checked === true)}
+                                    aria-label="文档使用 PRD 规划流程"
                                 />
                                 <span>开启</span>
                             </div>
@@ -1263,7 +1385,7 @@ function StartGuide({
     const [imageStartParams, setImageStartParams] = useState<ImageStartParams>(DEFAULT_IMAGE_START_PARAMS);
     const [documentFormat, setDocumentFormat] = useState<CanvasDocumentFormat | ''>('');
     const [documentHtmlVisualSpec, setDocumentHtmlVisualSpec] = useState<HtmlVisualSpecSkillId | ''>('');
-    const [documentNeedsRequirementsAnalysis, setDocumentNeedsRequirementsAnalysis] = useState(false);
+    const [documentUsePrdPlanning, setDocumentUsePrdPlanning] = useState(false);
     const [documentTemplates, setDocumentTemplates] = useState<DocumentTemplateOption[]>([]);
     const [documentTemplatesLoading, setDocumentTemplatesLoading] = useState(false);
     const [documentTemplateError, setDocumentTemplateError] = useState('');
@@ -1303,6 +1425,18 @@ function StartGuide({
         ])
     ), [activeProjectId, assistantProjectPath, item.name, kind, prototypeIndexPath]);
     const shouldShowInlineAppList = kind === 'prototype' && Boolean(onOpenProjectInIDE);
+    const activeResourcePromptCards = useMemo(
+        () => kind === 'resource'
+            ? RESOURCE_START_PROMPT_CARDS.filter((card) => card.title.trim() && card.prompt.trim())
+            : [],
+        [kind],
+    );
+    const activeThemePromptCards = useMemo(
+        () => kind === 'design'
+            ? THEME_START_PROMPT_CARDS.filter((card) => card.title.trim() && card.prompt.trim())
+            : [],
+        [kind],
+    );
     const selectedTheme = useMemo(() => (
         themes?.find((theme) => theme.name === selectedThemeName) || null
     ), [selectedThemeName, themes]);
@@ -1318,6 +1452,10 @@ function StartGuide({
         const selectedHtmlVisualSpecOption = documentFormat === 'html' && documentHtmlVisualSpec
             ? DOCUMENT_HTML_VISUAL_SPEC_OPTIONS.find((option) => option.value === documentHtmlVisualSpec)
             : null;
+        const compatibleTemplateName = selectedDocumentTemplateName
+            && isDocumentTemplateCompatibleWithFormat(selectedDocumentTemplateName, documentFormat)
+            ? selectedDocumentTemplateName
+            : '';
         const nextDocumentStartSettings: CanvasDocumentPromptSettings = {
             ...(documentFormat ? { format: documentFormat } : {}),
             ...(selectedHtmlVisualSpecOption ? {
@@ -1329,8 +1467,8 @@ function StartGuide({
                     githubUrl: selectedHtmlVisualSpecOption.githubUrl,
                 },
             } : {}),
-            ...(selectedDocumentTemplateName ? { templateName: selectedDocumentTemplateName } : {}),
-            ...(documentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
+            ...(compatibleTemplateName ? { templateName: compatibleTemplateName } : {}),
+            ...(documentUsePrdPlanning ? { usePrdPlanning: true } : {}),
         };
         return Object.keys(nextDocumentStartSettings).length
             ? nextDocumentStartSettings
@@ -1372,12 +1510,18 @@ function StartGuide({
             documentStartSettings,
         };
     };
+    const copyPlaceholderStartPrompt = useCallback((prompt: string) => {
+        const trimmedPrompt = prompt.trim();
+        if (!trimmedPrompt) return '';
+        return buildPlaceholderStartPrompt(trimmedPrompt, 'local-ai-acknowledgement').prompt;
+    }, [buildPlaceholderStartPrompt]);
     const optimizePlaceholderStartPrompt = async (request: CanvasPromptOptimizationRequest) => {
         if (!resolveAcpPromptClientProvider(normalizePromptClientPreference(preferredPromptClient))) {
             toast.warning('请先在 AI 设置中选择本地 AI Agent');
             throw { action: 'open-ai-settings' };
         }
         return optimizeCanvasPrompt({
+            projectId: requireProjectScope(activeProjectId).projectId,
             prompt: request.prompt,
             scene: activeScene,
             sceneSettings: shouldUseImageStartSettings ? effectiveImageStartParams : activeScene === 'document' ? buildDocumentStartSettings() : activeScene === 'page' ? buildPrototypeStartSettings() : undefined,
@@ -1413,7 +1557,7 @@ function StartGuide({
         });
         setDocumentFormat(saved.documentFormat ?? '');
         setDocumentHtmlVisualSpec((saved.documentHtmlVisualSpec || '') as HtmlVisualSpecSkillId | '');
-        setDocumentNeedsRequirementsAnalysis(saved.documentNeedsRequirementsAnalysis ?? false);
+        setDocumentUsePrdPlanning(saved.documentUsePrdPlanning ?? false);
         setSelectedDocumentTemplateName(saved.selectedDocumentTemplateName || '');
         if (saved.selectedThemeName) {
             userSelectedThemeRef.current = true;
@@ -1441,14 +1585,14 @@ function StartGuide({
                 imageStartParams,
                 documentFormat,
                 documentHtmlVisualSpec,
-                documentNeedsRequirementsAnalysis,
+                documentUsePrdPlanning,
                 selectedDocumentTemplateName,
             },
         );
     }, [
         documentFormat,
         documentHtmlVisualSpec,
-        documentNeedsRequirementsAnalysis,
+        documentUsePrdPlanning,
         imageStartParams,
         placeholderStartSettingsStorageKey,
         prototypeGenerationCount,
@@ -1459,9 +1603,17 @@ function StartGuide({
 
     useEffect(() => {
         let cancelled = false;
+        if (!activeProjectId) {
+            setDocumentTemplates([]);
+            setSelectedDocumentTemplateName('');
+            setDocumentTemplatesLoading(false);
+            return () => {
+                cancelled = true;
+            };
+        }
         setDocumentTemplatesLoading(true);
         setDocumentTemplateError('');
-        documentTemplatesApi.list()
+        documentTemplatesApi.list({ projectId: activeProjectId })
             .then((templates) => {
                 if (cancelled) return;
                 setDocumentTemplates(templates);
@@ -1485,7 +1637,17 @@ function StartGuide({
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [activeProjectId]);
+
+    useEffect(() => {
+        setSelectedDocumentTemplateName((current) => (
+            current
+                && documentTemplates.some((template) => template.name === current)
+                && isDocumentTemplateCompatibleWithFormat(current, documentFormat)
+                ? current
+                : ''
+        ));
+    }, [documentFormat, documentTemplates]);
 
     useEffect(() => {
         const previousDefaultThemeName = previousDefaultThemeNameRef.current;
@@ -1509,6 +1671,12 @@ function StartGuide({
                 cancelled = true;
             };
         }
+        if (!activeProjectId) {
+            setTemplateCasesLoading(false);
+            return () => {
+                cancelled = true;
+            };
+        }
 
         const cached = readPlaceholderTemplateLibraryCache();
         if (cached) {
@@ -1522,7 +1690,7 @@ function StartGuide({
 
         setTemplateCasesLoading(!cached);
         setTemplateCasesError('');
-        fetch('/api/template-library')
+        fetch(withProjectScope('/api/template-library', requireProjectScope(activeProjectId)))
             .then(async (response) => {
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok || result?.ok === false) {
@@ -1549,7 +1717,7 @@ function StartGuide({
         return () => {
             cancelled = true;
         };
-    }, [shouldShowPrototypeCases]);
+    }, [activeProjectId, shouldShowPrototypeCases]);
 
     const toPromptTemplateItem = (template: TemplateLibraryCardItem): TemplateLibraryPromptItem => ({
         id: template.id,
@@ -1579,7 +1747,7 @@ function StartGuide({
         setTemplateImportingId(template.id);
         try {
             const targetPrototypeName = draftActive ? undefined : item.name;
-            const response = await fetch('/api/template-library/import', {
+            const response = await fetch(withProjectScope('/api/template-library/import', requireProjectScope(activeProjectId)), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1764,12 +1932,32 @@ function StartGuide({
 
                     <div className="mt-8 w-full">
                         <CanvasGenerationDisplayComposer
+                            projectId={activeProjectId || ''}
                             placeholder={placeholder || activeStartPlaceholders[0] || activeSceneDefinition.placeholders[0] || '描述你想创建的内容'}
                             ariaLabel="原型起始页 AI 输入"
                             preferredPromptClient={preferredPromptClient}
                             showSelectors
                             workspacePath={assistantProjectPath}
                             draftStorageKey={placeholderStartComposerDraftStorageKey}
+                            renderPromptCards={kind === 'resource' ? ({ disabled, selectPrompt }) => (
+                                <ResourceStartPromptGrid
+                                    cards={activeResourcePromptCards}
+                                    activeScene={activeScene}
+                                    disabled={disabled}
+                                    selectPrompt={selectPrompt}
+                                    onSceneChange={setActiveScene}
+                                    onImageSizeChange={(size) => {
+                                        setImageStartParams((current) => applyResourceStartImageSize(current, size));
+                                    }}
+                                    onPrdPlanningChange={setDocumentUsePrdPlanning}
+                                />
+                            ) : kind === 'design' ? ({ disabled, selectPrompt }) => (
+                                <ThemeStartPromptGrid
+                                    cards={activeThemePromptCards}
+                                    disabled={disabled}
+                                    selectPrompt={selectPrompt}
+                                />
+                            ) : undefined}
                             onOpenAISettings={onOpenAISettings}
                             projectResourceTrees={{
                                 prototypes: sidebarTrees?.prototypes || [],
@@ -1783,6 +1971,7 @@ function StartGuide({
                             }}
                             externalFileDropTargetRef={placeholderDropZoneRef}
                             onOptimizePrompt={optimizePlaceholderStartPrompt}
+                            onCopyPrompt={({ prompt }) => copyPlaceholderStartPrompt(prompt)}
                             onSubmit={async (prompt, selection) => {
                                 const { prompt: submittedPrompt, documentStartSettings } = buildPlaceholderStartPrompt(prompt, 'none');
                                 return onSubmitPrototypeStartRequest?.({
@@ -1834,11 +2023,11 @@ function StartGuide({
                                         templates={documentTemplates}
                                         templatesLoading={documentTemplatesLoading}
                                         templateError={documentTemplateError}
-                                        needsRequirementsAnalysis={documentNeedsRequirementsAnalysis}
+                                        usePrdPlanning={documentUsePrdPlanning}
                                         onFormatChange={setDocumentFormat}
                                         onHtmlVisualSpecChange={setDocumentHtmlVisualSpec}
                                         onTemplateChange={setSelectedDocumentTemplateName}
-                                        onNeedsRequirementsAnalysisChange={setDocumentNeedsRequirementsAnalysis}
+                                        onUsePrdPlanningChange={setDocumentUsePrdPlanning}
                                     />
                                 ) : null
                             }
@@ -2081,7 +2270,7 @@ export default function ContentArea({
         };
 
         if (request.scene === 'page' && startItem?.name) {
-            await apiService.startPlaceholderPrototypeGeneration(startItem.name);
+            await apiService.startPlaceholderPrototypeGeneration(startItem.name, requireProjectScope(activeProjectId));
             const refreshedPrototypes = await onRefreshPrototypes?.(startItem.name);
             const refreshedStartItem = refreshedPrototypes?.find((item) => item.name === startItem.name);
             if (refreshedStartItem) {
@@ -2620,7 +2809,7 @@ export default function ContentArea({
                             size="sm"
                             className="gap-2"
                             onClick={() => {
-                                fetch('/api/docs/open-system', {
+                                fetch(withProjectScope('/api/docs/open-system', requireProjectScope(activeProjectId)), {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({
@@ -2738,6 +2927,7 @@ export default function ContentArea({
         return (
             <div className="h-full min-h-0 overflow-hidden bg-background p-3">
                 <HomeDataTable
+                    projectId={activeProjectId || ''}
                     fileName={selectedDataTable.fileName}
                     tableName={selectedDataTable.tableName}
                 />
@@ -2766,7 +2956,7 @@ export default function ContentArea({
                         <ExcalidrawCanvas
                             canvasName={currentCanvasItem.name}
                             canvasFilePath={currentCanvasFilePath}
-                            activeProjectId={activeProjectId}
+                            activeProjectId={activeProjectId || ''}
                             isDarkMode={_isDarkMode}
                             collapsed={collapsed}
                             setCollapsed={setCollapsed}

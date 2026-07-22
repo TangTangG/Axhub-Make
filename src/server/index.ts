@@ -261,7 +261,16 @@ async function resolveRuntimeOriginForProxy(options: {
   registryPath?: string;
   projectId?: string;
   currentRuntimeOrigin?: string;
+  allowUnknownProjectFallback?: boolean;
 }): Promise<string | undefined> {
+  if (options.projectId && !resolveRequestProject(options.registryPath, options.projectId)) {
+    if (!options.allowUnknownProjectFallback) {
+      return undefined;
+    }
+    return resolveActiveProjectRuntimeOrigin({
+      registryPath: options.registryPath,
+    });
+  }
   return resolveActiveProjectRuntimeOrigin({
     registryPath: options.registryPath,
     projectId: options.projectId,
@@ -312,7 +321,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
   const startupProjectRoot = path.resolve(options.projectRoot);
   const projectRoot = getGlobalMakeStateDir(serverInfoHomeDir);
   const host = resolveMakeServerListenHost({ explicitHost: options.host });
-  let runtimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
+  const configuredRuntimeOrigin = resolveRuntimeOrigin(null, options.runtimeOrigin);
   let origin = '';
   let adminServerInfo: AxhubServerInfo | null = null;
   const canvasBridgeHub = getCanvasBridgeHub();
@@ -345,7 +354,13 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
     return isPathInside(adminRoot, htmlPath) ? htmlPath : '';
   }
 
-  async function sendDevAdminHtml(pathname: string, htmlPath: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  async function sendDevAdminHtml(
+    pathname: string,
+    htmlPath: string,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    runtimeOrigin?: string,
+  ): Promise<void> {
     const currentViteMiddleware = await ensureViteMiddleware();
     const injectScript = buildInjectScript({
       adminRoot,
@@ -405,18 +420,19 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         lanHost,
         port: Number(new URL(origin).port),
         opencodeServerOrigin: resolveOpenCodeServerOrigin(pathname),
-        runtimeOrigin,
+        runtimeOrigin: configuredRuntimeOrigin,
         axhubCanvasMcpToken,
         axhubPreviewMcpToken,
       };
 
       // ── 1. Management API ──
-      runtimeOrigin = await resolveRuntimeOriginForProxy({
+      let requestRuntimeOrigin = await resolveRuntimeOriginForProxy({
         registryPath: options.registryPath,
         projectId: requestProjectId,
-        currentRuntimeOrigin: runtimeOrigin,
+        currentRuntimeOrigin: configuredRuntimeOrigin,
+        allowUnknownProjectFallback: pathname === '/' || pathname === '/index.html',
       });
-      adminStaticOptions.runtimeOrigin = runtimeOrigin;
+      adminStaticOptions.runtimeOrigin = requestRuntimeOrigin;
       const accessConfigOptions = {
         getConfig: () => serverConfigStore.getConfig({ activeProjectRoot: activeProjectRoot || startupProjectRoot }),
         saveConfig: serverConfigStore.saveConfig,
@@ -448,7 +464,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         startupProjectRoot,
         adminRoot,
         origin,
-        runtimeOrigin,
+        runtimeOrigin: requestRuntimeOrigin,
         registryPath: options.registryPath,
         serverInfoHomeDir,
         serverInfo: adminServerInfo || undefined,
@@ -471,16 +487,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
       // ── 2. Dev mode: Vite middleware for frontend HMR ──
       if (devMode) {
         if (isRuntimeDevModuleRequest(requestUrl, req.headers, { runtimeProjectRoot, adminViteClientEnvPath })) {
-          runtimeOrigin = await resolveRuntimeOriginForProxy({
+          requestRuntimeOrigin = await resolveRuntimeOriginForProxy({
             registryPath: options.registryPath,
             projectId: requestProjectId,
-            currentRuntimeOrigin: runtimeOrigin,
+            currentRuntimeOrigin: requestRuntimeOrigin,
           });
-          if (!runtimeOrigin) {
+          if (!requestRuntimeOrigin) {
             sendRuntimeUnavailableResponse(res, requestUrl, 503);
             return;
           }
-          proxyToRuntime(req, res, runtimeOrigin);
+          proxyToRuntime(req, res, requestRuntimeOrigin);
           return;
         }
 
@@ -502,7 +518,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
         const devAdminHtmlPath = resolveAdminRootHtmlPath(pathname);
         if (devAdminHtmlPath && fs.existsSync(devAdminHtmlPath) && fs.statSync(devAdminHtmlPath).isFile()) {
-          await sendDevAdminHtml(pathname, devAdminHtmlPath, req, res);
+          await sendDevAdminHtml(pathname, devAdminHtmlPath, req, res, requestRuntimeOrigin);
           return;
         }
 
@@ -515,7 +531,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
             host,
             lanHost,
             port: Number(new URL(origin).port),
-            runtimeOrigin,
+            runtimeOrigin: requestRuntimeOrigin,
             axhubCanvasMcpToken,
             axhubPreviewMcpToken,
           });
@@ -544,16 +560,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
             // Then try runtime proxy.
             if (isRuntimeOnlyRoute(pathname)) {
-              runtimeOrigin = await resolveRuntimeOriginForProxy({
+              requestRuntimeOrigin = await resolveRuntimeOriginForProxy({
                 registryPath: options.registryPath,
                 projectId: requestProjectId,
-                currentRuntimeOrigin: runtimeOrigin,
+                currentRuntimeOrigin: requestRuntimeOrigin,
               });
-              if (!runtimeOrigin) {
+              if (!requestRuntimeOrigin) {
                 sendRuntimeUnavailableResponse(res, requestUrl, 503);
                 return;
               }
-              proxyToRuntime(req, res, runtimeOrigin);
+              proxyToRuntime(req, res, requestRuntimeOrigin);
               return;
             }
             sendJson(res, { error: 'Not found' }, { status: 404 });
@@ -568,16 +584,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
       // ── 3. Production: static admin files ──
       if (isRuntimeDevModuleRequest(requestUrl, req.headers, { runtimeProjectRoot, adminViteClientEnvPath })) {
-        runtimeOrigin = await resolveRuntimeOriginForProxy({
+        requestRuntimeOrigin = await resolveRuntimeOriginForProxy({
           registryPath: options.registryPath,
           projectId: requestProjectId,
-          currentRuntimeOrigin: runtimeOrigin,
+          currentRuntimeOrigin: requestRuntimeOrigin,
         });
-        if (!runtimeOrigin) {
+        if (!requestRuntimeOrigin) {
           sendRuntimeUnavailableResponse(res, requestUrl, 503);
           return;
         }
-        proxyToRuntime(req, res, runtimeOrigin);
+        proxyToRuntime(req, res, requestRuntimeOrigin);
         return;
       }
 
@@ -587,16 +603,16 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
 
       // ── 4. Runtime proxy ──
       if (isRuntimeOnlyRoute(pathname)) {
-        runtimeOrigin = await resolveRuntimeOriginForProxy({
+        requestRuntimeOrigin = await resolveRuntimeOriginForProxy({
           registryPath: options.registryPath,
           projectId: requestProjectId,
-          currentRuntimeOrigin: runtimeOrigin,
+          currentRuntimeOrigin: requestRuntimeOrigin,
         });
-        if (!runtimeOrigin) {
+        if (!requestRuntimeOrigin) {
           sendRuntimeUnavailableResponse(res, requestUrl, 503);
           return;
         }
-        proxyToRuntime(req, res, runtimeOrigin);
+        proxyToRuntime(req, res, requestRuntimeOrigin);
         return;
       }
 
@@ -634,7 +650,7 @@ export async function startMakeServer(options: StartMakeServerOptions): Promise<
         const runtimeWebSocketOrigin = await resolveRuntimeOriginForProxy({
           registryPath: options.registryPath,
           projectId: requestProjectId,
-          currentRuntimeOrigin: runtimeOrigin,
+          currentRuntimeOrigin: configuredRuntimeOrigin,
         });
         if (!runtimeWebSocketOrigin) {
           socket.end('HTTP/1.1 503 Service Unavailable\r\n\r\n');

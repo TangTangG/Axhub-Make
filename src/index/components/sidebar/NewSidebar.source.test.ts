@@ -12,4 +12,14 @@ describe('NewSidebar chrome styles source', () => {
 
     expect(source).toContain("'flex flex-col h-full min-h-0 bg-background border-r border-border transition-all duration-300'");
   });
+
+  it('does not restart the current section when a tab change event repeats the active tab', () => {
+    const source = readNewSidebarSource();
+    const handlerStart = source.indexOf('const handleSidebarTabChange = (tab: SidebarTab) => {');
+    const handlerEnd = source.indexOf('\n    };', handlerStart);
+    const handlerSource = source.slice(handlerStart, handlerEnd);
+
+    expect(handlerSource).toContain('if (tab === sidebarTab)');
+    expect(handlerSource).toContain('return;');
+  });
 });

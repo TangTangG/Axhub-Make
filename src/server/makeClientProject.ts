@@ -1546,6 +1546,8 @@ function shouldSkipMakeClientUpdateEntry(relativePath: string, entryName: string
     || normalized.startsWith('.axhub/make/exports/')
     || normalized.startsWith('.axhub/make/edit-history/')
     || normalized.startsWith('.axhub/make/backups/')
+    || normalized.startsWith('.axhub/make/comments/')
+    || normalized.startsWith('.axhub/make/comment-assets/')
   ) {
     return true;
   }

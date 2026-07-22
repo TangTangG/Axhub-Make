@@ -173,6 +173,12 @@ async function startTestServer(projectRoot: string, options: { serverConfig?: un
   });
 }
 
+function projectApiUrl(origin: string, pathname: string): string {
+  const url = new URL(pathname, origin);
+  url.searchParams.set('projectId', 'ide-client');
+  return url.toString();
+}
+
 afterEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(process, 'platform', { value: originalProcessPlatform, configurable: true });
@@ -401,7 +407,7 @@ describe('make-server IDE open API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ide/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/ide/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetPath: 'src/prototypes/home/index.tsx' }),
@@ -423,7 +429,7 @@ describe('make-server IDE open API', () => {
         }),
       );
 
-      const config = await fetch(`${server.origin}/api/config`).then((configResponse) => configResponse.json());
+      const config = await fetch(projectApiUrl(server.origin, '/api/config')).then((configResponse) => configResponse.json());
       expect(config.toolOpenState['ide:cursor']).toMatchObject({
         executablePath: 'C:\\Stored\\Cursor.exe',
         lastOpenMode: 'direct-app',
@@ -462,7 +468,7 @@ describe('make-server IDE open API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ide/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/ide/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetPath: 'src/prototypes/home/index.tsx' }),
@@ -592,7 +598,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/ide/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/ide/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetPath: 'src/prototypes/home/index.tsx' }),
@@ -625,7 +631,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/config`);
+      const response = await fetch(projectApiUrl(server.origin, '/api/config'));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -663,7 +669,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/ide/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/ide/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ide: 'cursor' }),
@@ -695,7 +701,7 @@ describe('make-server IDE open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/ide/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/ide/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ide: 'definitely-not-an-ide' }),

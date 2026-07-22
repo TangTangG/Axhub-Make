@@ -528,8 +528,10 @@ describe('IndexPage source', () => {
     expect(createDraftSource).toContain("setViewMode('demo');");
     expect(createDraftSource).toContain('setSelectedItem(null);');
     expect(createDraftSource).toContain('setSelectedPrototypePageId(null);');
+    expect(createDraftSource).toContain('setResourceStartDraftActive(false);');
+    expect(createDraftSource).toContain('setThemeStartDraftActive(false);');
     expect(createDraftSource).toContain('setPrototypeStartDraftActive(true);');
-    expect(createForDraftSource).toContain('apiService.createPlaceholderPrototype({ projectId: workspace.activeProjectId })');
+    expect(createForDraftSource).toContain('apiService.createPlaceholderPrototype(requireProjectScope(workspace.activeProjectId))');
     expect(createForDraftSource).toContain('const createdFromResult = buildCreatedPrototypeStartItem(result);');
     expect(createForDraftSource).toContain('const refreshedPrototypes = await handleRefreshCanvasPrototypeItems(createdFromResult.name);');
     expect(createForDraftSource).toContain('const created = refreshedPrototypes.find((item) => item.name === createdFromResult.name) || createdFromResult;');
@@ -1062,5 +1064,13 @@ describe('IndexPage source', () => {
     expect(handlerSource).toContain('resources.setSelectedResourceFolder(null);');
     expect(handlerSource.indexOf('resources.setSelectedResourceFolder(null);'))
       .toBeLessThan(handlerSource.indexOf('preview.handleSelectDoc(item);'));
+  });
+
+  it('threads the workspace project into project-owned dialogs and document uploads', () => {
+    const source = readFileSync(resolve(__dirname, './IndexPage.tsx'), 'utf8');
+
+    expect(source).toContain("formData.append('projectId', requireProjectScope(workspace.activeProjectId).projectId);");
+    expect(source).toContain('activeProjectId: workspace.activeProjectId || \'\',');
+    expect(source).toContain('settingsDialogProjectId: workspace.activeProjectId || \'\',');
   });
 });

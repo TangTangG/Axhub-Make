@@ -1,4 +1,8 @@
-import type { ElementLocator, WebEditorElementKey } from '../../web-editor-types';
+import type {
+  ElementLocator,
+  PrototypeEditCommentStatus,
+  WebEditorElementKey,
+} from '../../web-editor-types';
 import { aggregateTransactionsByElement } from '../transaction-aggregator';
 import { createElementLocator, locateElement } from '../locator';
 import { generateFullElementLabel, generateStableElementKey } from '../element-key';
@@ -32,7 +36,19 @@ import {
   resolveAnnotationElementIdentity,
 } from './annotation-target';
 
-type ChangeMarkerTaskState = 'editing' | 'error';
+type ChangeMarkerTaskState = PrototypeEditCommentStatus;
+
+const CHANGE_MARKER_TASK_LABELS: Record<ChangeMarkerTaskState, string> = {
+  idle: '待处理',
+  editing: '进行中',
+  completed: '已完成',
+  error: '处理失败',
+};
+
+const CHANGE_MARKER_TASK_GLYPHS = {
+  completed: '✓',
+  error: '!',
+} as const;
 
 export function filterVisibleChangeMarkerMetas(
   metas: readonly ElementEditMeta[],
@@ -46,6 +62,9 @@ export function createChangesService(options: {
   state: EditorRuntimeState;
   scheduleCacheWrite: () => void;
   persistMarkerVisibility: (visible: boolean) => void;
+  getCommentTaskState?: (
+    elementKey: WebEditorElementKey,
+  ) => PrototypeEditCommentStatus | null;
   onSelectMarkedElement?: (element: Element, anchor: MarkerAnchor) => void;
   onStatusChange?: () => void;
 }): EditorChangesService {
@@ -505,10 +524,12 @@ export function createChangesService(options: {
       state.externalEditingTaskByElementKey.get(elementKey)
       ?? state.agentTaskByElementKey.get(elementKey)
       ?? null;
-    if (!task || task.dismissed) return null;
-    if (task.status === 'pending' || task.status === 'created') return 'editing';
-    if (task.status === 'error') return 'error';
-    return null;
+    if (task && !task.dismissed) {
+      if (task.status === 'pending' || task.status === 'created') return 'editing';
+      if (task.status === 'completed') return 'completed';
+      if (task.status === 'error') return 'error';
+    }
+    return options.getCommentTaskState?.(elementKey) ?? null;
   }
 
   function pruneIdleMeta(elementKey: WebEditorElementKey): void {
@@ -584,7 +605,7 @@ export function createChangesService(options: {
       marker.tabIndex = 0;
       marker.setAttribute(
         'aria-label',
-        `定位到 ${meta.label}${taskState === 'editing' ? '，修改中' : taskState === 'error' ? '，修改失败' : ''}`,
+        `定位到 ${meta.label}${taskState ? `，${CHANGE_MARKER_TASK_LABELS[taskState]}` : ''}`,
       );
       if (taskState) {
         marker.setAttribute('data-task-state', taskState);
@@ -597,6 +618,17 @@ export function createChangesService(options: {
       markerBody.className = 'we-change-marker__body';
       markerBody.textContent = markerText;
 
+      const taskGlyph = taskState === 'completed' || taskState === 'error'
+        ? CHANGE_MARKER_TASK_GLYPHS[taskState]
+        : null;
+      const taskStatus = taskGlyph ? document.createElement('span') : null;
+      if (taskStatus && taskState) {
+        taskStatus.className = 'we-change-marker__task-status';
+        taskStatus.textContent = taskGlyph;
+        taskStatus.setAttribute('aria-hidden', 'true');
+        taskStatus.title = CHANGE_MARKER_TASK_LABELS[taskState];
+      }
+
       const tooltip = document.createElement('div');
       tooltip.className = 'we-change-marker__tooltip';
 
@@ -606,7 +638,10 @@ export function createChangesService(options: {
 
       const details = document.createElement('div');
       details.className = 'we-change-marker__details';
-      for (const line of detailLines) {
+      for (const line of [
+        ...(taskState ? [`状态：${CHANGE_MARKER_TASK_LABELS[taskState]}`] : []),
+        ...detailLines,
+      ]) {
         const detail = document.createElement('span');
         detail.className = 'we-change-marker__note';
         detail.textContent = line;
@@ -634,7 +669,7 @@ export function createChangesService(options: {
       });
 
       tooltip.append(label, details);
-      marker.append(markerBody, tooltip);
+      marker.append(markerBody, ...(taskStatus ? [taskStatus] : []), tooltip);
       return marker;
     }).filter((node): node is HTMLDivElement => node !== null);
 

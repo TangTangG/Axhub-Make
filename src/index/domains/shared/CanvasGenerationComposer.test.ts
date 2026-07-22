@@ -83,6 +83,7 @@ async function loadMessageExtraction() {
   return {
     canvasGeneralFileAttachmentAdapter: mod.canvasGeneralFileAttachmentAdapter,
     canvasReferenceImageAttachmentAdapter: mod.canvasReferenceImageAttachmentAdapter,
+    applyCanvasGenerationDisplayPrompt: mod.applyCanvasGenerationDisplayPrompt,
     extractCanvasGenerationAttachmentPartsFromMessage: mod.extractCanvasGenerationAttachmentPartsFromMessage,
     extractCanvasGenerationPromptFromMessage: mod.extractCanvasGenerationPromptFromMessage,
     extractCanvasGenerationReferenceImagesFromMessage: mod.extractCanvasGenerationReferenceImagesFromMessage,
@@ -98,6 +99,61 @@ async function loadMessageExtraction() {
 }
 
 describe('CanvasGenerationComposer message extraction', () => {
+  it('applies, persists, and focuses an editable display prompt', async () => {
+    const { applyCanvasGenerationDisplayPrompt } = await loadMessageExtraction();
+    const persist = vi.fn();
+    const focus = vi.fn();
+    const target = { value: 'existing draft', focus };
+
+    expect(applyCanvasGenerationDisplayPrompt({
+      target,
+      prompt: '  Generate a product requirements document.  ',
+      disabled: false,
+      persist,
+    })).toBe(true);
+    expect(target.value).toBe('Generate a product requirements document.');
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist).toHaveBeenCalledWith('Generate a product requirements document.');
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
+  it('does not apply display prompts while controls are disabled or for blank input', async () => {
+    const { applyCanvasGenerationDisplayPrompt } = await loadMessageExtraction();
+    const persist = vi.fn();
+    const focus = vi.fn();
+    const target = { value: 'keep this draft', focus };
+
+    expect(applyCanvasGenerationDisplayPrompt({
+      target,
+      prompt: 'Deferred card prompt',
+      disabled: true,
+      persist,
+    })).toBe(false);
+    expect(applyCanvasGenerationDisplayPrompt({
+      target,
+      prompt: '   ',
+      disabled: false,
+      persist,
+    })).toBe(false);
+    expect(target.value).toBe('keep this draft');
+    expect(persist).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('applies repeated display prompt selections without retaining stale selection state', async () => {
+    const { applyCanvasGenerationDisplayPrompt } = await loadMessageExtraction();
+    const persist = vi.fn();
+    const target = { value: '', focus: vi.fn() };
+
+    applyCanvasGenerationDisplayPrompt({ target, prompt: 'First prompt', disabled: false, persist });
+    target.value = 'User edited prompt';
+    applyCanvasGenerationDisplayPrompt({ target, prompt: 'First prompt', disabled: false, persist });
+
+    expect(target.value).toBe('First prompt');
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(target.focus).toHaveBeenCalledTimes(2);
+  });
+
   it('extracts prompt text from text message parts', async () => {
     const { extractCanvasGenerationPromptFromMessage } = await loadMessageExtraction();
     const message = {
@@ -298,17 +354,14 @@ describe('CanvasGenerationComposer message extraction', () => {
 
     expect(resolveCanvasAcpSelectorDefaults('acp:codex')).toEqual({
       defaultProvider: 'codex',
-      defaultModel: 'gpt-5.5',
       providerOptions: ['claude', 'codex', 'opencode'],
     });
     expect(resolveCanvasAcpSelectorDefaults('acp:gemini')).toEqual({
       defaultProvider: 'codex',
-      defaultModel: 'gpt-5.5',
       providerOptions: ['claude', 'codex', 'opencode'],
     });
     expect(resolveCanvasAcpSelectorDefaults('acp:grok-build')).toEqual({
       defaultProvider: 'grok-build',
-      defaultModel: 'grok-build',
       providerOptions: ['claude', 'codex', 'opencode', 'grok-build'],
     });
   });
@@ -682,5 +735,62 @@ describe('CanvasGenerationComposer message extraction', () => {
     expect(selections).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ node: expect.objectContaining({ kind: 'folder' }) }),
     ]));
+  });
+});
+
+describe('Canvas ACP config submenu viewport layout', () => {
+  it('shifts the submenu into the viewport before reducing its height', async () => {
+    const mod = await import('./CanvasGenerationComposer');
+    const resolveLayout = (mod as Record<string, unknown>).resolveCanvasAcpSubmenuViewportLayout;
+
+    expect(resolveLayout).toBeTypeOf('function');
+    if (typeof resolveLayout !== 'function') return;
+
+    expect(resolveLayout({
+      anchorRect: { left: 90, top: 70, right: 410, bottom: 510 },
+      submenuWidth: 352,
+      submenuContentHeight: 300,
+      viewportWidth: 900,
+      viewportHeight: 320,
+    })).toEqual({
+      left: 418,
+      top: 12,
+      maxHeight: 300,
+      placement: 'right',
+    });
+  });
+
+  it('flips the submenu left when the right side would overflow', async () => {
+    const { resolveCanvasAcpSubmenuViewportLayout } = await import('./CanvasGenerationComposer');
+
+    expect(resolveCanvasAcpSubmenuViewportLayout({
+      anchorRect: { left: 500, top: 100, right: 820, bottom: 480 },
+      submenuWidth: 300,
+      submenuContentHeight: 200,
+      viewportWidth: 900,
+      viewportHeight: 700,
+    })).toEqual({
+      left: 192,
+      top: 100,
+      maxHeight: 200,
+      placement: 'left',
+    });
+  });
+
+  it('reduces the submenu height only when the viewport is too short', async () => {
+    const { resolveCanvasAcpSubmenuViewportLayout } = await import('./CanvasGenerationComposer');
+
+    expect(resolveCanvasAcpSubmenuViewportLayout({
+      anchorRect: { left: 80, top: 40, right: 400, bottom: 220 },
+      submenuWidth: 300,
+      submenuContentHeight: 400,
+      viewportWidth: 900,
+      viewportHeight: 240,
+    })).toEqual({
+      left: 408,
+      top: 8,
+      maxHeight: 224,
+      placement: 'right',
+    });
   });
 });

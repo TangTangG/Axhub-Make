@@ -25,8 +25,8 @@ export interface DevEditorEnableOptions {
 const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
   '.agents/skills/explore-options/SKILL.md',
   '.claude/skills/explore-options/SKILL.md',
-  '.agents/skills/prototype-comments/SKILL.md',
-  '.claude/skills/prototype-comments/SKILL.md',
+  '.agents/skills/handle-comments/SKILL.md',
+  '.claude/skills/handle-comments/SKILL.md',
 ].join('\n');
 
 export interface DevEditorsApi {

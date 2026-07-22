@@ -51,7 +51,7 @@ interface IndexDialogsProps {
     createDialog: {
         visible: boolean;
         activeTab: 'prototypes';
-        activeProjectId?: string | null;
+        activeProjectId: string;
         initialTab?: CreateDialogTab;
         initialUploadType?: PrototypeUploadType;
         targetPrototypeName?: string;
@@ -64,6 +64,7 @@ interface IndexDialogsProps {
     };
     createThemeDialog: {
         visible: boolean;
+        activeProjectId: string;
         initialTab?: 'import' | 'onlineSelect';
         resourceWriteCapabilities: ResourceWriteCapabilities;
         assistantOpen?: boolean;
@@ -74,6 +75,7 @@ interface IndexDialogsProps {
     };
     exportDialog: {
         open: boolean;
+        projectId: string;
         preferencesStorageKey: string;
         imageConfig: ImageConfig;
         axureCopyOptions: AxureCopyOptions;
@@ -97,6 +99,7 @@ interface IndexDialogsProps {
     };
     figmaMakeExportDialog: {
         open: boolean;
+        projectId: string;
         itemName?: string;
         itemDisplayName?: string;
         targetPath?: string;
@@ -107,6 +110,7 @@ interface IndexDialogsProps {
     };
     cloudPublishSettingsDialog: {
         open: boolean;
+        projectId: string;
         initialTarget: Exclude<CloudPublishTarget, 'axhub'> | 'publish-settings';
         onOpenChange: (open: boolean) => void;
         onSaved?: (config: CloudPublishingConfigResponse) => void;
@@ -114,10 +118,11 @@ interface IndexDialogsProps {
     axhubPublishDialog: {
         open: boolean;
         targetPath: string;
-        projectId?: string | null;
+        projectId: string;
         onOpenChange: (open: boolean) => void;
         onPublished?: (result: AxhubPublishResponse) => void;
     };
+    settingsDialogProjectId: string;
     settingsDialogOpen: boolean;
     settingsDialogInitialTab: SettingsDialogInitialTab;
     settingsDialogAIContext: SettingsDialogAIContext | null;
@@ -154,6 +159,7 @@ export default function IndexDialogs({
     figmaMakeExportDialog,
     cloudPublishSettingsDialog,
     axhubPublishDialog,
+    settingsDialogProjectId,
     settingsDialogOpen,
     settingsDialogInitialTab,
     settingsDialogAIContext,
@@ -304,6 +310,7 @@ export default function IndexDialogs({
                 <CreateThemeDialogContainer
                     state={{
                         visible: createThemeDialog.visible,
+                        activeProjectId: createThemeDialog.activeProjectId,
                         initialTab: createThemeDialog.initialTab,
                         resourceWriteCapabilities: createThemeDialog.resourceWriteCapabilities,
                         preferredPromptClient,
@@ -325,6 +332,7 @@ export default function IndexDialogs({
                     <ExportModalContainer
                         state={{
                             open: exportDialog.open,
+                            projectId: exportDialog.projectId,
                             preferencesStorageKey: exportDialog.preferencesStorageKey,
                             imageConfig: exportDialog.imageConfig,
                             axureCopyOptions: exportDialog.axureCopyOptions,
@@ -375,6 +383,7 @@ export default function IndexDialogs({
                 <React.Suspense fallback={null}>
                     <FigmaMakeExportDialog
                         open={figmaMakeExportDialog.open}
+                        projectId={figmaMakeExportDialog.projectId}
                         onOpenChange={figmaMakeExportDialog.onOpenChange}
                         itemName={figmaMakeExportDialog.itemName}
                         itemDisplayName={figmaMakeExportDialog.itemDisplayName}
@@ -395,6 +404,7 @@ export default function IndexDialogs({
                 <React.Suspense fallback={null}>
                     <CloudPublishSettingsDialog
                         open={cloudPublishSettingsDialog.open}
+                        projectId={cloudPublishSettingsDialog.projectId}
                         initialTarget={cloudPublishSettingsDialog.initialTarget}
                         onOpenChange={cloudPublishSettingsDialog.onOpenChange}
                         onSaved={cloudPublishSettingsDialog.onSaved}
@@ -418,6 +428,7 @@ export default function IndexDialogs({
                 <React.Suspense fallback={null}>
                     <SettingsDialog
                         open={settingsDialogOpen}
+                        projectId={settingsDialogProjectId}
                         initialTab={settingsDialogInitialTab}
                         initialAcpRuntime={settingsDialogAIContext?.runtime}
                         initialAcpFailureSource={settingsDialogAIContext?.failureSource}
@@ -439,6 +450,7 @@ export default function IndexDialogs({
             {versionCollaborationDrawerOpen ? (
                 <React.Suspense fallback={null}>
                     <WorkspaceVersionCollaborationDrawer
+                        projectId={settingsDialogProjectId}
                         open={versionCollaborationDrawerOpen}
                         onOpenChange={setVersionCollaborationDrawerOpen}
                     />
@@ -448,6 +460,7 @@ export default function IndexDialogs({
             {versionDialogVisible ? (
                 <React.Suspense fallback={null}>
                     <VersionManager
+                        projectId={settingsDialogProjectId}
                         visible={versionDialogVisible}
                         onCancel={() => setVersionDialogVisible(false)}
                         item={currentVersionItem}

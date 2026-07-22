@@ -15,8 +15,8 @@ describe('html-template annotation boundary', () => {
     expect(source).toContain('MAKE_COMMENTARY_SKILL_INSTALL_SOURCE');
     expect(source).toContain('.agents/skills/explore-options/SKILL.md');
     expect(source).toContain('.claude/skills/explore-options/SKILL.md');
-    expect(source).toContain('.agents/skills/prototype-comments/SKILL.md');
-    expect(source).toContain('.claude/skills/prototype-comments/SKILL.md');
+    expect(source).toContain('.agents/skills/handle-comments/SKILL.md');
+    expect(source).toContain('.claude/skills/handle-comments/SKILL.md');
     expect(source).toContain('skillInstallSource: MAKE_COMMENTARY_SKILL_INSTALL_SOURCE');
     expect(source).toContain('window.HtmlTemplateBootstrap');
     expect(source).not.toContain('window.SpecTemplateBootstrap.editors');

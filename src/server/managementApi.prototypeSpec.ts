@@ -35,7 +35,7 @@ interface PrototypeSpecApiHandlers {
     req: IncomingMessage,
     res: ServerResponse,
     options: ManagementApiOptions,
-    mode: 'active-fallback',
+    mode: 'explicit-required',
     body?: unknown,
   ) => PrototypeSpecProjectContext | null;
 }
@@ -297,7 +297,7 @@ export function handlePrototypeSpecApi(
     sendSpecError(res, 400, 'INVALID_SPEC_PATH', '项目或原型 ID 无效');
     return true;
   }
-  const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', { projectId });
+  const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', { projectId });
   if (!context) return true;
   const apiBasePath = `/api/projects/${encodeURIComponent(projectId)}/prototypes/${encodeURIComponent(prototypeId)}/spec`;
   const resolved = resolvePrototypeSpec(context, prototypeId, apiBasePath);

@@ -1171,6 +1171,9 @@ export const QUICK_EDIT_RUNTIME_SCRIPT = String.raw`(() => {
         targetWidth: options.targetWidth,
         targetHeight: options.targetHeight,
         ...(options.targetPixelRatio !== undefined ? { targetPixelRatio: options.targetPixelRatio } : {}),
+        ...(options.format !== undefined ? { format: options.format } : {}),
+        ...(options.quality !== undefined ? { quality: options.quality } : {}),
+        ...(options.maxBytes !== undefined ? { maxBytes: options.maxBytes } : {}),
       });
       post('axhub.quickEdit.export.captureScreenshotResult', {
         ...resultPayload,

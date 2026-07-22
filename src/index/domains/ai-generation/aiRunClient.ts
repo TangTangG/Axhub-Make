@@ -1,6 +1,8 @@
 import { getGenerationArtifactHistoryStore } from './generationArtifactHistoryStore';
+import { requireProjectScope } from '../../services/projectScope';
 
 export interface AiRunClientRequest {
+  projectId: string;
   scene: string;
   prompt: string;
   runId?: string;
@@ -9,7 +11,6 @@ export interface AiRunClientRequest {
   conversationId?: string;
   preferredPromptClient?: string | null;
   client?: string | null;
-  projectId?: string;
   context?: unknown;
   contextBundle?: unknown;
   model?: string | null;
@@ -132,6 +133,8 @@ export async function runAiStream(
   params: AiRunClientRequest,
   onEvent?: (event: AiRunSseEvent) => void | Promise<void>,
 ): Promise<AiRunStreamResult> {
+  const scope = requireProjectScope(params.projectId);
+  const artifactScope = { projectId: scope.projectId, targetPath: params.targetPath };
   const response = await fetch(resolveAiRunsApiUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -145,7 +148,7 @@ export async function runAiStream(
       conversationId: params.conversationId,
       preferredPromptClient: params.preferredPromptClient,
       client: params.client,
-      projectId: params.projectId,
+      projectId: scope.projectId,
       context: params.context,
       contextBundle: params.contextBundle,
       model: params.model,
@@ -197,7 +200,7 @@ export async function runAiStream(
       } else if (event.event === 'artifact.created' || event.event === 'artifact.updated') {
         if (event.data.artifact && typeof event.data.artifact === 'object' && !Array.isArray(event.data.artifact)) {
           artifacts.push(event.data.artifact as Record<string, unknown>);
-          getGenerationArtifactHistoryStore().upsertArtifact(event.data.artifact, { status: 'running' });
+          getGenerationArtifactHistoryStore().upsertArtifact(event.data.artifact, { status: 'running', scope: artifactScope });
         }
       } else if (event.event === 'run.completed') {
         output = typeof event.data.output === 'string' ? event.data.output : output;
@@ -213,7 +216,7 @@ export async function runAiStream(
             )),
           );
           for (const artifact of artifacts) {
-            getGenerationArtifactHistoryStore().upsertArtifact(artifact, { status: 'done' });
+            getGenerationArtifactHistoryStore().upsertArtifact(artifact, { status: 'done', scope: artifactScope });
           }
         }
       } else if (event.event === 'run.error') {

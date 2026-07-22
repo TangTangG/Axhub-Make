@@ -204,7 +204,7 @@ describe('make-server HTTP routing', () => {
     const server = await startRoutingServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/unknown-route`);
+      const response = await fetch(`${server.origin}/api/unknown-route?projectId=routing-project`);
       expect(response.status).toBe(404);
       expect(response.headers.get('content-type')).toContain('application/json');
       expect(await response.json()).toEqual({ error: 'Not found' });

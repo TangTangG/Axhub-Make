@@ -172,6 +172,14 @@ async function startTestServer(projectRoot: string, options: { serverConfig?: un
   });
 }
 
+function projectApiUrl(origin: string, pathname: string, projectId = 'agent-client'): string {
+  const url = new URL(pathname, origin);
+  if (!url.searchParams.has('projectId')) {
+    url.searchParams.set('projectId', projectId);
+  }
+  return url.toString();
+}
+
 function mockDetectedCommands(commands: string[]) {
   childProcessMock.spawnSync.mockImplementation((...input: unknown[]) => {
     const command = String(input[0] || '');
@@ -234,7 +242,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/config`);
+      const response = await fetch(projectApiUrl(server.origin, '/api/config'));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -293,7 +301,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const configAvailabilityResponse = await fetch(`${server.origin}/api/config/availability`);
+      const configAvailabilityResponse = await fetch(projectApiUrl(server.origin, '/api/config/availability'));
       expect(configAvailabilityResponse.status).toBe(200);
       expect(runLocalCommandMock).not.toHaveBeenCalledWith(
         expect.stringMatching(/^(codex|claude|opencode)$/u),
@@ -302,7 +310,7 @@ describe('make-server agent open API', () => {
       );
 
       runLocalCommandMock.mockClear();
-      const response = await fetch(`${server.origin}/api/agent/versions`);
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/versions'));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -378,7 +386,7 @@ describe('make-server agent open API', () => {
     try {
       runLocalCommandMock.mockClear();
       fetchMock.mockClear();
-      const response = await fetch(`${server.origin}/api/agent/versions?agent=qoder`);
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/versions?agent=qoder'));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -417,7 +425,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/versions?agent=cursor`);
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/versions?agent=cursor'));
       const body = await response.json();
 
       expect(response.status).toBe(200);
@@ -442,7 +450,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/web/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -476,7 +484,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/cli/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/cli/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'codex' }),
@@ -521,7 +529,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/cli/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/cli/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'gemini' }),
@@ -556,7 +564,7 @@ describe('make-server agent open API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/cli/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/cli/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'gemini' }),
@@ -640,7 +648,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/cli/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/cli/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'codex' }),
@@ -667,7 +675,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'codex' }),
@@ -702,7 +710,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'opencode', targetPath: targetDir }),
@@ -734,7 +742,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'opencode' }),
@@ -882,7 +890,7 @@ describe('make-server agent open API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'codex' }),
@@ -1020,7 +1028,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'gemini' }),
@@ -1047,7 +1055,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/local-app/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/local-app/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent: 'opencode', targetPath: outsidePath }),
@@ -1094,7 +1102,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/web/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1165,7 +1173,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const first = await fetch(`${server.origin}/api/agent/web/open`, {
+      const first = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1175,7 +1183,7 @@ describe('make-server agent open API', () => {
       });
       expect(first.status).toBe(200);
 
-      const second = await fetch(`${server.origin}/api/agent/web/open`, {
+      const second = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1217,7 +1225,7 @@ describe('make-server agent open API', () => {
     let portBlocker: net.Server | null = null;
 
     try {
-      const first = await fetch(`${server.origin}/api/agent/web/open`, {
+      const first = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1228,7 +1236,7 @@ describe('make-server agent open API', () => {
       const firstBody = await first.json();
       const firstPort = Number(new URL(firstBody.serverUrl).port);
       portBlocker = await listenOnLocalPort(firstPort);
-      const second = await fetch(`${server.origin}/api/agent/web/open`, {
+      const second = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1272,7 +1280,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/web/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1317,7 +1325,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const first = await fetch(`${server.origin}/api/agent/web/open`, {
+      const first = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1328,7 +1336,7 @@ describe('make-server agent open API', () => {
       });
       expect(first.status).toBe(200);
 
-      const second = await fetch(`${server.origin}/api/agent/web/open`, {
+      const second = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1377,7 +1385,7 @@ describe('make-server agent open API', () => {
     const server = await startTestServer(projectRoot);
 
     try {
-      const response = await fetch(`${server.origin}/api/agent/web/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/web/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1456,7 +1464,7 @@ describe('make-server agent open API', () => {
       });
       expect(registerResponse.status).toBe(201);
 
-      const response = await fetch(`${server.origin}/api/agent/web/open`, {
+      const response = await fetch(projectApiUrl(server.origin, '/api/agent/web/open', 'selected-agent-client'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1547,7 +1555,7 @@ describe('make-server agent open API', () => {
       });
       expect(registerResponse.status).toBe(201);
 
-      const activeResponse = await fetch(`${server.origin}/api/agent/web/open`, {
+      const activeResponse = await fetch(projectApiUrl(server.origin, '/api/agent/web/open', 'active-agent-client'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1561,7 +1569,7 @@ describe('make-server agent open API', () => {
       const activePort = Number(new URL(activeBody.serverUrl).port);
       portBlocker = await listenOnLocalPort(activePort);
 
-      const selectedResponse = await fetch(`${server.origin}/api/agent/web/open`, {
+      const selectedResponse = await fetch(projectApiUrl(server.origin, '/api/agent/web/open', 'selected-agent-client'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

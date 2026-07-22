@@ -9,6 +9,7 @@ type ThemeDialogTab = 'import' | 'onlineSelect';
 interface CreateThemeDialogContainerProps {
     state: {
         visible: boolean;
+        activeProjectId: string;
         initialTab?: ThemeDialogTab;
         resourceWriteCapabilities: ResourceWriteCapabilities;
         preferredPromptClient: PromptClientPreference;
@@ -31,6 +32,7 @@ export default function CreateThemeDialogContainer({
     return (
         <CreateThemeDialog
             visible={state.visible}
+            activeProjectId={state.activeProjectId}
             onClose={actions.onClose}
             initialTab={state.initialTab}
             resourceWriteCapabilities={state.resourceWriteCapabilities}

@@ -39,6 +39,41 @@ interface FilesystemDocResource {
   openMode?: ResourceFileOpenMode;
 }
 
+function hasExplicitThemeLocalPath(theme: ProjectMetadata['resources']['themes'][number]): boolean {
+  return ['sourcePath', 'path', 'filePath', 'absoluteFilePath'].some((key) => {
+    const value = theme[key];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+function collectLocalThemeDirectories(projectRoot: string, themesDir: string): Map<string, string> | null {
+  if (!fs.existsSync(themesDir)) {
+    return null;
+  }
+  try {
+    const realProjectRoot = fs.realpathSync.native(projectRoot);
+    const realThemesDir = fs.realpathSync.native(themesDir);
+    if (!isPathInside(realProjectRoot, realThemesDir)) {
+      return null;
+    }
+
+    const directories = new Map<string, string>();
+    for (const entry of fs.readdirSync(themesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) {
+        continue;
+      }
+      const themeDir = path.join(themesDir, entry.name);
+      const realThemeDir = fs.realpathSync.native(themeDir);
+      if (isPathInside(realThemesDir, realThemeDir)) {
+        directories.set(entry.name, themeDir);
+      }
+    }
+    return directories;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Reconcile metadata resources with actual filesystem state.
  * - Reconciles prototype entries against the declared/default local source root.
@@ -143,21 +178,32 @@ function reconcileMetadataWithFilesystem(
 
   let reconciledThemes = metadata.resources.themes;
   const discoveredThemes: typeof metadata.resources.themes = [];
-  if (fs.existsSync(themesDir)) {
+  const localThemeDirectories = collectLocalThemeDirectories(projectRoot, themesDir);
+  if (localThemeDirectories) {
     // Remove stale themes (directory deleted from disk)
     const existingThemeIds = new Set(metadata.resources.themes.map((t) => t.id));
-    reconciledThemes = metadata.resources.themes.filter((theme) => {
-      const themeSubDir = path.join(themesDir, theme.id);
-      return fs.existsSync(themeSubDir);
+    reconciledThemes = metadata.resources.themes.flatMap((theme) => {
+      const themeSubDir = localThemeDirectories.get(theme.id);
+      if (!themeSubDir) {
+        return [];
+      }
+      if (hasExplicitThemeLocalPath(theme)) {
+        return [theme];
+      }
+      changed = true;
+      return [{
+        ...theme,
+        sourcePath: createProjectRelativePath(projectRoot, themeSubDir),
+      }];
     });
     // Discover new themes (directories in src/themes not in metadata)
-    for (const entry of fs.readdirSync(themesDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      if (existingThemeIds.has(entry.name)) continue;
+    for (const [themeName, themeDir] of localThemeDirectories) {
+      if (existingThemeIds.has(themeName)) continue;
       discoveredThemes.push({
-        id: entry.name,
-        name: entry.name,
-        title: entry.name,
+        id: themeName,
+        name: themeName,
+        title: themeName,
+        sourcePath: createProjectRelativePath(projectRoot, themeDir),
       });
     }
     if (reconciledThemes.length !== metadata.resources.themes.length || discoveredThemes.length > 0) {

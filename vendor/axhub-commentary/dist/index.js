@@ -1691,6 +1691,7 @@ var DEFAULT_WEB_EDITOR_UI_SETTINGS = {
   styleDesignEnabled: true,
   darkMode: false,
   disablePageAnimations: false,
+  documentCommentMode: false,
   pageZoomEnabled: false,
   agentRunConcurrency: 5
 };
@@ -1731,6 +1732,7 @@ function sanitizeWebEditorUiSettings(value) {
     styleDesignEnabled: record.styleDesignEnabled === void 0 ? DEFAULT_WEB_EDITOR_UI_SETTINGS.styleDesignEnabled : Boolean(record.styleDesignEnabled),
     darkMode: Boolean(record.darkMode),
     disablePageAnimations: Boolean(record.disablePageAnimations),
+    documentCommentMode: Boolean(record.documentCommentMode),
     pageZoomEnabled: Boolean(record.pageZoomEnabled)
   };
 }
@@ -1787,6 +1789,8 @@ function resolveWebEditorOptions(options = {}) {
       aiExecutionWorkspacePath: "",
       aiExecutionRunConcurrency: 5,
       aiExecutionProviderOptions: [],
+      htmlFileSaveEnabled: false,
+      getAcpUiConnected: void 0,
       getAssistantPanelOpen: () => false,
       onHostToolbarAction: async () => false,
       onEnableAnnotation: async () => false,
@@ -1809,7 +1813,9 @@ function resolveWebEditorOptions(options = {}) {
       getElementTools: options.host?.getElementTools ?? void 0,
       onElementToolAction: options.host?.onElementToolAction ?? void 0,
       shouldAllowPageEvent: options.host?.shouldAllowPageEvent ?? void 0,
+      getPersistenceScope: options.host?.getPersistenceScope ?? void 0,
       persistenceAdapter: options.host?.persistenceAdapter ?? void 0,
+      commentPersistenceMode: options.host?.commentPersistenceMode ?? "local",
       canEditAnnotationMarkdown: options.host?.canEditAnnotationMarkdown ?? void 0,
       getAnnotationDocumentEditUrl: options.host?.getAnnotationDocumentEditUrl ?? void 0,
       getAnnotationMarkdown: options.host?.getAnnotationMarkdown ?? void 0,
@@ -2029,10 +2035,36 @@ var PROMPT_CARD_SKILLS = [
   }
 ];
 var SKILL_TRIGGER_QUERY_PATTERN = /^[\p{Script=Han}\p{Letter}\p{Number}_-]*$/u;
-var SKILL_BY_ID = new Map(PROMPT_CARD_SKILLS.map((skill) => [skill.id, skill]));
+var CUSTOM_SKILL_ID_PATTERN = /^custom-[a-z0-9-]+$/u;
 var PROMPT_CARD_SKILL_OPTIONS = PROMPT_CARD_SKILLS.map(
-  ({ id, label, description }) => ({ id, label, description })
+  ({ id, label, description, prompt }) => ({ id, label, description, prompt })
 );
+function mergePromptCardSkills(skillOptions = []) {
+  const merged = new Map(
+    PROMPT_CARD_SKILLS.map((skill) => [skill.id, { ...skill }])
+  );
+  for (const option of skillOptions) {
+    const id = String(option.id ?? "").trim();
+    const label = String(option.label ?? "").trim();
+    if (!id || !label) continue;
+    const existing = merged.get(id);
+    const prompt = String(option.prompt ?? existing?.prompt ?? "").trim();
+    if (!prompt) continue;
+    const description = String(option.description ?? "").trim() || existing?.description || prompt.replace(/\s+/gu, " ").slice(0, 80);
+    merged.set(id, {
+      ...existing ?? {},
+      id,
+      label,
+      description,
+      prompt,
+      ...option.keywords ? { keywords: String(option.keywords).trim() } : {},
+      ...option.sourceUrl ? { sourceUrl: String(option.sourceUrl).trim() } : {},
+      ...option.chromeOnly === true ? { chromeOnly: true } : {},
+      ...option.custom === true ? { custom: true } : {}
+    });
+  }
+  return [...merged.values()];
+}
 function normalizeSkillQuery(value) {
   return value.trim().toLocaleLowerCase();
 }
@@ -2065,10 +2097,10 @@ function clearPromptCardSkillTrigger(text) {
   if (!trigger) return value;
   return value.slice(0, trigger.start).trimEnd();
 }
-function filterPromptCardSkills(query, enabledSkillIds) {
+function filterPromptCardSkills(query, enabledSkillIds, skills = PROMPT_CARD_SKILLS) {
   const normalizedQuery = normalizeSkillQuery(query);
   const enabledIds = Array.isArray(enabledSkillIds) ? new Set(enabledSkillIds.map((item) => String(item ?? "").trim()).filter(Boolean)) : null;
-  const availableSkills = PROMPT_CARD_SKILLS.filter(
+  const availableSkills = skills.filter(
     (skill) => enabledIds ? enabledIds.has(skill.id) : !skill.chromeOnly
   );
   if (!normalizedQuery) return [...availableSkills];
@@ -2085,15 +2117,20 @@ function addPromptCardSkillSelection(selectedSkills, skill) {
 }
 function buildPromptCardSkillPrefix(selectedSkills) {
   if (selectedSkills.length === 0) return "";
-  const skillNames = selectedSkills.map((skill) => `${skill.id}\uFF08${skill.label}\uFF09`).join("\u3001");
-  return `\u4F7F\u7528\u672C\u5730 ${skillNames}\u6280\u80FD\u5904\u7406\u8FD9\u6761\u6279\u6CE8\u3002`;
+  return [
+    "\u4F7F\u7528\u4EE5\u4E0B\u6280\u80FD\u6307\u4EE4\u5904\u7406\u8FD9\u6761\u6279\u6CE8\uFF1A",
+    ...selectedSkills.flatMap((skill, index) => ["", `${index + 1}. ${skill.label}`, skill.prompt])
+  ].join("\n");
 }
-function normalizePromptCardSkillIds(skillIds) {
+function normalizePromptCardSkillIds(skillIds, skills = PROMPT_CARD_SKILLS) {
   const result = [];
   const seen = /* @__PURE__ */ new Set();
+  const knownSkillIds = new Set(skills.map((skill) => skill.id));
   for (const skillId of skillIds) {
     const normalizedId = String(skillId ?? "").trim();
-    if (!normalizedId || seen.has(normalizedId) || !SKILL_BY_ID.has(normalizedId)) continue;
+    if (!normalizedId || seen.has(normalizedId) || !knownSkillIds.has(normalizedId) && !CUSTOM_SKILL_ID_PATTERN.test(normalizedId)) {
+      continue;
+    }
     seen.add(normalizedId);
     result.push(normalizedId);
   }
@@ -2105,9 +2142,11 @@ function buildPromptCardSkillSavePayload(note, selectedSkills) {
     skillIds: selectedSkills.map((skill) => skill.id)
   };
 }
-function deserializePromptCardSkillSelection(payload, enabledSkillIds) {
+function deserializePromptCardSkillSelection(payload, enabledSkillIds, skillOptions = []) {
+  const skills = mergePromptCardSkills(skillOptions);
+  const skillById = new Map(skills.map((skill) => [skill.id, skill]));
   const enabledIds = Array.isArray(enabledSkillIds) ? new Set(enabledSkillIds.map((item) => String(item ?? "").trim()).filter(Boolean)) : null;
-  return normalizePromptCardSkillIds(payload?.skillIds ?? []).map((skillId) => SKILL_BY_ID.get(skillId)).filter((skill) => Boolean(skill)).filter((skill) => enabledIds ? enabledIds.has(skill.id) : true);
+  return normalizePromptCardSkillIds(payload?.skillIds ?? [], skills).map((skillId) => skillById.get(skillId)).filter((skill) => Boolean(skill)).filter((skill) => enabledIds ? enabledIds.has(skill.id) : true);
 }
 function mergePromptCardSkillsIntoPromptNote(note, selectedSkills) {
   const prefix = buildPromptCardSkillPrefix(selectedSkills);
@@ -2302,6 +2341,16 @@ function findAnnotationMarkerByNodeId(nodeId) {
 }
 
 // src/core/editor/changes.ts
+var CHANGE_MARKER_TASK_LABELS = {
+  idle: "\u5F85\u5904\u7406",
+  editing: "\u8FDB\u884C\u4E2D",
+  completed: "\u5DF2\u5B8C\u6210",
+  error: "\u5904\u7406\u5931\u8D25"
+};
+var CHANGE_MARKER_TASK_GLYPHS = {
+  completed: "\u2713",
+  error: "!"
+};
 function filterVisibleChangeMarkerMetas(metas, activeMarkerKey) {
   if (!activeMarkerKey) return metas.slice();
   return metas.filter((meta) => meta.elementKey !== activeMarkerKey);
@@ -2641,10 +2690,12 @@ function createChangesService(options) {
   }
   function resolveChangeMarkerTaskState(elementKey) {
     const task = state2.externalEditingTaskByElementKey.get(elementKey) ?? state2.agentTaskByElementKey.get(elementKey) ?? null;
-    if (!task || task.dismissed) return null;
-    if (task.status === "pending" || task.status === "created") return "editing";
-    if (task.status === "error") return "error";
-    return null;
+    if (task && !task.dismissed) {
+      if (task.status === "pending" || task.status === "created") return "editing";
+      if (task.status === "completed") return "completed";
+      if (task.status === "error") return "error";
+    }
+    return options.getCommentTaskState?.(elementKey) ?? null;
   }
   function pruneIdleMeta(elementKey) {
     const meta = state2.editMetaByKey.get(elementKey);
@@ -2705,7 +2756,7 @@ function createChangesService(options) {
       marker.tabIndex = 0;
       marker.setAttribute(
         "aria-label",
-        `\u5B9A\u4F4D\u5230 ${meta.label}${taskState === "editing" ? "\uFF0C\u4FEE\u6539\u4E2D" : taskState === "error" ? "\uFF0C\u4FEE\u6539\u5931\u8D25" : ""}`
+        `\u5B9A\u4F4D\u5230 ${meta.label}${taskState ? `\uFF0C${CHANGE_MARKER_TASK_LABELS[taskState]}` : ""}`
       );
       if (taskState) {
         marker.setAttribute("data-task-state", taskState);
@@ -2716,6 +2767,14 @@ function createChangesService(options) {
       const markerBody = document.createElement("span");
       markerBody.className = "we-change-marker__body";
       markerBody.textContent = markerText;
+      const taskGlyph = taskState === "completed" || taskState === "error" ? CHANGE_MARKER_TASK_GLYPHS[taskState] : null;
+      const taskStatus = taskGlyph ? document.createElement("span") : null;
+      if (taskStatus && taskState) {
+        taskStatus.className = "we-change-marker__task-status";
+        taskStatus.textContent = taskGlyph;
+        taskStatus.setAttribute("aria-hidden", "true");
+        taskStatus.title = CHANGE_MARKER_TASK_LABELS[taskState];
+      }
       const tooltip = document.createElement("div");
       tooltip.className = "we-change-marker__tooltip";
       const label = document.createElement("span");
@@ -2723,7 +2782,10 @@ function createChangesService(options) {
       label.textContent = meta.label;
       const details = document.createElement("div");
       details.className = "we-change-marker__details";
-      for (const line of detailLines) {
+      for (const line of [
+        ...taskState ? [`\u72B6\u6001\uFF1A${CHANGE_MARKER_TASK_LABELS[taskState]}`] : [],
+        ...detailLines
+      ]) {
         const detail = document.createElement("span");
         detail.className = "we-change-marker__note";
         detail.textContent = line;
@@ -2748,7 +2810,7 @@ function createChangesService(options) {
         selectMarkedElement();
       });
       tooltip.append(label, details);
-      marker.append(markerBody, tooltip);
+      marker.append(markerBody, ...taskStatus ? [taskStatus] : [], tooltip);
       return marker;
     }).filter((node) => node !== null);
     layer.hidden = nodes.length === 0;
@@ -3340,14 +3402,17 @@ function createFeedbackService(options) {
           content: dialog.content,
           okText: dialog.confirmText,
           cancelText: dialog.cancelText,
+          secondaryText: dialog.secondaryConfirmText,
           okType: dialog.confirmTone === "primary" ? "primary" : "default",
           getContainer: () => container,
           onOk: () => settle(true),
+          onSecondary: () => settle("secondary"),
           onCancel: () => settle(false)
         });
         return;
       }
-      import_antd.Modal.confirm({
+      let modalRef = null;
+      modalRef = import_antd.Modal.confirm({
         title: dialog.title,
         content: dialog.content,
         okText: dialog.confirmText,
@@ -3357,6 +3422,23 @@ function createFeedbackService(options) {
         closable: true,
         maskClosable: true,
         getContainer: () => container,
+        cancelButtonProps: dialog.cancelText ? void 0 : { style: { display: "none" } },
+        footer: dialog.secondaryConfirmText ? (_originNode, { OkBtn }) => import_react.default.createElement(
+          import_react.default.Fragment,
+          null,
+          import_react.default.createElement(
+            import_antd.Button,
+            {
+              key: "secondary",
+              onClick: () => {
+                settle("secondary");
+                modalRef?.destroy();
+              }
+            },
+            dialog.secondaryConfirmText
+          ),
+          import_react.default.createElement(OkBtn)
+        ) : void 0,
         onOk: () => settle(true),
         onCancel: () => settle(false)
       });
@@ -5119,7 +5201,7 @@ function createAgentBridgeService(options) {
     return Array.from(tasksByElementKey.values()).sort((a, b) => a.startedAt - b.startedAt);
   }
   function updateTerminalTaskState(requestId, currentRun, patch) {
-    return updateTaskStateByRequestId(requestId, {
+    const task = updateTaskStateByRequestId(requestId, {
       status: patch.status,
       provider: typeof patch.provider === "string" && patch.provider.trim() ? patch.provider.trim() : currentRun?.provider ?? resolveConfiguredProvider(),
       sessionId: typeof patch.sessionId === "string" && patch.sessionId.trim() ? patch.sessionId.trim() : currentRun?.sessionId ?? null,
@@ -5133,6 +5215,10 @@ function createAgentBridgeService(options) {
     }, {
       reviveDismissed: true
     });
+    if (task) {
+      options.persistence.flushPendingWrite("state");
+    }
+    return task;
   }
   function normalizeExternalTaskRef(taskRef) {
     if (!taskRef) return null;
@@ -5175,7 +5261,6 @@ function createAgentBridgeService(options) {
     const deleted = state2.externalEditingTaskByElementKey.delete(meta.elementKey);
     removeTaskStateByRequestId(persistedTask.requestId);
     if (deleted) {
-      options.changes.markElementEditsHandled(element);
       notifyTaskStateChange();
     }
     return deleted;
@@ -5189,26 +5274,17 @@ function createAgentBridgeService(options) {
     }
     return Boolean(removeTaskStateByRequestId(existingTask.requestId));
   }
-  function finalizeExternalEditingCompletedTask(task, element) {
+  function finalizeExternalEditingCompletedTask(task, _element) {
     if (task.origin !== "external-editing") return;
-    if (element?.isConnected) {
-      options.changes.markElementEditsHandled(element);
-    } else {
-      try {
-        const locatedElement = locateElement(task.locator);
-        if (locatedElement?.isConnected) {
-          options.changes.markElementEditsHandled(locatedElement);
-        }
-      } catch {
+    options.persistence.recordCommentTaskState?.(
+      task.elementKey,
+      "completed",
+      task.taskRef ?? {
+        provider: task.provider,
+        sessionId: task.sessionId,
+        requestId: task.requestId
       }
-    }
-    options.changes.markElementEditsHandledByKey({
-      elementKey: task.elementKey,
-      locator: task.locator,
-      label: task.label
-    });
-    options.persistence.clearCommentRecord?.(task.elementKey);
-    options.persistence.flushPendingWrite();
+    );
   }
   function setExternalEditingTerminalState(element, terminalState, taskRef) {
     if (!element?.isConnected) return null;
@@ -5443,6 +5519,9 @@ function createAgentBridgeService(options) {
         clearActivePromptRun(nextTask.requestId);
       }
     }
+    if (updatedTasks.some((task) => task.origin !== "external-editing") && (mapped.taskStatus === "completed" || mapped.taskStatus === "error")) {
+      options.persistence.flushPendingWrite("state");
+    }
     logInfo("Applied Agent state sync payload", {
       sessionId: payload.sessionId,
       provider: payload.provider,
@@ -5479,18 +5558,11 @@ function createAgentBridgeService(options) {
       invalidated: true
     });
   }
-  function markTaskElementsEditsHandled(requestId, source) {
+  function persistTaskElementStates(requestId, source) {
     const tasks = getTaskStatesByRequestId(requestId);
     if (tasks.length === 0) return;
-    for (const task of tasks) {
-      const taskElement = locateElement(task.locator);
-      if (!taskElement?.isConnected) {
-        continue;
-      }
-      options.changes.markElementEditsHandled(taskElement);
-    }
-    options.persistence.flushPendingWrite();
-    logInfo("Marked element edits as handled after Agent handoff", { source, requestId });
+    options.persistence.flushPendingWrite("state");
+    logInfo("Persisted element task states after Agent handoff", { source, requestId });
   }
   function rehydratePersistedAgentState() {
     const scopeKey = resolveScopeKey();
@@ -5618,6 +5690,23 @@ function createAgentBridgeService(options) {
         }
       }, RECOVERY_PENDING_STALENESS_MS);
     }
+  }
+  function discardDeletedElementStates(elementKeys) {
+    const deletedKeys = new Set(elementKeys.map((key) => String(key ?? "").trim()).filter(Boolean));
+    if (deletedKeys.size === 0) return;
+    for (const key of deletedKeys) {
+      state2.agentTaskByElementKey.delete(key);
+      state2.externalEditingTaskByElementKey.delete(key);
+    }
+    for (const [requestId, task] of state2.agentTaskByRequestId) {
+      if (deletedKeys.has(String(task.elementKey ?? "").trim())) {
+        state2.agentTaskByRequestId.delete(requestId);
+      }
+    }
+    options.persistence.discardAgentTaskStates(
+      resolveConversationLookupKeys(),
+      [...deletedKeys]
+    );
   }
   function clearProbeTimeout() {
     if (probeTimeoutId === null) return;
@@ -6104,7 +6193,7 @@ function createAgentBridgeService(options) {
         reviveDismissed: true
       });
       if (currentRun?.sessionId) {
-        markTaskElementsEditsHandled(parsed.requestId ?? "", "accepted_reused_session");
+        persistTaskElementStates(parsed.requestId ?? "", "accepted_reused_session");
       }
       if (!pending.acceptedNotified) {
         pending.acceptedNotified = true;
@@ -6148,7 +6237,7 @@ function createAgentBridgeService(options) {
           invalidated: false
         });
       }
-      markTaskElementsEditsHandled(parsed.requestId ?? "", "session_created");
+      persistTaskElementStates(parsed.requestId ?? "", "session_created");
       if (!pending.sessionCreatedNotified) {
         pending.sessionCreatedNotified = true;
       }
@@ -7173,6 +7262,7 @@ function createAgentBridgeService(options) {
     handleSyncCommentContextToAgent,
     handleSendPromptToAgentForElements,
     handleSendPromptToAgentForElement,
+    discardDeletedElementStates,
     rehydratePersistedAgentState
   };
 }
@@ -8515,68 +8605,40 @@ var SHADOW_HOST_STYLES = (
     z-index: 9996;
   }
 
-  @keyframes we-change-marker-task-pulse {
-    0% {
-      opacity: 0.9;
-      transform: scale(0.92);
-      box-shadow: 0 0 0 0 rgba(0, 143, 93, 0.2);
-    }
-    62% {
-      opacity: 0.28;
-      transform: scale(1.22);
-      box-shadow: 0 0 0 7px rgba(0, 143, 93, 0);
-    }
-    100% {
-      opacity: 0;
-      transform: scale(1.28);
-      box-shadow: 0 0 0 8px rgba(0, 143, 93, 0);
-    }
-  }
-
-  @keyframes we-change-marker-task-sweep {
-    0% {
-      background-position: -34px 0;
-      opacity: 0;
-    }
-    18% {
-      opacity: 0.72;
-    }
-    72% {
-      opacity: 0.5;
-    }
-    100% {
-      background-position: 34px 0;
-      opacity: 0;
+  @keyframes we-change-marker-task-spin {
+    to {
+      transform: rotate(360deg);
     }
   }
 
   .we-change-marker {
     position: fixed;
     transform: translate(-50%, -50%);
-    width: 22px;
-    height: 22px;
+    width: 26px;
+    height: 26px;
     border-radius: 999px;
-    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+    background: #1C2736;
     color: #ffffff;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     line-height: 1;
     letter-spacing: 0;
     box-shadow:
-      0 8px 18px rgba(15, 23, 42, 0.22),
-      0 0 0 2px rgba(255, 255, 255, 0.95);
+      0 5px 12px rgba(22, 30, 42, 0.2),
+      0 0 0 2px #FFFFFF;
     pointer-events: auto;
     cursor: pointer;
     transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
     isolation: isolate;
-    --we-change-marker-task-accent: #008F5D;
+    --we-change-marker-task-accent: #778290;
+    --we-change-marker-task-ring: rgba(119, 130, 144, 0.5);
+    --we-change-marker-task-ring-hover: rgba(119, 130, 144, 0.58);
   }
 
-  .we-change-marker::before,
-  .we-change-marker::after {
+  .we-change-marker::before {
     content: "";
     position: absolute;
     border-radius: inherit;
@@ -8584,23 +8646,21 @@ var SHADOW_HOST_STYLES = (
     opacity: 0;
   }
 
-  .we-change-marker::before {
-    inset: -5px;
-    z-index: -1;
-  }
-
   .we-change-marker::after {
-    inset: 2px;
+    content: "";
+    position: absolute;
     z-index: 1;
+    inset: -8px;
+    border-radius: inherit;
   }
 
   .we-change-marker:hover,
   .we-change-marker:focus-visible {
-    transform: translate(-50%, -50%) scale(1.06);
+    transform: translate(-50%, -50%);
     box-shadow:
-      0 10px 22px rgba(15, 23, 42, 0.28),
-      0 0 0 2px rgba(255, 255, 255, 0.95),
-      0 0 0 5px rgba(0, 143, 93, 0.18);
+      0 7px 16px rgba(22, 30, 42, 0.24),
+      0 0 0 2px #FFFFFF,
+      0 0 0 5px var(--we-change-marker-task-ring-hover);
     outline: none;
   }
 
@@ -8610,72 +8670,62 @@ var SHADOW_HOST_STYLES = (
 
   .we-change-marker--annotation-note:hover,
   .we-change-marker--annotation-note:focus-visible {
-    transform: translate(8px, -50%) scale(1.03);
+    transform: translate(8px, -50%);
   }
 
   .we-change-marker--task-editing {
-    --we-change-marker-task-accent: #008F5D;
+    --we-change-marker-task-accent: #14815F;
+    --we-change-marker-task-ring: rgba(20, 129, 95, 0.5);
+    --we-change-marker-task-ring-hover: rgba(20, 129, 95, 0.58);
     cursor: progress;
     box-shadow:
-      0 8px 18px rgba(15, 23, 42, 0.22),
-      0 0 0 2px rgba(255, 255, 255, 0.95),
-      0 0 0 5px rgba(0, 143, 93, 0.2),
-      0 0 18px rgba(0, 143, 93, 0.28);
+      0 5px 12px rgba(22, 30, 42, 0.2),
+      0 0 0 2px #FFFFFF;
   }
 
   .we-change-marker--task-editing::before {
+    inset: -6px;
+    z-index: -1;
     opacity: 1;
-    border: 1px solid rgba(0, 143, 93, 0.72);
-    animation: we-change-marker-task-pulse 1.65s ease-out infinite;
-  }
-
-  .we-change-marker--task-editing::after {
-    background:
-      linear-gradient(
-        115deg,
-        transparent 0%,
-        transparent 39%,
-        rgba(255, 255, 255, 0.18) 47%,
-        rgba(0, 214, 143, 0.24) 51%,
-        transparent 62%,
-        transparent 100%
-      );
-    background-size: 42px 42px;
-    animation: we-change-marker-task-sweep 1.8s linear infinite;
+    background: conic-gradient(
+      from 10deg,
+      transparent 0 42%,
+      #14815F 44% 76%,
+      transparent 78%
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0);
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 0);
+    animation: we-change-marker-task-spin 1.4s linear infinite;
   }
 
   .we-change-marker--task-error {
-    --we-change-marker-task-accent: #EF4444;
+    --we-change-marker-task-accent: #D04444;
+    --we-change-marker-task-ring: rgba(208, 68, 68, 0.5);
+    --we-change-marker-task-ring-hover: rgba(208, 68, 68, 0.58);
     box-shadow:
-      0 8px 18px rgba(15, 23, 42, 0.22),
-      0 0 0 2px rgba(239, 68, 68, 0.9),
-      0 0 0 5px rgba(239, 68, 68, 0.16),
-      0 0 18px rgba(239, 68, 68, 0.2);
+      0 5px 12px rgba(22, 30, 42, 0.2),
+      0 0 0 2px #FFFFFF,
+      0 0 0 4px var(--we-change-marker-task-ring);
   }
 
-  .we-change-marker--task-error::before {
-    inset: -4px;
-    opacity: 1;
-    border: 1px solid rgba(239, 68, 68, 0.68);
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+  .we-change-marker--task-idle {
+    --we-change-marker-task-accent: #7A8592;
+    --we-change-marker-task-ring: rgba(122, 133, 146, 0.5);
+    --we-change-marker-task-ring-hover: rgba(122, 133, 146, 0.58);
+    box-shadow:
+      0 5px 12px rgba(22, 30, 42, 0.2),
+      0 0 0 2px #FFFFFF,
+      0 0 0 4px var(--we-change-marker-task-ring);
   }
 
-  .we-change-marker--task-editing:hover,
-  .we-change-marker--task-editing:focus-visible {
+  .we-change-marker--task-completed {
+    --we-change-marker-task-accent: #248A58;
+    --we-change-marker-task-ring: rgba(36, 138, 88, 0.5);
+    --we-change-marker-task-ring-hover: rgba(36, 138, 88, 0.58);
     box-shadow:
-      0 10px 22px rgba(15, 23, 42, 0.28),
-      0 0 0 2px rgba(255, 255, 255, 0.95),
-      0 0 0 5px rgba(0, 143, 93, 0.26),
-      0 0 20px rgba(0, 143, 93, 0.34);
-  }
-
-  .we-change-marker--task-error:hover,
-  .we-change-marker--task-error:focus-visible {
-    box-shadow:
-      0 10px 22px rgba(15, 23, 42, 0.28),
-      0 0 0 2px rgba(239, 68, 68, 0.94),
-      0 0 0 6px rgba(239, 68, 68, 0.2),
-      0 0 22px rgba(239, 68, 68, 0.24);
+      0 5px 12px rgba(22, 30, 42, 0.2),
+      0 0 0 2px #FFFFFF,
+      0 0 0 4px var(--we-change-marker-task-ring);
   }
 
   .we-change-marker__body {
@@ -8687,6 +8737,37 @@ var SHADOW_HOST_STYLES = (
     white-space: nowrap;
     position: relative;
     z-index: 2;
+  }
+
+  .we-change-marker__task-status {
+    position: absolute;
+    z-index: 3;
+    right: -5px;
+    bottom: -5px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid #FFFFFF;
+    background: var(--we-change-marker-task-accent);
+    color: #FFFFFF;
+    font-size: 8px;
+    font-weight: 800;
+    line-height: 1;
+    box-shadow: 0 2px 4px rgba(20, 28, 38, 0.2);
+  }
+
+  .we-change-marker--task-completed .we-change-marker__task-status,
+  .we-change-marker--task-error .we-change-marker__task-status {
+    display: inline-flex;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .we-change-marker--task-editing::before {
+      animation: none;
+    }
   }
 
   .we-change-marker__tooltip {
@@ -8944,7 +9025,7 @@ var LIGHT_EDITOR_CHROME = {
   toolbarShellInset: "inset 0 1px 0 rgba(255, 255, 255, 0.88)",
   toolbarGlow: "0 0 20px -5px rgba(0, 143, 93, 0.20)",
   shadow: "0 24px 60px rgba(15, 23, 42, 0.14), 0 8px 24px rgba(15, 23, 42, 0.08)",
-  shadowCompact: "0 18px 38px rgba(15, 23, 42, 0.14), 0 6px 16px rgba(15, 23, 42, 0.08)",
+  shadowCompact: "0 10px 28px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.06)",
   overlayCloseBackground: "rgba(255, 255, 255, 0.94)"
 };
 var DARK_EDITOR_CHROME = {
@@ -8974,7 +9055,7 @@ var DARK_EDITOR_CHROME = {
   toolbarShellInset: "inset 0 1px 0 rgba(255, 255, 255, 0.02)",
   toolbarGlow: "0 0 20px -5px rgba(0, 143, 93, 0.15)",
   shadow: "0 18px 48px rgba(0, 0, 0, 0.42), 0 4px 18px rgba(0, 0, 0, 0.28)",
-  shadowCompact: "0 16px 32px rgba(0, 0, 0, 0.36), 0 4px 14px rgba(0, 0, 0, 0.22)",
+  shadowCompact: "0 10px 28px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.20)",
   overlayCloseBackground: "rgba(18, 18, 18, 0.92)"
 };
 function cssVar(name) {
@@ -9605,6 +9686,270 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
     color: ${EDITOR_CHROME.accent};
   }
 
+  .we-runtime-ai-settings-modal .ant-modal-content {
+    overflow: hidden;
+    border: 1px solid ${EDITOR_CHROME.border};
+    border-radius: 18px;
+    background: ${EDITOR_CHROME.surfaceElevated};
+    box-shadow: ${EDITOR_CHROME.shadow};
+  }
+
+  .we-runtime-ai-settings-modal .ant-modal-header {
+    margin-bottom: 18px;
+    background: transparent;
+  }
+
+  .we-runtime-ai-settings-modal .ant-modal-footer {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid ${EDITOR_CHROME.divider};
+  }
+
+  .we-runtime-ai-settings-dialog {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .we-runtime-ai-settings-dialog__row {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+    min-height: 36px;
+  }
+
+  .we-runtime-ai-settings-dialog__label {
+    color: ${EDITOR_CHROME.textPrimary};
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 20px;
+  }
+
+  .we-runtime-ai-settings-dialog__control {
+    min-width: 0;
+  }
+
+  .we-runtime-ai-settings-dialog__control .ant-select,
+  .we-runtime-ai-settings-dialog__control .ant-input-number,
+  .we-runtime-ai-settings-dialog__control .ant-input-affix-wrapper {
+    width: 100%;
+  }
+
+  .we-runtime-ai-settings-dialog__workspace-input input {
+    text-overflow: ellipsis;
+  }
+
+  .we-runtime-ai-settings-dialog__workspace-input .ant-input-suffix .ant-btn {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    padding: 0;
+    color: ${EDITOR_CHROME.textSecondary};
+  }
+
+  .we-runtime-commentary-skill-modal .ant-modal-content {
+    overflow: hidden;
+    border: 1px solid ${EDITOR_CHROME.border};
+    border-radius: 18px;
+    background: ${EDITOR_CHROME.surfaceElevated};
+    box-shadow: ${EDITOR_CHROME.shadow};
+  }
+
+  .we-runtime-commentary-skill-modal .ant-modal-header {
+    margin-bottom: 16px;
+    background: transparent;
+  }
+
+  .we-runtime-commentary-skill-modal .ant-modal-footer {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid ${EDITOR_CHROME.divider};
+  }
+
+  .we-runtime-commentary-skill-dialog__title {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    color: ${EDITOR_CHROME.textPrimary};
+    line-height: 1.25;
+  }
+
+  .we-runtime-commentary-skill-dialog__subtitle {
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .we-runtime-commentary-skill-dialog {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .we-runtime-commentary-skill-dialog__list {
+    display: flex;
+    max-height: min(55vh, 460px);
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .we-runtime-commentary-skill-dialog__list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .we-runtime-commentary-skill-dialog__section-title {
+    display: flex;
+    min-height: 26px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 2px 1px;
+    color: ${EDITOR_CHROME.textSecondary};
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .we-runtime-commentary-skill-dialog__section-title--custom {
+    margin-top: 6px;
+    padding-top: 4px;
+  }
+
+  .we-runtime-commentary-skill-dialog__section-title .ant-btn-link {
+    height: 26px;
+    padding: 0 2px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .we-runtime-commentary-skill-dialog__item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 14px;
+    border: 1px solid ${EDITOR_CHROME.border};
+    border-radius: 12px;
+    background: ${EDITOR_CHROME.surface};
+    box-shadow: 0 1px 2px ${EDITOR_CHROME.hoverGhost};
+    color: ${EDITOR_CHROME.textPrimary};
+    cursor: pointer;
+    outline: none;
+    transition:
+      border-color 160ms ease,
+      background-color 160ms ease,
+      box-shadow 160ms ease,
+      transform 160ms ease;
+  }
+
+  .we-runtime-commentary-skill-dialog__item:hover:not(.we-runtime-commentary-skill-dialog__item--disabled) {
+    border-color: ${EDITOR_CHROME.borderStrong};
+    background: ${EDITOR_CHROME.surfaceMuted};
+  }
+
+  .we-runtime-commentary-skill-dialog__item:focus-visible {
+    border-color: color-mix(in srgb, ${EDITOR_CHROME.accent} 46%, ${EDITOR_CHROME.border});
+    box-shadow: 0 0 0 3px ${EDITOR_CHROME.accentRing};
+  }
+
+  .we-runtime-commentary-skill-dialog__item--disabled {
+    cursor: not-allowed;
+    opacity: 0.62;
+  }
+
+  .we-runtime-commentary-skill-dialog__copy {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .we-runtime-commentary-skill-dialog__name {
+    overflow: hidden;
+    color: ${EDITOR_CHROME.textPrimary};
+    font-size: 13px;
+    font-weight: 650;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .we-runtime-commentary-skill-dialog__description {
+    overflow: hidden;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .we-runtime-commentary-skill-dialog__item > .ant-checkbox-wrapper {
+    flex: 0 0 auto;
+    margin: 0;
+  }
+
+  .we-runtime-commentary-skill-dialog__edit.ant-btn.ant-btn-text {
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+  }
+
+  .we-runtime-commentary-skill-dialog__edit.ant-btn.ant-btn-text:hover {
+    color: ${EDITOR_CHROME.textSecondary};
+    background: ${EDITOR_CHROME.hoverSubtle};
+  }
+
+  .we-runtime-commentary-skill-dialog__empty {
+    padding: 14px;
+    border: 1px dashed ${EDITOR_CHROME.border};
+    border-radius: 12px;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .we-runtime-commentary-skill-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .we-runtime-commentary-skill-editor__field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    color: ${EDITOR_CHROME.textSecondary};
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .we-runtime-commentary-skill-editor__error {
+    color: ${EDITOR_CHROME.textDanger};
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  @media (max-width: 640px) {
+    .we-runtime-ai-settings-modal .ant-modal-content,
+    .we-runtime-commentary-skill-modal .ant-modal-content {
+      padding: 18px 16px 14px;
+    }
+
+    .we-runtime-ai-settings-dialog__row {
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .we-runtime-commentary-skill-dialog__item {
+      padding: 11px 12px;
+    }
+  }
+
   .we-runtime-keyboard-shortcuts-modal,
   .we-runtime-keyboard-shortcuts-modal * {
     outline: none !important;
@@ -9627,9 +9972,318 @@ var PROPERTY_PANEL_LOCAL_STYLES = `
     box-sizing: border-box;
   }
 
+  .we-runtime-directory-picker-modal .ant-modal {
+    max-width: calc(100vw - 24px);
+  }
+
+  .we-runtime-directory-picker__title {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    line-height: 1.25;
+  }
+
+  .we-runtime-directory-picker__description {
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .we-runtime-directory-picker {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .we-runtime-directory-picker__path-row {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 10px;
+  }
+
+  .we-runtime-directory-picker__path-field {
+    position: relative;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .we-runtime-directory-picker__path-field .ant-input {
+    height: 40px;
+    border-radius: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 13px;
+  }
+
+  .we-runtime-directory-picker__path-row > .ant-btn {
+    height: 40px;
+    border-radius: 10px;
+  }
+
+  .we-runtime-directory-picker__recent-list {
+    position: absolute;
+    z-index: 20;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
+    max-height: min(264px, 40vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 5px;
+    border: 1px solid ${EDITOR_CHROME.borderStrong};
+    border-radius: 10px;
+    background: ${EDITOR_CHROME.surfaceElevated};
+    box-shadow: ${EDITOR_CHROME.shadowCompact};
+  }
+
+  .we-runtime-directory-picker__recent-heading {
+    padding: 5px 8px 7px;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .we-runtime-directory-picker__recent-item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    border-radius: 7px;
+  }
+
+  .we-runtime-directory-picker__recent-item--active {
+    background: ${EDITOR_CHROME.hoverSubtle};
+  }
+
+  .we-runtime-directory-picker__recent-main {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: ${EDITOR_CHROME.textPrimary};
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .we-runtime-directory-picker__recent-main > .anticon {
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 15px;
+  }
+
+  .we-runtime-directory-picker__recent-copy {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .we-runtime-directory-picker__recent-name,
+  .we-runtime-directory-picker__recent-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .we-runtime-directory-picker__recent-name {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .we-runtime-directory-picker__recent-path {
+    color: ${EDITOR_CHROME.textMuted};
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+  }
+
+  .we-runtime-directory-picker__recent-remove.ant-btn {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    margin-right: 3px;
+    padding: 0;
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+  }
+
+  .we-runtime-directory-picker__recent-empty {
+    padding: 20px 12px;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .we-runtime-directory-picker__location {
+    display: flex;
+    min-height: 40px;
+    flex: 0 0 auto;
+    align-items: center;
+    overflow: hidden;
+    border: 1px solid ${EDITOR_CHROME.border};
+    border-radius: 10px;
+    background: ${EDITOR_CHROME.surfaceMuted};
+  }
+
+  .we-runtime-directory-picker__location-label {
+    flex: 0 0 auto;
+    padding: 0 12px;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .we-runtime-directory-picker__divider {
+    width: 1px;
+    height: 20px;
+    flex: 0 0 auto;
+    background: ${EDITOR_CHROME.divider};
+  }
+
+  .we-runtime-directory-picker__breadcrumbs {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    overflow-x: auto;
+    padding: 3px 4px;
+    scrollbar-width: none;
+    white-space: nowrap;
+  }
+
+  .we-runtime-directory-picker__breadcrumbs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .we-runtime-directory-picker__breadcrumb.ant-btn {
+    height: 28px;
+    padding: 0 7px;
+    color: ${EDITOR_CHROME.textSecondary};
+  }
+
+  .we-runtime-directory-picker__breadcrumb-separator {
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 10px;
+  }
+
+  .we-runtime-directory-picker__location-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 1px;
+    padding: 0 4px;
+  }
+
+  .we-runtime-directory-picker__location-actions .ant-btn {
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    padding: 0;
+  }
+
+  .we-runtime-directory-picker__error,
+  .we-runtime-directory-picker__recent-error {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .we-runtime-directory-picker__error {
+    color: ${EDITOR_CHROME.textDanger};
+    background: color-mix(in srgb, ${EDITOR_CHROME.textDanger} 8%, transparent);
+  }
+
+  .we-runtime-directory-picker__recent-error {
+    color: ${EDITOR_CHROME.textSecondary};
+    background: ${EDITOR_CHROME.surfaceMuted};
+  }
+
+  .we-runtime-directory-picker__list {
+    height: min(320px, calc(100vh - 370px));
+    min-height: 190px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid ${EDITOR_CHROME.border};
+    border-radius: 10px;
+  }
+
+  .we-runtime-directory-picker__row {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    border: 0;
+    border-bottom: 1px solid ${EDITOR_CHROME.divider};
+    background: transparent;
+    color: ${EDITOR_CHROME.textPrimary};
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .we-runtime-directory-picker__row:last-child {
+    border-bottom: 0;
+  }
+
   .we-runtime-directory-picker__row:hover:not(:disabled),
   .we-runtime-directory-picker__row:focus-visible:not(:disabled) {
     background: ${EDITOR_CHROME.hoverSubtle} !important;
+  }
+
+  .we-runtime-directory-picker__row > .anticon:first-child {
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 15px;
+  }
+
+  .we-runtime-directory-picker__row-name {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .we-runtime-directory-picker__row-arrow {
+    flex: 0 0 auto;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 11px;
+  }
+
+  .we-runtime-directory-picker__empty {
+    display: flex;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 28px 16px;
+    color: ${EDITOR_CHROME.textMuted};
+    font-size: 12px;
+    text-align: center;
+  }
+
+  @media (max-width: 640px) {
+    .we-runtime-directory-picker-modal .ant-modal-content {
+      padding: 18px 16px 14px;
+    }
+
+    .we-runtime-directory-picker__list {
+      height: min(360px, calc(100vh - 340px));
+      min-height: 180px;
+    }
+
+    .we-runtime-directory-picker__location-label {
+      padding: 0 9px;
+    }
   }
 
   .we-runtime-prop-panel__body .ant-input-filled,
@@ -10146,6 +10800,11 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
     z-index: ${POPUP_LAYER_Z_INDEX + 40} !important;
   }
 
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popover .ant-popover-inner,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-popconfirm .ant-popover-inner {
+    box-shadow: ${EDITOR_CHROME.shadowCompact} !important;
+  }
+
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button.ant-btn {
     display: inline-flex;
     align-items: center;
@@ -10154,6 +10813,198 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
     min-width: 32px;
     height: 32px;
     padding: 0;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card {
+    --we-runtime-settings-control-width: 120px;
+    width: min(264px, calc(100vw - 32px));
+    overflow: visible;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__header {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 2px;
+    padding: 0 4px 6px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__title {
+    color: ${EDITOR_CHROME.textPrimary};
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 22px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__list,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution {
+    display: flex;
+    flex-direction: column;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__list {
+    gap: 2px;
+    max-height: none;
+    overflow: visible;
+    scrollbar-width: none;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__list::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution {
+    gap: 6px;
+    width: 100%;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--we-runtime-settings-control-width);
+    align-items: center;
+    column-gap: 12px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row {
+    min-height: 36px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    cursor: default;
+    transition: background-color 160ms ease, color 160ms ease;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row--full {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    padding: 4px 6px 6px;
+    border-radius: 8px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row--compact-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row--action,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-row--action {
+    cursor: pointer;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row--action:hover {
+    background: ${EDITOR_CHROME.hoverSubtle};
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-row {
+    min-height: 30px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-row--action {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-row--action:hover .we-runtime-settings-card__value {
+    color: ${EDITOR_CHROME.textPrimary};
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__label {
+    min-width: 0;
+    color: ${EDITOR_CHROME.textPrimary};
+    font-size: 14px;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__skill-label {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__recommended-badge {
+    display: inline-flex;
+    height: 18px;
+    flex: 0 0 auto;
+    align-items: center;
+    padding: 0 5px;
+    border: 1px solid ${EDITOR_CHROME.accentRing};
+    border-radius: 4px;
+    background: ${EDITOR_CHROME.accentSoft};
+    color: ${EDITOR_CHROME.accent};
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__install-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-width: 0;
+    height: 24px;
+    padding: 0 2px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: ${EDITOR_CHROME.accent} !important;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+    cursor: pointer;
+    text-decoration: none;
+    text-underline-offset: 3px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__install-button:hover {
+    background: transparent;
+    color: ${EDITOR_CHROME.accent} !important;
+    text-decoration: underline;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__install-button:focus-visible {
+    outline: 2px solid ${EDITOR_CHROME.accentRing};
+    outline-offset: 2px;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__full-control,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-control {
+    min-width: 0;
+    width: 100%;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-control .ant-select,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-control .ant-input-number,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__execution-control .ant-input-affix-wrapper {
+    width: 100%;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__workspace-input input {
+    text-overflow: ellipsis;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__row-control,
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-card__value {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-end;
+    justify-self: stretch;
+    gap: 6px;
+    color: ${EDITOR_CHROME.textSecondary};
+    font-size: 13px;
   }
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon {
@@ -10165,6 +11016,10 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-settings-dark-mode-button .anticon svg {
     display: block;
+  }
+
+  [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .we-runtime-html-file-save-dropdown .ant-dropdown-menu {
+    min-width: 176px;
   }
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-dropdown,
@@ -10182,7 +11037,7 @@ var WEB_EDITOR_POPUP_ROOT_STYLES = `
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-dropdown .ant-dropdown-menu:not(.ant-dropdown-menu-submenu-popup) {
     background: ${EDITOR_CHROME.surfaceElevated} !important;
     border: 1px solid ${EDITOR_CHROME.border} !important;
-    box-shadow: ${EDITOR_CHROME.shadow} !important;
+    box-shadow: ${EDITOR_CHROME.shadowCompact} !important;
   }
 
   [${WEB_EDITOR_POPUP_ROOT_ATTR}="true"] .ant-dropdown-menu-item,
@@ -11626,7 +12481,14 @@ function AgentToolbarIconButton(props) {
   ) });
 }
 function AgentToolbarShell(props) {
-  const { awake, children, dragHandleRef, fullWidth = false, style } = props;
+  const {
+    awake,
+    connected = awake,
+    children,
+    dragHandleRef,
+    fullWidth = false,
+    style
+  } = props;
   const shellBorderColor = EDITOR_CHROME.toolbarShellBorder;
   const shellSurfaceShadow = EDITOR_CHROME.toolbarShellInset;
   const shellShadow = awake ? EDITOR_CHROME.toolbarGlow : EDITOR_CHROME.shadowCompact;
@@ -11662,7 +12524,7 @@ function AgentToolbarShell(props) {
             }
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_react5.AnimatePresence, { children: awake ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(import_react5.AnimatePresence, { children: connected ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
           import_react5.motion.div,
           {
             initial: { opacity: 0 },
@@ -14299,16 +15161,10 @@ function buildPromptCardTaskErrorMessage(options) {
   ].filter(Boolean).join("\n") || "AI \u4FEE\u6539\u5931\u8D25";
 }
 function dismissPromptCardTerminalState(options) {
-  const {
-    currentTarget,
-    currentTaskTerminal,
-    dismissElementAgentTaskState,
-    onDismissSelection
-  } = options;
+  const { currentTarget, currentTaskTerminal, onDismissSelection } = options;
   if (!currentTaskTerminal || !currentTarget) {
     return false;
   }
-  dismissElementAgentTaskState?.(currentTarget);
   onDismissSelection?.();
   return true;
 }
@@ -14341,6 +15197,7 @@ var PromptCardView = import_react10.default.forwardRef(
       hideExecutionControls = false,
       hideContextAppendAction = false,
       enabledSkillIds,
+      skillOptions,
       onHoverSelectionSuppressedChange,
       onSelectionInteractionLockChange,
       onTargetChange,
@@ -14391,13 +15248,14 @@ var PromptCardView = import_react10.default.forwardRef(
     const [elementToolError, setElementToolError] = import_react10.default.useState("");
     const elementTools = options.getElementTools?.(currentTarget) ?? [];
     const hasElementTools = elementTools.length > 0;
-    const skillTrigger = import_react10.default.useMemo(
-      () => findPromptCardSkillTrigger(draftNote),
-      [draftNote]
+    const skillTrigger = import_react10.default.useMemo(() => findPromptCardSkillTrigger(draftNote), [draftNote]);
+    const promptCardSkills = import_react10.default.useMemo(
+      () => mergePromptCardSkills(skillOptions ?? []),
+      [skillOptions]
     );
     const filteredSkills = import_react10.default.useMemo(
-      () => filterPromptCardSkills(skillTrigger?.query ?? "", enabledSkillIds),
-      [enabledSkillIds, skillTrigger?.query]
+      () => filterPromptCardSkills(skillTrigger?.query ?? "", enabledSkillIds, promptCardSkills),
+      [enabledSkillIds, promptCardSkills, skillTrigger?.query]
     );
     const selectedSkillsDirty = import_react10.default.useMemo(() => {
       const savedSkillIds = savedNoteMeta?.skillIds ?? [];
@@ -14411,10 +15269,12 @@ var PromptCardView = import_react10.default.forwardRef(
       inlineTextEditingRef.current = inlineTextEditing;
     }, [inlineTextEditing]);
     import_react10.default.useEffect(() => {
-      setSelectedSkills(deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds));
+      setSelectedSkills(
+        deserializePromptCardSkillSelection(savedNoteMeta, enabledSkillIds, skillOptions ?? [])
+      );
       setRunningElementToolId(null);
       setElementToolError("");
-    }, [enabledSkillIds, savedNoteMeta, currentTarget]);
+    }, [enabledSkillIds, savedNoteMeta, currentTarget, skillOptions]);
     const onConfirmNoteWithSelectedSkills = import_react10.default.useCallback(async () => {
       const payload = buildPromptCardSkillSavePayload(draftNote, selectedSkills);
       await onConfirmNote({ skillIds: payload.skillIds });
@@ -14567,7 +15427,15 @@ var PromptCardView = import_react10.default.forwardRef(
         propertyPanelRight: PROPERTY_PANEL_RIGHT,
         anchorGapPx: ANCHOR_GAP_PX
       });
-    }, [anchorRect, currentTarget, promptCardSize, propertyPanelEnabled, toolMinimized, uiMode, visualViewportKey]);
+    }, [
+      anchorRect,
+      currentTarget,
+      promptCardSize,
+      propertyPanelEnabled,
+      toolMinimized,
+      uiMode,
+      visualViewportKey
+    ]);
     const promptVisible = Boolean(
       currentTarget && promptPosition && promptCardSize && !toolMinimized && uiMode === "bubble-card"
     );
@@ -14607,7 +15475,14 @@ var PromptCardView = import_react10.default.forwardRef(
       return () => {
         window.clearTimeout(timerId);
       };
-    }, [currentTarget, ensurePromptPrimaryFocus, inlineTextEditing, promptVisible, toolMinimized, uiMode]);
+    }, [
+      currentTarget,
+      ensurePromptPrimaryFocus,
+      inlineTextEditing,
+      promptVisible,
+      toolMinimized,
+      uiMode
+    ]);
     import_react10.default.useEffect(() => {
       if (!inlineTextEditing || promptVisible) return;
       onInlineTextEditingChange(false);
@@ -14632,7 +15507,10 @@ var PromptCardView = import_react10.default.forwardRef(
         event.preventDefault();
         event.stopPropagation();
       };
-      window.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+      window.addEventListener("wheel", handleWheel, {
+        capture: true,
+        passive: false
+      });
       return () => {
         window.removeEventListener("wheel", handleWheel, true);
       };
@@ -14658,7 +15536,13 @@ var PromptCardView = import_react10.default.forwardRef(
         activeElement.blur();
       }
       onDismissSelection?.();
-    }, [currentTarget, onConfirmAnnotationMarkdown, onConfirmNoteWithSelectedSkills, onConfirmText, onDismissSelection]);
+    }, [
+      currentTarget,
+      onConfirmAnnotationMarkdown,
+      onConfirmNoteWithSelectedSkills,
+      onConfirmText,
+      onDismissSelection
+    ]);
     const saveAndCloseAnnotationMarkdownComposer = import_react10.default.useCallback(async () => {
       if (getAnnotationManualEditLocatorState(currentTarget).disabled) {
         return;
@@ -14689,7 +15573,9 @@ var PromptCardView = import_react10.default.forwardRef(
     }, []);
     import_react10.default.useEffect(() => {
       setPortalContainer(
-        options.container.querySelector(`[${WEB_EDITOR_POPUP_ROOT_ATTR}="true"]`)
+        options.container.querySelector(
+          `[${WEB_EDITOR_POPUP_ROOT_ATTR}="true"]`
+        )
       );
     }, [options.container]);
     import_react10.default.useEffect(() => {
@@ -14743,10 +15629,13 @@ var PromptCardView = import_react10.default.forwardRef(
       () => dismissPromptCardTerminalState({
         currentTarget,
         currentTaskTerminal,
-        dismissElementAgentTaskState: options.dismissElementAgentTaskState,
         onDismissSelection
       }),
-      [currentTarget, currentTaskTerminal, onDismissSelection, options.dismissElementAgentTaskState]
+      [
+        currentTarget,
+        currentTaskTerminal,
+        onDismissSelection
+      ]
     );
     const currentTaskSessionHref = currentAgentTask?.sessionUrl ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : "");
     const currentTaskDescription = resolveExternalEditingStatusDescription(
@@ -14875,10 +15764,7 @@ var PromptCardView = import_react10.default.forwardRef(
         if (dismissTerminalTaskAndSelection()) return;
         void saveAndCloseNoteComposer();
       },
-      [
-        dismissTerminalTaskAndSelection,
-        saveAndCloseNoteComposer
-      ]
+      [dismissTerminalTaskAndSelection, saveAndCloseNoteComposer]
     );
     if (!promptPositionBaseVisible || !currentTarget || !promptPosition || toolMinimized || uiMode !== "bubble-card") {
       return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { ref: rootRef, style: { ...promptCardStyle, visibility: "hidden" } });
@@ -14902,9 +15788,7 @@ var PromptCardView = import_react10.default.forwardRef(
     const showAnnotationMarkdownEditorButton = Boolean(
       annotationEnabled && canEditAnnotationMarkdown && currentTarget
     );
-    const showAnnotationDocumentEditButton = Boolean(
-      currentTarget && annotationDocumentEditUrl
-    );
+    const showAnnotationDocumentEditButton = Boolean(currentTarget && annotationDocumentEditUrl);
     const showNoteComposer = !annotationEditorOpen && !bubbleStyleEditorOpen;
     const showAnnotationMarkdownEditor = Boolean(
       annotationEditorOpen && showAnnotationMarkdownEditorButton && !bubbleStyleEditorOpen
@@ -15128,7 +16012,7 @@ var PromptCardView = import_react10.default.forwardRef(
                 padding: "6px 10px",
                 borderRadius: 8,
                 background: "rgba(255, 77, 79, 0.12)",
-                color: EDITOR_CHROME.danger,
+                color: EDITOR_CHROME.textDanger,
                 fontSize: 11,
                 lineHeight: 1.45,
                 overflowWrap: "anywhere"
@@ -15248,7 +16132,18 @@ var PromptCardView = import_react10.default.forwardRef(
                                 },
                                 onClick: () => handleSkillRemove(skill.id),
                                 children: [
-                                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: skill.label }),
+                                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                                    "span",
+                                    {
+                                      style: {
+                                        minWidth: 0,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap"
+                                      },
+                                      children: skill.label
+                                    }
+                                  ),
                                   /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.CloseOutlined, { style: { fontSize: 9, color: EDITOR_CHROME.textMuted } })
                                 ]
                               },
@@ -15323,7 +16218,9 @@ var PromptCardView = import_react10.default.forwardRef(
                               boxShadow: EDITOR_CHROME.shadowCompact
                             },
                             children: filteredSkills.map((skill) => {
-                              const selected = selectedSkills.some((selectedSkill) => selectedSkill.id === skill.id);
+                              const selected = selectedSkills.some(
+                                (selectedSkill) => selectedSkill.id === skill.id
+                              );
                               return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
                                 "button",
                                 {
@@ -15350,8 +16247,28 @@ var PromptCardView = import_react10.default.forwardRef(
                                     }
                                   },
                                   children: [
-                                    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: { fontSize: 12, fontWeight: 600, lineHeight: 1.35 }, children: skill.label }),
-                                    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: { fontSize: 11, lineHeight: 1.35, color: EDITOR_CHROME.textMuted }, children: skill.description })
+                                    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                                      "span",
+                                      {
+                                        style: {
+                                          fontSize: 12,
+                                          fontWeight: 600,
+                                          lineHeight: 1.35
+                                        },
+                                        children: skill.label
+                                      }
+                                    ),
+                                    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                                      "span",
+                                      {
+                                        style: {
+                                          fontSize: 11,
+                                          lineHeight: 1.35,
+                                          color: EDITOR_CHROME.textMuted
+                                        },
+                                        children: skill.description
+                                      }
+                                    )
                                   ]
                                 },
                                 skill.id
@@ -15362,9 +16279,15 @@ var PromptCardView = import_react10.default.forwardRef(
                       ]
                     }
                   ),
-                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(PromptImageStrip, { images, onRemoveImage: (imageId) => {
-                    void onRemoveImage(imageId);
-                  } })
+                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                    PromptImageStrip,
+                    {
+                      images,
+                      onRemoveImage: (imageId) => {
+                        void onRemoveImage(imageId);
+                      }
+                    }
+                  )
                 ] }) : null,
                 showAnnotationMarkdownEditor ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
                   "div",
@@ -15530,50 +16453,95 @@ var PromptCardView = import_react10.default.forwardRef(
                     ]
                   }
                 ) : null,
-                currentAgentTask ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", alignItems: "flex-start", gap: 6, padding: "2px 4px 0", marginTop: -2 }, children: [
-                  currentAgentTask.status === "completed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.CheckCircleFilled, { style: { color: "#22c55e", fontSize: 13, marginTop: 3 } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.ExclamationCircleFilled, { style: { color: "#ef4444", fontSize: 13, marginTop: 3 } }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { style: { marginTop: 2 }, children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(AgentSparkleIcon, {}) }),
-                  /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0, overflow: "hidden" }, children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 4, minWidth: 0 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: { fontSize: 12, fontWeight: 500, color: currentAgentTask.status === "error" ? "#ef4444" : EDITOR_CHROME.textPrimary }, children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25" }),
-                      currentAgentTask.status === "error" && currentTaskErrorMessage ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
-                        IconActionButton,
+                currentAgentTask ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 6,
+                      padding: "2px 4px 0",
+                      marginTop: -2
+                    },
+                    children: [
+                      currentAgentTask.status === "completed" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.CheckCircleFilled, { style: { color: "#22c55e", fontSize: 13, marginTop: 3 } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.ExclamationCircleFilled, { style: { color: "#ef4444", fontSize: 13, marginTop: 3 } }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { style: { marginTop: 2 }, children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(AgentSparkleIcon, {}) }),
+                      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+                        "div",
                         {
-                          title: "\u590D\u5236\u9519\u8BEF\u4FE1\u606F",
-                          icon: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.CopyOutlined, {}),
-                          tone: "danger",
                           style: {
-                            width: 20,
-                            minWidth: 20,
-                            height: 20,
-                            fontSize: 12,
-                            marginLeft: 1
+                            display: "flex",
+                            flexDirection: "column",
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: "hidden"
                           },
-                          onClick: () => {
-                            void copyPromptCardTextToClipboard(currentTaskErrorMessage).catch(() => void 0);
-                          }
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+                              "div",
+                              {
+                                style: {
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                  minWidth: 0
+                                },
+                                children: [
+                                  /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                                    "span",
+                                    {
+                                      style: {
+                                        fontSize: 12,
+                                        fontWeight: 500,
+                                        color: currentAgentTask.status === "error" ? "#ef4444" : EDITOR_CHROME.textPrimary
+                                      },
+                                      children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25"
+                                    }
+                                  ),
+                                  currentAgentTask.status === "error" && currentTaskErrorMessage ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+                                    IconActionButton,
+                                    {
+                                      title: "\u590D\u5236\u9519\u8BEF\u4FE1\u606F",
+                                      icon: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_icons4.CopyOutlined, {}),
+                                      tone: "danger",
+                                      style: {
+                                        width: 20,
+                                        minWidth: 20,
+                                        height: 20,
+                                        fontSize: 12,
+                                        marginLeft: 1
+                                      },
+                                      onClick: () => {
+                                        void copyPromptCardTextToClipboard(currentTaskErrorMessage).catch(() => void 0);
+                                      }
+                                    }
+                                  ) : null
+                                ]
+                              }
+                            ),
+                            currentTaskDescription ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+                              "span",
+                              {
+                                style: {
+                                  fontSize: 11,
+                                  lineHeight: 1.5,
+                                  color: EDITOR_CHROME.textMuted,
+                                  marginTop: 1,
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis"
+                                },
+                                children: [
+                                  currentTaskDescription,
+                                  currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
+                                ]
+                              }
+                            ) : null
+                          ]
                         }
-                      ) : null
-                    ] }),
-                    currentTaskDescription ? /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
-                      "span",
-                      {
-                        style: {
-                          fontSize: 11,
-                          lineHeight: 1.5,
-                          color: EDITOR_CHROME.textMuted,
-                          marginTop: 1,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis"
-                        },
-                        children: [
-                          currentTaskDescription,
-                          currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
-                        ]
-                      }
-                    ) : null
-                  ] })
-                ] }) : null
+                      )
+                    ]
+                  }
+                ) : null
               ]
             }
           )
@@ -17053,12 +18021,98 @@ function notifyRuntimeMessage(type, content) {
   void import_antd8.message.open({ type, content });
 }
 
+// src/ui/runtime/ai-workspace-picker.ts
+var AI_EXECUTION_RECENT_WORKSPACES_LIMIT = 10;
+var normalizePath = (value) => typeof value === "string" ? value.trim() : "";
+var getPathComparisonKey = (value) => {
+  const slashPath = value.trim().replace(/\\/gu, "/");
+  const withoutTrailingSlash = slashPath.length > 1 ? slashPath.replace(/\/+$/u, "") : slashPath;
+  return /^[A-Za-z]:\//u.test(withoutTrailingSlash) ? withoutTrailingSlash.toLocaleLowerCase() : withoutTrailingSlash;
+};
+var normalizeRecentWorkspace = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value;
+  const path = normalizePath(candidate.path);
+  const lastUsedAt = Number(candidate.lastUsedAt);
+  return path && Number.isFinite(lastUsedAt) ? { path, lastUsedAt } : null;
+};
+function normalizeAiExecutionRecentWorkspaces(value) {
+  const rawItems = value && typeof value === "object" && !Array.isArray(value) ? value.items : value;
+  if (!Array.isArray(rawItems)) return [];
+  const seenPaths = /* @__PURE__ */ new Set();
+  return rawItems.map(normalizeRecentWorkspace).filter((item) => item !== null).sort((left, right) => right.lastUsedAt - left.lastUsedAt).filter((item) => {
+    const key = getPathComparisonKey(item.path);
+    if (seenPaths.has(key)) return false;
+    seenPaths.add(key);
+    return true;
+  }).slice(0, AI_EXECUTION_RECENT_WORKSPACES_LIMIT);
+}
+function recordAiExecutionRecentWorkspace(items, workspacePath, now = Date.now()) {
+  const path = normalizePath(workspacePath);
+  if (!path) return normalizeAiExecutionRecentWorkspaces(items);
+  return normalizeAiExecutionRecentWorkspaces([
+    { path, lastUsedAt: now },
+    ...items
+  ]);
+}
+function removeAiExecutionRecentWorkspace(items, workspacePath) {
+  const key = getPathComparisonKey(workspacePath);
+  return items.filter((item) => getPathComparisonKey(item.path) !== key);
+}
+function getAiExecutionRecentWorkspaceName(workspacePath) {
+  const path = normalizePath(workspacePath);
+  if (!path) return "";
+  if (path === "/" || /^[A-Za-z]:[\\/]$/u.test(path)) return path;
+  return path.split(/[\\/]+/u).filter(Boolean).at(-1) ?? path;
+}
+function filterAiExecutionRecentWorkspaces(items, query) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return items;
+  return items.filter((item) => {
+    const path = item.path.toLocaleLowerCase();
+    const name = getAiExecutionRecentWorkspaceName(
+      item.path
+    ).toLocaleLowerCase();
+    return path.includes(normalizedQuery) || name.includes(normalizedQuery);
+  });
+}
+function buildAiWorkspaceBreadcrumbs(workspacePath) {
+  const value = workspacePath.trim();
+  if (!value) return [];
+  if (/^[A-Za-z]:[\\/]/u.test(value)) {
+    const root = `${value.slice(0, 2)}\\`;
+    const segments2 = value.slice(3).split(/[\\/]+/u).filter(Boolean);
+    const breadcrumbs = [{ label: root, path: root }];
+    let current2 = root.replace(/\\$/u, "");
+    for (const segment of segments2) {
+      current2 = `${current2}\\${segment}`;
+      breadcrumbs.push({ label: segment, path: current2 });
+    }
+    return breadcrumbs;
+  }
+  const segments = value.split(/\/+/u).filter(Boolean);
+  if (value.startsWith("/")) {
+    const breadcrumbs = [{ label: "/", path: "/" }];
+    let current2 = "";
+    for (const segment of segments) {
+      current2 += `/${segment}`;
+      breadcrumbs.push({ label: segment, path: current2 });
+    }
+    return breadcrumbs;
+  }
+  let current = "";
+  return segments.map((segment) => {
+    current = current ? `${current}/${segment}` : segment;
+    return { label: segment, path: current };
+  });
+}
+
 // src/ui/runtime/property-panel-view.tsx
 var import_jsx_runtime12 = require("react/jsx-runtime");
 var AGENT_WAKE_FAILURE_MESSAGE = "AI \u5524\u9192\u5931\u8D25\uFF0C\u8BF7\u5728\u7EC8\u7AEF\u6267\u884C npx @axhub/acp@latest\uFF0C\u518D\u91CD\u8BD5";
 var AGENT_WAKE_TIMEOUT_MS = 12e3;
 var AGENT_INTERRUPT_TIMEOUT_MS = 12e3;
-var COMMENTARY_CLIENT_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-commentary-client/SKILL.md";
+var COMMENTARY_SKILL_URL = "https://github.com/lintendo/Axhub-Skills/blob/main/skills/axhub-commentary/SKILL.md";
 var AGENT_MENU_OPTIONS = [
   { value: "claude", label: "Claude" },
   { value: "codex", label: "Codex" },
@@ -17093,10 +18147,21 @@ function mergeCommentarySkillOptions(options) {
       id,
       label,
       description: item.description?.trim() || void 0,
-      sourceUrl: "sourceUrl" in item ? item.sourceUrl?.trim() || void 0 : void 0
+      sourceUrl: "sourceUrl" in item ? item.sourceUrl?.trim() || void 0 : void 0,
+      prompt: "prompt" in item ? item.prompt?.trim() || void 0 : void 0,
+      custom: "custom" in item ? item.custom === true : false
     });
   }
   return [...merged.values()];
+}
+function createCommentaryCustomSkillId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `custom-${crypto.randomUUID()}`;
+  }
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+function summarizeCommentaryCustomSkillPrompt(prompt) {
+  return prompt.replace(/\s+/gu, " ").trim().slice(0, 80);
 }
 function normalizeCommentarySkillIds(value, options) {
   const allowedIds = new Set(options.map((item) => item.id));
@@ -17119,20 +18184,36 @@ function resolveCommentarySkillIds(value, options, configured) {
   }
   return normalizeCommentarySkillIds(value, options);
 }
-function buildSkillInstallPrompt(skillInstallSource) {
+function buildCommentarySkillGuidancePrompt(skillInstallSource) {
   const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : "";
   return [
-    "\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u6279\u6CE8\u3001\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u65F6\uFF0C\u9ED8\u8BA4\u4F7F\u7528 axhub-commentary-client \u6280\u80FD\u4F5C\u4E3A\u7B2C\u4E09\u65B9\u515C\u5E95\u3002",
+    "\u5904\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u6279\u6CE8\u3001\u8BBE\u8BA1\u51B3\u7B56\u3001\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u65F6\uFF0C\u9ED8\u8BA4\u4F7F\u7528 axhub-commentary \u6280\u80FD\u4F5C\u4E3A\u7B2C\u4E09\u65B9\u515C\u5E95\u3002",
     "",
     "\u6280\u80FD\u6765\u6E90\uFF1A",
-    `- axhub-commentary-client\uFF1A${COMMENTARY_CLIENT_SKILL_URL}`,
+    `- axhub-commentary\uFF1A${COMMENTARY_SKILL_URL}`,
     ...resolvedSkillInstallSource ? ["", "\u5BBF\u4E3B\u8865\u5145\u6280\u80FD\u6765\u6E90\uFF1A", resolvedSkillInstallSource] : [],
     "",
     "\u5DE5\u4F5C\u53E3\u5F84\uFF1A\u5148\u7406\u89E3\u9875\u9762\u6279\u6CE8\u548C\u5F53\u524D\u9700\u6C42\uFF1B\u9700\u8981\u591A\u65B9\u6848\u65F6\u5148\u505A\u591A\u65B9\u6848\u63A2\u7D22\uFF0C\u518D\u505A\u65B9\u6848\u5BF9\u6BD4\uFF0C\u6700\u540E\u6536\u655B\u4E3A\u8BBE\u8BA1\u51B3\u7B56\uFF1B\u9700\u8981\u9875\u9762\u5185\u5207\u6362\u65F6\uFF0C\u6309\u8BE5\u6280\u80FD\u91CC\u7684 Commentary / React tweak \u63A5\u5165\u89C4\u8303\u843D\u5730\u3002"
   ].join("\n");
 }
+function buildSkillInstallPrompt(skillInstallSource) {
+  const resolvedSkillInstallSource = typeof skillInstallSource === "string" && skillInstallSource.trim() ? skillInstallSource.trim() : "";
+  return [
+    "\u8BF7\u5C06 axhub-commentary \u6280\u80FD\u5B89\u88C5\u5230\u5F53\u524D\u9879\u76EE\u4E2D\uFF08\u9879\u76EE\u7EA7\u5B89\u88C5\uFF0C\u4E0D\u8981\u5B89\u88C5\u5230\u5168\u5C40\u76EE\u5F55\uFF09\u3002",
+    "",
+    "\u6280\u80FD\u5165\u53E3\uFF1A",
+    COMMENTARY_SKILL_URL,
+    "",
+    "\u5B89\u88C5\u8981\u6C42\uFF1A",
+    "1. \u4F18\u5148\u9075\u5FAA\u5F53\u524D\u9879\u76EE\u5DF2\u6709\u7684\u6280\u80FD\u76EE\u5F55\u7EA6\u5B9A\uFF1B\u5982\u679C\u6CA1\u6709\u7EA6\u5B9A\uFF0C\u5B89\u88C5\u5230 `.agents/skills/axhub-commentary`\u3002",
+    "2. \u8BFB\u53D6\u4E0A\u8FF0 SKILL.md\uFF0C\u5E76\u5C06\u5B83\u5F15\u7528\u7684 `references/` \u7B49\u5FC5\u8981\u6587\u4EF6\u6309\u539F\u76EE\u5F55\u7ED3\u6784\u4E00\u5E76\u5B89\u88C5\uFF0C\u4E0D\u80FD\u53EA\u4FDD\u5B58\u5165\u53E3\u6587\u4EF6\u3002",
+    "3. \u5982\u679C\u9879\u76EE\u5185\u5DF2\u5B58\u5728\u540C\u540D\u6280\u80FD\uFF0C\u66F4\u65B0\u4E3A\u7EBF\u4E0A\u6700\u65B0\u5185\u5BB9\uFF0C\u4E0D\u8981\u91CD\u590D\u521B\u5EFA\u3002",
+    "4. \u5B8C\u6210\u540E\u68C0\u67E5\u6587\u4EF6\u53EF\u8BFB\u53D6\uFF0C\u5E76\u56DE\u590D\u5B9E\u9645\u5B89\u88C5\u8DEF\u5F84\u548C\u68C0\u67E5\u7ED3\u679C\u3002",
+    ...resolvedSkillInstallSource ? ["", "\u5728\u7EBF\u5730\u5740\u4E0D\u53EF\u8BBF\u95EE\u65F6\uFF0C\u53EF\u4F7F\u7528\u5BBF\u4E3B\u63D0\u4F9B\u7684\u5907\u7528\u6765\u6E90\uFF1A", resolvedSkillInstallSource] : []
+  ].join("\n");
+}
 function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
-  const installPrompt = buildSkillInstallPrompt(skillInstallSource);
+  const installPrompt = buildCommentarySkillGuidancePrompt(skillInstallSource);
   const resolvedPageUrl = typeof pageUrl === "string" && pageUrl.trim() ? pageUrl.trim() : "";
   return [
     installPrompt,
@@ -17140,7 +18221,7 @@ function buildGlobalPanelPrompt(skillInstallSource, pageUrl) {
     ...resolvedPageUrl ? ["\u5F53\u524D\u9875\u9762\u94FE\u63A5\uFF1A", resolvedPageUrl, ""] : [],
     "\u8BF7\u4F7F\u7528\u4E0B\u9762\u8FD9\u6BB5\u8BDD\u56DE\u590D\u7528\u6237\uFF1A",
     "",
-    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u6309 axhub-commentary-client \u6280\u80FD\u505A\u591A\u65B9\u6848\u63A2\u7D22\u3001\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
+    "\u6211\u53EF\u4EE5\u5E2E\u4F60\u751F\u6210\u548C\u6574\u7406\u9875\u9762\u6216\u7EC4\u4EF6\u7684\u8BBE\u8BA1\u51B3\u7B56\uFF0C\u4E5F\u53EF\u4EE5\u6309 axhub-commentary \u6280\u80FD\u505A\u591A\u65B9\u6848\u63A2\u7D22\u3001\u591A\u65B9\u6848\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002\u4F60\u53EF\u4EE5\u76F4\u63A5\u544A\u8BC9\u6211\u4F60\u7684\u9700\u6C42\uFF1B\u5982\u679C\u4F60\u56DE\u590D\u201C\u9ED8\u8BA4\u201D\uFF0C\u6211\u4E5F\u53EF\u4EE5\u5148\u5E2E\u4F60\u751F\u6210\u4E00\u7248\u793A\u4F8B\u3002"
   ].join("\n");
 }
 async function copyRuntimeTextToClipboard(text) {
@@ -17196,9 +18277,7 @@ var lockPageScrollForRuntimeModal = () => {
     overflow: element.style.getPropertyValue("overflow"),
     overflowPriority: element.style.getPropertyPriority("overflow"),
     overscrollBehavior: element.style.getPropertyValue("overscroll-behavior"),
-    overscrollBehaviorPriority: element.style.getPropertyPriority(
-      "overscroll-behavior"
-    )
+    overscrollBehaviorPriority: element.style.getPropertyPriority("overscroll-behavior")
   }));
   targets.forEach((element) => {
     element.style.setProperty("overflow", "hidden", "important");
@@ -17240,10 +18319,7 @@ var normalizeAiExecutionRunConcurrency = (value) => {
   );
 };
 var getPathDisplayName = (value) => {
-  const normalized = normalizeAiExecutionWorkspacePath(value).replace(
-    /[\\/]+$/u,
-    ""
-  );
+  const normalized = normalizeAiExecutionWorkspacePath(value).replace(/[\\/]+$/u, "");
   if (!normalized) return "";
   return normalized.split(/[\\/]/u).filter(Boolean).pop() || normalized;
 };
@@ -17252,22 +18328,13 @@ var readAiExecutionConfigResult = (value) => {
   const record = value;
   const provider = normalizeAiExecutionProvider(record.provider);
   const workspacePath = normalizeAiExecutionWorkspacePath(record.workspacePath);
-  const hasRunConcurrency = Object.prototype.hasOwnProperty.call(
-    record,
-    "runConcurrency"
-  );
-  const runConcurrency = normalizeAiExecutionRunConcurrency(
-    record.runConcurrency
-  );
-  const defaultWorkspacePath = normalizeAiExecutionWorkspacePath(
-    record.defaultWorkspacePath
-  );
+  const hasRunConcurrency = Object.prototype.hasOwnProperty.call(record, "runConcurrency");
+  const runConcurrency = normalizeAiExecutionRunConcurrency(record.runConcurrency);
+  const defaultWorkspacePath = normalizeAiExecutionWorkspacePath(record.defaultWorkspacePath);
   const providerOptions = Array.isArray(record.providerOptions) ? record.providerOptions.map((item) => {
     if (!item || typeof item !== "object") return null;
     const itemRecord = item;
-    const optionValue = normalizeAiExecutionWorkspacePath(
-      itemRecord.value
-    );
+    const optionValue = normalizeAiExecutionWorkspacePath(itemRecord.value);
     if (!optionValue) return null;
     const label = normalizeAiExecutionWorkspacePath(itemRecord.label) || optionValue;
     return {
@@ -17295,9 +18362,7 @@ var readLocalDirectoryBrowserResult = (value) => {
     if (!item || typeof item !== "object") return null;
     const itemRecord = item;
     const name = normalizeAiExecutionWorkspacePath(itemRecord.name);
-    const directoryPath = normalizeAiExecutionWorkspacePath(
-      itemRecord.path
-    );
+    const directoryPath = normalizeAiExecutionWorkspacePath(itemRecord.path);
     return name && directoryPath ? { name, path: directoryPath } : null;
   }).filter((item) => Boolean(item)) : [];
   const roots = Array.isArray(record.roots) ? record.roots.map((item) => normalizeAiExecutionWorkspacePath(item)).filter(Boolean) : [];
@@ -17309,1663 +18374,1079 @@ var readLocalDirectoryBrowserResult = (value) => {
     directories
   };
 };
-var PropertyPanelView = import_react14.default.forwardRef(function PropertyPanelView2(props, ref) {
-  const {
-    options,
-    currentTarget,
-    uiMode,
-    toolMinimized,
-    selectionModeActive,
-    propertyPanelVisible = true,
-    propertyPanelOpen,
-    inlineTextEditing = false,
-    uiSettings: propUiSettings,
-    interactionProfile,
-    agentVisualState,
-    agentProviderAvailabilities,
-    onPropertyPanelOpenChange,
-    onAgentVisualStateChange,
-    onUiSettingsChange,
-    onRefreshAgentProviderAvailabilities,
-    onHoverSelectionSuppressedChange,
-    onSelectionInteractionLockChange,
-    onUiModeChange,
-    onToolMinimizedChange,
-    onSelectionModeActiveChange,
-    onTargetChange,
-    onRefreshNoteState,
-    onInlineTextEditingChange,
-    onBlockingLayerOpenChange,
-    canEditText,
-    draftText,
-    textDirty,
-    onTextDraftChange,
-    onCancelText,
-    onConfirmText,
-    images,
-    onRemoveImage,
-    onNotePasteCapture,
-    canEditNote,
-    draftNote,
-    noteDirty,
-    onDraftChange,
-    onClearCurrentElementEdits,
-    onConfirmNote,
-    onDismissSelection
-  } = props;
-  const toolbarMode = props.toolbarMode ?? options.toolbarMode ?? "inline";
-  const isHostToolbarMode = toolbarMode === "host";
-  const hideExecutionControls = Boolean(options.hideExecutionControls);
-  const rootRef = import_react14.default.useRef(null);
-  const pagePanelRef = import_react14.default.useRef(null);
-  const pagePanelBodyRef = import_react14.default.useRef(null);
-  const pagePanelHeaderRef = import_react14.default.useRef(null);
-  const toolbarHeaderRef = import_react14.default.useRef(null);
-  const minimizedButtonRef = import_react14.default.useRef(null);
-  const textComposerRef = import_react14.default.useRef(null);
-  const noteComposerRef = import_react14.default.useRef(null);
-  const inlineTextEditingRef = import_react14.default.useRef(inlineTextEditing);
-  const shortcutCardRefs = import_react14.default.useRef([]);
-  const styleObserverRef = import_react14.default.useRef(null);
-  const styleObserverRafIdRef = import_react14.default.useRef(null);
-  const currentTargetRef = import_react14.default.useRef(currentTarget);
-  const toolbarPositionRef = import_react14.default.useRef(null);
-  const pagePanelPositionRef = import_react14.default.useRef(
-    options.initialPosition ?? null
-  );
-  const onDismissSelectionRef = import_react14.default.useRef(onDismissSelection);
-  const onTargetChangeRef = import_react14.default.useRef(onTargetChange);
-  const hostToolbarListenersRef = import_react14.default.useRef(/* @__PURE__ */ new Set());
-  const [undoCount, setUndoCount] = import_react14.default.useState(0);
-  const [redoCount, setRedoCount] = import_react14.default.useState(0);
-  const [modifiedCount, setModifiedCount] = import_react14.default.useState(
-    Math.max(0, options.getModifiedElementCount?.() ?? 0)
-  );
-  const [actionBusy, setActionBusy] = import_react14.default.useState(false);
-  const [agentPromptSending, setAgentPromptSending] = import_react14.default.useState(false);
-  const [agentPromptInterrupting, setAgentPromptInterrupting] = import_react14.default.useState(false);
-  const [agentWakeChecking, setAgentWakeChecking] = import_react14.default.useState(false);
-  const [sessionActivityCardOpen, setSessionActivityCardOpen] = import_react14.default.useState(false);
-  const [sessionActivities, setSessionActivities] = import_react14.default.useState([]);
-  const [toolbarPosition, setToolbarPosition] = import_react14.default.useState(null);
-  const [pagePanelPosition, setPagePanelPosition] = import_react14.default.useState(options.initialPosition ?? null);
-  const [toolbarDragging, setToolbarDragging] = import_react14.default.useState(false);
-  const [viewportSize, setViewportSize] = import_react14.default.useState(() => ({
-    width: window.innerWidth,
-    height: window.innerHeight
-  }));
-  const [compactAnchorRect, setCompactAnchorRect] = import_react14.default.useState(null);
-  const [shortcutDialogOpen, setShortcutDialogOpen] = import_react14.default.useState(false);
-  const [shortcutDraft, setShortcutDraft] = import_react14.default.useState(
-    options.getCommentShortcutSettings?.() ?? {
-      ...DEFAULT_COMMENT_SHORTCUT_SETTINGS
-    }
-  );
-  const [capturingShortcutIndex, setCapturingShortcutIndex] = import_react14.default.useState(null);
-  const [panelRefreshKey, setPanelRefreshKey] = import_react14.default.useState(0);
-  const [tweakRevision, setTweakRevision] = import_react14.default.useState(0);
-  const [agentPromptSendingElementKey, setAgentPromptSendingElementKey] = import_react14.default.useState(null);
-  const [settingsPopoverOpen, setSettingsPopoverOpen] = import_react14.default.useState(false);
-  const [commentarySkillDialogOpen, setCommentarySkillDialogOpen] = import_react14.default.useState(false);
-  const [commentarySkillDraftIds, setCommentarySkillDraftIds] = import_react14.default.useState(
-    () => resolveCommentarySkillIds(
-      options.commentarySelectedSkillIds,
-      mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
-      options.commentarySkillSettingsConfigured === true
-    )
-  );
-  const [commentarySkillSaving, setCommentarySkillSaving] = import_react14.default.useState(false);
-  const [keyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = import_react14.default.useState(false);
-  const [annotationToolbarTick, setAnnotationToolbarTick] = import_react14.default.useState(0);
-  const [agentProviderRefreshPending, setAgentProviderRefreshPending] = import_react14.default.useState(false);
-  const uiSettings = import_react14.default.useMemo(
-    () => options.getUiSettings?.() ?? propUiSettings,
-    [options, panelRefreshKey, propUiSettings]
-  );
-  const commentarySkillOptions = import_react14.default.useMemo(
-    () => mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
-    [options.commentarySkillOptions]
-  );
-  const showCommentarySkillSettings = commentarySkillOptions.length > 0 && (Boolean(options.onHostToolbarAction) || (options.commentarySkillOptions?.length ?? 0) > 0);
-  const [aiExecutionProvider, setAiExecutionProvider] = import_react14.default.useState(
-    () => normalizeAiExecutionProvider(options.aiExecutionProvider)
-  );
-  const [aiExecutionWorkspacePath, setAiExecutionWorkspacePath] = import_react14.default.useState(
-    () => normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
-  );
-  const [aiExecutionRunConcurrency, setAiExecutionRunConcurrency] = import_react14.default.useState(
-    () => normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
-  );
-  const [aiExecutionProviderOptionsState, setAiExecutionProviderOptionsState] = import_react14.default.useState(
-    () => [...AI_EXECUTION_PROVIDER_OPTIONS]
-  );
-  const [aiExecutionConfigBusy, setAiExecutionConfigBusy] = import_react14.default.useState(false);
-  const [directoryPickerOpen, setDirectoryPickerOpen] = import_react14.default.useState(false);
-  const [directoryPickerBusy, setDirectoryPickerBusy] = import_react14.default.useState(false);
-  const [directoryPickerError, setDirectoryPickerError] = import_react14.default.useState("");
-  const [directoryPickerState, setDirectoryPickerState] = import_react14.default.useState(null);
-  const agentProviderAvailabilityMap = import_react14.default.useMemo(
-    () => new Map(
-      agentProviderAvailabilities.map(
-        (item) => [item.provider, item]
-      )
-    ),
-    [agentProviderAvailabilities]
-  );
-  import_react14.default.useEffect(() => {
-    setAiExecutionProvider(
-      normalizeAiExecutionProvider(options.aiExecutionProvider)
+var PropertyPanelView = import_react14.default.forwardRef(
+  function PropertyPanelView2(props, ref) {
+    const {
+      options,
+      currentTarget,
+      uiMode,
+      toolMinimized,
+      selectionModeActive,
+      propertyPanelVisible = true,
+      propertyPanelOpen,
+      inlineTextEditing = false,
+      uiSettings: propUiSettings,
+      interactionProfile,
+      agentVisualState,
+      agentProviderAvailabilities,
+      onPropertyPanelOpenChange,
+      onAgentVisualStateChange,
+      onUiSettingsChange,
+      onRefreshAgentProviderAvailabilities,
+      onHoverSelectionSuppressedChange,
+      onSelectionInteractionLockChange,
+      onUiModeChange,
+      onToolMinimizedChange,
+      onSelectionModeActiveChange,
+      onTargetChange,
+      onRefreshNoteState,
+      onInlineTextEditingChange,
+      onBlockingLayerOpenChange,
+      canEditText,
+      draftText,
+      textDirty,
+      onTextDraftChange,
+      onCancelText,
+      onConfirmText,
+      images,
+      onRemoveImage,
+      onNotePasteCapture,
+      canEditNote,
+      draftNote,
+      noteDirty,
+      onDraftChange,
+      onClearCurrentElementEdits,
+      onConfirmNote,
+      onDismissSelection
+    } = props;
+    const toolbarMode = props.toolbarMode ?? options.toolbarMode ?? "inline";
+    const isHostToolbarMode = toolbarMode === "host";
+    const hideExecutionControls = Boolean(options.hideExecutionControls);
+    const rootRef = import_react14.default.useRef(null);
+    const pagePanelRef = import_react14.default.useRef(null);
+    const pagePanelBodyRef = import_react14.default.useRef(null);
+    const pagePanelHeaderRef = import_react14.default.useRef(null);
+    const toolbarHeaderRef = import_react14.default.useRef(null);
+    const minimizedButtonRef = import_react14.default.useRef(null);
+    const textComposerRef = import_react14.default.useRef(null);
+    const noteComposerRef = import_react14.default.useRef(null);
+    const inlineTextEditingRef = import_react14.default.useRef(inlineTextEditing);
+    const shortcutCardRefs = import_react14.default.useRef([]);
+    const styleObserverRef = import_react14.default.useRef(null);
+    const styleObserverRafIdRef = import_react14.default.useRef(null);
+    const currentTargetRef = import_react14.default.useRef(currentTarget);
+    const toolbarPositionRef = import_react14.default.useRef(null);
+    const pagePanelPositionRef = import_react14.default.useRef(
+      options.initialPosition ?? null
     );
-  }, [options.aiExecutionProvider]);
-  import_react14.default.useEffect(() => {
-    setAiExecutionWorkspacePath(
-      normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
+    const onDismissSelectionRef = import_react14.default.useRef(onDismissSelection);
+    const onTargetChangeRef = import_react14.default.useRef(onTargetChange);
+    const hostToolbarListenersRef = import_react14.default.useRef(
+      /* @__PURE__ */ new Set()
     );
-  }, [options.aiExecutionWorkspacePath]);
-  import_react14.default.useEffect(() => {
-    setAiExecutionRunConcurrency(
-      normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
+    const [undoCount, setUndoCount] = import_react14.default.useState(0);
+    const [redoCount, setRedoCount] = import_react14.default.useState(0);
+    const [modifiedCount, setModifiedCount] = import_react14.default.useState(
+      Math.max(0, options.getModifiedElementCount?.() ?? 0)
     );
-  }, [options.aiExecutionRunConcurrency]);
-  import_react14.default.useEffect(() => {
-    if (!Array.isArray(options.aiExecutionProviderOptions)) return;
-    const nextOptions = options.aiExecutionProviderOptions.map((item) => {
-      const value = normalizeAiExecutionWorkspacePath(item?.value);
-      if (!value) return null;
-      return {
-        value,
-        label: normalizeAiExecutionWorkspacePath(item?.label) || value,
-        disabled: item?.disabled === true
-      };
-    }).filter(
-      (item) => Boolean(item)
+    const [actionBusy, setActionBusy] = import_react14.default.useState(false);
+    const [agentPromptSending, setAgentPromptSending] = import_react14.default.useState(false);
+    const [agentPromptInterrupting, setAgentPromptInterrupting] = import_react14.default.useState(false);
+    const [agentWakeChecking, setAgentWakeChecking] = import_react14.default.useState(false);
+    const [sessionActivityCardOpen, setSessionActivityCardOpen] = import_react14.default.useState(false);
+    const [sessionActivities, setSessionActivities] = import_react14.default.useState([]);
+    const [toolbarPosition, setToolbarPosition] = import_react14.default.useState(null);
+    const [pagePanelPosition, setPagePanelPosition] = import_react14.default.useState(
+      options.initialPosition ?? null
     );
-    if (nextOptions.length > 0) {
-      setAiExecutionProviderOptionsState(nextOptions);
-    }
-  }, [options.aiExecutionProviderOptions]);
-  import_react14.default.useEffect(() => {
-    inlineTextEditingRef.current = inlineTextEditing;
-  }, [inlineTextEditing]);
-  import_react14.default.useEffect(() => {
-    onDismissSelectionRef.current = onDismissSelection;
-  }, [onDismissSelection]);
-  import_react14.default.useEffect(() => {
-    onTargetChangeRef.current = onTargetChange;
-  }, [onTargetChange]);
-  currentTargetRef.current = currentTarget;
-  import_react14.default.useEffect(() => {
-    if (!options.subscribeTweak) return;
-    return options.subscribeTweak(() => {
-      setTweakRevision((value) => value + 1);
-    });
-  }, [options]);
-  const pageTweakEntries = import_react14.default.useMemo(
-    () => options.getPageTweakEntries?.() ?? [],
-    [options, tweakRevision]
-  );
-  const hasPageTweakEntries = pageTweakEntries.length > 0;
-  const showPropertyPanelToolbarButton = propertyPanelVisible && hasPageTweakEntries;
-  const showPropertyPanelSettingsItem = propertyPanelVisible && !showPropertyPanelToolbarButton;
-  const {
-    currentTask: currentAgentTask,
-    currentTaskRunning,
-    currentTaskSessionReady,
-    currentTaskTerminal,
-    pageTaskRunning,
-    pageTaskSessionReady,
-    hasReusableConversation,
-    effectiveVisualState
-  } = deriveAgentUiState({
-    currentTarget,
-    visualState: uiSettings.agentAwake ? "awake" : agentVisualState,
-    getElementAgentTaskState: options.getElementAgentTaskState,
-    getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
-    getHasReusableAgentConversation: options.getHasReusableAgentConversation,
-    getAgentBridgeConnected: options.getAgentBridgeConnected
-  });
-  const visibleExecutionTerminalTaskCount = (options.getVisibleElementAgentTaskStates?.() ?? []).filter(
-    (task) => task.status === "completed" || task.status === "error"
-  ).length;
-  const visibleTerminalTaskCount = hideExecutionControls ? 0 : visibleExecutionTerminalTaskCount;
-  const currentAgentConversation = options.getCurrentAgentConversationState?.() ?? null;
-  const sessionActivityTarget = import_react14.default.useMemo(
-    () => resolveSessionActivityTarget({
-      requestId: currentAgentTask?.requestId ?? null,
-      sessionId: currentAgentTask?.sessionId ?? null,
-      provider: currentAgentTask?.provider ?? null,
-      conversationSessionId: currentAgentConversation?.sessionId ?? null,
-      conversationProvider: currentAgentConversation?.provider ?? null
-    }),
-    [
-      currentAgentConversation?.provider,
-      currentAgentConversation?.sessionId,
-      currentAgentTask?.provider,
-      currentAgentTask?.requestId,
-      currentAgentTask?.sessionId
-    ]
-  );
-  const activeTaskCanInterrupt = Boolean(
-    currentTarget ? options.getCanAbortAgentPrompt?.(currentTarget) : false
-  );
-  const pageTaskCanInterrupt = Boolean(options.getCanAbortAgentPrompt?.(null));
-  const currentTaskIsSending = Boolean(
-    agentPromptSending && currentAgentTask && agentPromptSendingElementKey && currentAgentTask.elementKey === agentPromptSendingElementKey
-  );
-  import_react14.default.useEffect(() => {
-    if (!agentPromptSending) return;
-    if (currentTaskRunning && currentTaskSessionReady) {
-      setAgentPromptSending(false);
-      setAgentPromptSendingElementKey(null);
-    }
-  }, [currentTaskRunning, currentTaskSessionReady, agentPromptSending]);
-  import_react14.default.useEffect(() => {
-    if (!sessionActivityCardOpen) {
-      setSessionActivities([]);
-      return;
-    }
-    if (!options.subscribeSessionActivity || !sessionActivityTarget) {
-      setSessionActivities([]);
-      return;
-    }
-    setSessionActivities([]);
-    return options.subscribeSessionActivity(sessionActivityTarget, (item) => {
-      setSessionActivities(
-        (previous) => appendRecentSessionActivities(previous, item)
-      );
-    });
-  }, [options, sessionActivityCardOpen, sessionActivityTarget]);
-  const visibleSessionActivities = import_react14.default.useMemo(
-    () => limitVisibleSessionActivities(sessionActivities),
-    [sessionActivities]
-  );
-  const disconnectStyleObserver = import_react14.default.useCallback(() => {
-    if (styleObserverRafIdRef.current !== null) {
-      window.cancelAnimationFrame(styleObserverRafIdRef.current);
-      styleObserverRafIdRef.current = null;
-    }
-    try {
-      styleObserverRef.current?.disconnect();
-    } catch {
-    }
-    styleObserverRef.current = null;
-  }, [options.skillInstallSource]);
-  const requestPanelRefresh = import_react14.default.useCallback(() => {
-    setPanelRefreshKey((value) => value + 1);
-  }, [options.skillInstallSource]);
-  const scheduleLiveStyleRefresh = import_react14.default.useCallback(() => {
-    if (styleObserverRafIdRef.current !== null) return;
-    styleObserverRafIdRef.current = window.requestAnimationFrame(() => {
-      styleObserverRafIdRef.current = null;
-      requestPanelRefresh();
-    });
-  }, [requestPanelRefresh]);
-  const connectStyleObserver = import_react14.default.useCallback(
-    (element) => {
-      disconnectStyleObserver();
-      if (!element || !element.isConnected || typeof MutationObserver === "undefined")
-        return;
-      const observer = new MutationObserver(() => {
-        if (currentTargetRef.current !== element) return;
-        scheduleLiveStyleRefresh();
-      });
-      try {
-        observer.observe(element, {
-          attributes: true,
-          attributeFilter: ["style"]
-        });
-        styleObserverRef.current = observer;
-      } catch {
-        try {
-          observer.disconnect();
-        } catch {
-        }
+    const [toolbarDragging, setToolbarDragging] = import_react14.default.useState(false);
+    const [viewportSize, setViewportSize] = import_react14.default.useState(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight
+    }));
+    const [compactAnchorRect, setCompactAnchorRect] = import_react14.default.useState(null);
+    const [shortcutDialogOpen, setShortcutDialogOpen] = import_react14.default.useState(false);
+    const [shortcutDraft, setShortcutDraft] = import_react14.default.useState(
+      options.getCommentShortcutSettings?.() ?? {
+        ...DEFAULT_COMMENT_SHORTCUT_SETTINGS
       }
-    },
-    [disconnectStyleObserver, scheduleLiveStyleRefresh]
-  );
-  const clampToViewport = import_react14.default.useCallback(
-    (position, sizeOverride) => {
-      const root = rootRef.current;
-      const rect = root?.getBoundingClientRect();
-      const width = sizeOverride?.width ?? rect?.width ?? (toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH);
-      const height = sizeOverride?.height ?? rect?.height ?? (toolMinimized ? COMPACT_TOOL_SIZE : 72);
-      return clampFloatingPosition({
-        position,
-        size: { width, height },
-        viewport: viewportSize,
-        margin: FLOATING_CLAMP_MARGIN
+    );
+    const [capturingShortcutIndex, setCapturingShortcutIndex] = import_react14.default.useState(null);
+    const [panelRefreshKey, setPanelRefreshKey] = import_react14.default.useState(0);
+    const [tweakRevision, setTweakRevision] = import_react14.default.useState(0);
+    const [agentPromptSendingElementKey, setAgentPromptSendingElementKey] = import_react14.default.useState(null);
+    const [settingsPopoverOpen, setSettingsPopoverOpen] = import_react14.default.useState(false);
+    const [skillInstallPromptCopied, setSkillInstallPromptCopied] = import_react14.default.useState(false);
+    const skillInstallFeedbackTimerRef = import_react14.default.useRef(null);
+    const [aiSettingsDialogOpen, setAiSettingsDialogOpen] = import_react14.default.useState(false);
+    const [commentarySkillDialogOpen, setCommentarySkillDialogOpen] = import_react14.default.useState(false);
+    const [commentarySkillDraftIds, setCommentarySkillDraftIds] = import_react14.default.useState(
+      () => resolveCommentarySkillIds(
+        options.commentarySelectedSkillIds,
+        mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
+        options.commentarySkillSettingsConfigured === true
+      )
+    );
+    const [commentarySkillDraftOptions, setCommentarySkillDraftOptions] = import_react14.default.useState(() => mergeCommentarySkillOptions(options.commentarySkillOptions ?? []));
+    const [commentarySkillEditorDraft, setCommentarySkillEditorDraft] = import_react14.default.useState(null);
+    const [commentarySkillEditorError, setCommentarySkillEditorError] = import_react14.default.useState("");
+    const [commentarySkillSaving, setCommentarySkillSaving] = import_react14.default.useState(false);
+    const [keyboardShortcutsDialogOpen, setKeyboardShortcutsDialogOpen] = import_react14.default.useState(false);
+    const [annotationToolbarTick, setAnnotationToolbarTick] = import_react14.default.useState(0);
+    const [agentProviderRefreshPending, setAgentProviderRefreshPending] = import_react14.default.useState(false);
+    const uiSettings = import_react14.default.useMemo(
+      () => options.getUiSettings?.() ?? propUiSettings,
+      [options, panelRefreshKey, propUiSettings]
+    );
+    const commentarySkillOptions = import_react14.default.useMemo(
+      () => mergeCommentarySkillOptions(options.commentarySkillOptions ?? []),
+      [options.commentarySkillOptions]
+    );
+    const showCommentarySkillSettings = commentarySkillOptions.length > 0 && (Boolean(options.onHostToolbarAction) || (options.commentarySkillOptions?.length ?? 0) > 0);
+    const [aiExecutionProvider, setAiExecutionProvider] = import_react14.default.useState(
+      () => normalizeAiExecutionProvider(options.aiExecutionProvider)
+    );
+    const [aiExecutionWorkspacePath, setAiExecutionWorkspacePath] = import_react14.default.useState(
+      () => normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
+    );
+    const [aiExecutionRunConcurrency, setAiExecutionRunConcurrency] = import_react14.default.useState(
+      () => normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
+    );
+    const [aiExecutionProviderOptionsState, setAiExecutionProviderOptionsState] = import_react14.default.useState(() => [...AI_EXECUTION_PROVIDER_OPTIONS]);
+    const [aiExecutionConfigBusy, setAiExecutionConfigBusy] = import_react14.default.useState(false);
+    const [directoryPickerOpen, setDirectoryPickerOpen] = import_react14.default.useState(false);
+    const [directoryPickerBusy, setDirectoryPickerBusy] = import_react14.default.useState(false);
+    const [directoryPickerError, setDirectoryPickerError] = import_react14.default.useState("");
+    const [directoryPickerState, setDirectoryPickerState] = import_react14.default.useState(null);
+    const [directoryPickerPathInput, setDirectoryPickerPathInput] = import_react14.default.useState("");
+    const [directoryPickerRecentWorkspaces, setDirectoryPickerRecentWorkspaces] = import_react14.default.useState([]);
+    const [directoryPickerRecentOpen, setDirectoryPickerRecentOpen] = import_react14.default.useState(false);
+    const [directoryPickerRecentQuery, setDirectoryPickerRecentQuery] = import_react14.default.useState("");
+    const [directoryPickerRecentActiveIndex, setDirectoryPickerRecentActiveIndex] = import_react14.default.useState(0);
+    const [directoryPickerRecentError, setDirectoryPickerRecentError] = import_react14.default.useState("");
+    const directoryPickerPathFieldRef = import_react14.default.useRef(null);
+    const directoryPickerBreadcrumbRef = import_react14.default.useRef(null);
+    const agentProviderAvailabilityMap = import_react14.default.useMemo(
+      () => new Map(agentProviderAvailabilities.map((item) => [item.provider, item])),
+      [agentProviderAvailabilities]
+    );
+    import_react14.default.useEffect(() => {
+      setAiExecutionProvider(normalizeAiExecutionProvider(options.aiExecutionProvider));
+    }, [options.aiExecutionProvider]);
+    import_react14.default.useEffect(() => {
+      setAiExecutionWorkspacePath(
+        normalizeAiExecutionWorkspacePath(options.aiExecutionWorkspacePath)
+      );
+    }, [options.aiExecutionWorkspacePath]);
+    import_react14.default.useEffect(() => {
+      setAiExecutionRunConcurrency(
+        normalizeAiExecutionRunConcurrency(options.aiExecutionRunConcurrency)
+      );
+    }, [options.aiExecutionRunConcurrency]);
+    import_react14.default.useEffect(
+      () => () => {
+        if (skillInstallFeedbackTimerRef.current !== null) {
+          window.clearTimeout(skillInstallFeedbackTimerRef.current);
+        }
+      },
+      []
+    );
+    import_react14.default.useEffect(() => {
+      if (!Array.isArray(options.aiExecutionProviderOptions)) return;
+      const nextOptions = options.aiExecutionProviderOptions.map((item) => {
+        const value = normalizeAiExecutionWorkspacePath(item?.value);
+        if (!value) return null;
+        return {
+          value,
+          label: normalizeAiExecutionWorkspacePath(item?.label) || value,
+          disabled: item?.disabled === true
+        };
+      }).filter(
+        (item) => Boolean(item)
+      );
+      if (nextOptions.length > 0) {
+        setAiExecutionProviderOptionsState(nextOptions);
+      }
+    }, [options.aiExecutionProviderOptions]);
+    import_react14.default.useEffect(() => {
+      inlineTextEditingRef.current = inlineTextEditing;
+    }, [inlineTextEditing]);
+    import_react14.default.useEffect(() => {
+      onDismissSelectionRef.current = onDismissSelection;
+    }, [onDismissSelection]);
+    import_react14.default.useEffect(() => {
+      onTargetChangeRef.current = onTargetChange;
+    }, [onTargetChange]);
+    currentTargetRef.current = currentTarget;
+    import_react14.default.useEffect(() => {
+      if (!options.subscribeTweak) return;
+      return options.subscribeTweak(() => {
+        setTweakRevision((value) => value + 1);
       });
-    },
-    [toolMinimized, viewportSize]
-  );
-  const applyToolbarPosition = import_react14.default.useCallback(
-    (nextPosition) => {
-      toolbarPositionRef.current = nextPosition ? clampToViewport(nextPosition, {
-        width: COMPACT_TOOL_SIZE,
-        height: COMPACT_TOOL_SIZE
-      }) : null;
-      setToolbarPosition(toolbarPositionRef.current);
-    },
-    [clampToViewport]
-  );
-  const clampPagePanelToViewport = import_react14.default.useCallback(
-    (position, sizeOverride) => {
+    }, [options]);
+    const pageTweakEntries = import_react14.default.useMemo(
+      () => options.getPageTweakEntries?.() ?? [],
+      [options, tweakRevision]
+    );
+    const hasPageTweakEntries = pageTweakEntries.length > 0;
+    const showPropertyPanelToolbarButton = propertyPanelVisible && hasPageTweakEntries;
+    const showPropertyPanelSettingsItem = propertyPanelVisible && !showPropertyPanelToolbarButton;
+    const {
+      currentTask: currentAgentTask,
+      currentTaskRunning,
+      currentTaskSessionReady,
+      currentTaskTerminal,
+      pageTaskRunning,
+      pageTaskSessionReady,
+      hasReusableConversation,
+      effectiveVisualState
+    } = deriveAgentUiState({
+      currentTarget,
+      visualState: uiSettings.agentAwake ? "awake" : agentVisualState,
+      getElementAgentTaskState: options.getElementAgentTaskState,
+      getVisibleElementAgentTaskStates: options.getVisibleElementAgentTaskStates,
+      getHasReusableAgentConversation: options.getHasReusableAgentConversation,
+      getAgentBridgeConnected: options.getAgentBridgeConnected
+    });
+    const visibleExecutionTerminalTaskCount = (options.getVisibleElementAgentTaskStates?.() ?? []).filter((task) => task.status === "completed" || task.status === "error").length;
+    const visibleTerminalTaskCount = hideExecutionControls ? 0 : visibleExecutionTerminalTaskCount;
+    const currentAgentConversation = options.getCurrentAgentConversationState?.() ?? null;
+    const sessionActivityTarget = import_react14.default.useMemo(
+      () => resolveSessionActivityTarget({
+        requestId: currentAgentTask?.requestId ?? null,
+        sessionId: currentAgentTask?.sessionId ?? null,
+        provider: currentAgentTask?.provider ?? null,
+        conversationSessionId: currentAgentConversation?.sessionId ?? null,
+        conversationProvider: currentAgentConversation?.provider ?? null
+      }),
+      [
+        currentAgentConversation?.provider,
+        currentAgentConversation?.sessionId,
+        currentAgentTask?.provider,
+        currentAgentTask?.requestId,
+        currentAgentTask?.sessionId
+      ]
+    );
+    const activeTaskCanInterrupt = Boolean(
+      currentTarget ? options.getCanAbortAgentPrompt?.(currentTarget) : false
+    );
+    const pageTaskCanInterrupt = Boolean(options.getCanAbortAgentPrompt?.(null));
+    const currentTaskIsSending = Boolean(
+      agentPromptSending && currentAgentTask && agentPromptSendingElementKey && currentAgentTask.elementKey === agentPromptSendingElementKey
+    );
+    import_react14.default.useEffect(() => {
+      if (!agentPromptSending) return;
+      if (currentTaskRunning && currentTaskSessionReady) {
+        setAgentPromptSending(false);
+        setAgentPromptSendingElementKey(null);
+      }
+    }, [currentTaskRunning, currentTaskSessionReady, agentPromptSending]);
+    import_react14.default.useEffect(() => {
+      if (!sessionActivityCardOpen) {
+        setSessionActivities([]);
+        return;
+      }
+      if (!options.subscribeSessionActivity || !sessionActivityTarget) {
+        setSessionActivities([]);
+        return;
+      }
+      setSessionActivities([]);
+      return options.subscribeSessionActivity(sessionActivityTarget, (item) => {
+        setSessionActivities((previous) => appendRecentSessionActivities(previous, item));
+      });
+    }, [options, sessionActivityCardOpen, sessionActivityTarget]);
+    const visibleSessionActivities = import_react14.default.useMemo(
+      () => limitVisibleSessionActivities(sessionActivities),
+      [sessionActivities]
+    );
+    const disconnectStyleObserver = import_react14.default.useCallback(() => {
+      if (styleObserverRafIdRef.current !== null) {
+        window.cancelAnimationFrame(styleObserverRafIdRef.current);
+        styleObserverRafIdRef.current = null;
+      }
+      try {
+        styleObserverRef.current?.disconnect();
+      } catch {
+      }
+      styleObserverRef.current = null;
+    }, [options.skillInstallSource]);
+    const requestPanelRefresh = import_react14.default.useCallback(() => {
+      setPanelRefreshKey((value) => value + 1);
+    }, [options.skillInstallSource]);
+    const scheduleLiveStyleRefresh = import_react14.default.useCallback(() => {
+      if (styleObserverRafIdRef.current !== null) return;
+      styleObserverRafIdRef.current = window.requestAnimationFrame(() => {
+        styleObserverRafIdRef.current = null;
+        requestPanelRefresh();
+      });
+    }, [requestPanelRefresh]);
+    const connectStyleObserver = import_react14.default.useCallback(
+      (element) => {
+        disconnectStyleObserver();
+        if (!element || !element.isConnected || typeof MutationObserver === "undefined") return;
+        const observer = new MutationObserver(() => {
+          if (currentTargetRef.current !== element) return;
+          scheduleLiveStyleRefresh();
+        });
+        try {
+          observer.observe(element, {
+            attributes: true,
+            attributeFilter: ["style"]
+          });
+          styleObserverRef.current = observer;
+        } catch {
+          try {
+            observer.disconnect();
+          } catch {
+          }
+        }
+      },
+      [disconnectStyleObserver, scheduleLiveStyleRefresh]
+    );
+    const clampToViewport = import_react14.default.useCallback(
+      (position, sizeOverride) => {
+        const root = rootRef.current;
+        const rect = root?.getBoundingClientRect();
+        const width = sizeOverride?.width ?? rect?.width ?? (toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH);
+        const height = sizeOverride?.height ?? rect?.height ?? (toolMinimized ? COMPACT_TOOL_SIZE : 72);
+        return clampFloatingPosition({
+          position,
+          size: { width, height },
+          viewport: viewportSize,
+          margin: FLOATING_CLAMP_MARGIN
+        });
+      },
+      [toolMinimized, viewportSize]
+    );
+    const applyToolbarPosition = import_react14.default.useCallback(
+      (nextPosition) => {
+        toolbarPositionRef.current = nextPosition ? clampToViewport(nextPosition, {
+          width: COMPACT_TOOL_SIZE,
+          height: COMPACT_TOOL_SIZE
+        }) : null;
+        setToolbarPosition(toolbarPositionRef.current);
+      },
+      [clampToViewport]
+    );
+    const clampPagePanelToViewport = import_react14.default.useCallback(
+      (position, sizeOverride) => {
+        const pagePanel = pagePanelRef.current;
+        const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
+        const size = sizeOverride ?? (rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 });
+        return clampFloatingPosition({
+          position,
+          size,
+          viewport: viewportSize,
+          margin: FLOATING_CLAMP_MARGIN
+        });
+      },
+      [viewportSize]
+    );
+    const applyPanelPosition = import_react14.default.useCallback(
+      (nextPosition) => {
+        pagePanelPositionRef.current = nextPosition ? clampPagePanelToViewport(nextPosition) : null;
+        setPagePanelPosition(pagePanelPositionRef.current);
+        options.onPositionChange?.(pagePanelPositionRef.current);
+      },
+      [clampPagePanelToViewport, options]
+    );
+    const dockPagePanelRight = import_react14.default.useCallback(() => {
       const pagePanel = pagePanelRef.current;
       const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
-      const size = sizeOverride ?? (rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 });
-      return clampFloatingPosition({
-        position,
-        size,
-        viewport: viewportSize,
-        margin: FLOATING_CLAMP_MARGIN
-      });
-    },
-    [viewportSize]
-  );
-  const applyPanelPosition = import_react14.default.useCallback(
-    (nextPosition) => {
-      pagePanelPositionRef.current = nextPosition ? clampPagePanelToViewport(nextPosition) : null;
-      setPagePanelPosition(pagePanelPositionRef.current);
-      options.onPositionChange?.(pagePanelPositionRef.current);
-    },
-    [clampPagePanelToViewport, options]
-  );
-  const dockPagePanelRight = import_react14.default.useCallback(() => {
-    const pagePanel = pagePanelRef.current;
-    const rect = pagePanel ? pagePanel.getBoundingClientRect() : null;
-    const size = rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 };
-    applyPanelPosition(
-      dockFloatingPanelRight({
-        currentPosition: pagePanelPositionRef.current,
-        size,
-        viewport: viewportSize,
-        panelTop: PROPERTY_PANEL_TOP,
-        panelRight: PROPERTY_PANEL_RIGHT,
-        margin: FLOATING_CLAMP_MARGIN
-      })
+      const size = rect ? { width: rect.width, height: rect.height } : { width: PAGE_CONFIG_PANEL_WIDTH, height: 160 };
+      applyPanelPosition(
+        dockFloatingPanelRight({
+          currentPosition: pagePanelPositionRef.current,
+          size,
+          viewport: viewportSize,
+          panelTop: PROPERTY_PANEL_TOP,
+          panelRight: PROPERTY_PANEL_RIGHT,
+          margin: FLOATING_CLAMP_MARGIN
+        })
+      );
+    }, [applyPanelPosition, viewportSize]);
+    const syncPanelMetaState = import_react14.default.useCallback(() => {
+      setModifiedCount(Math.max(0, options.getModifiedElementCount?.() ?? 0));
+    }, [options]);
+    const runAction = import_react14.default.useCallback(
+      async (action) => {
+        if (!action) return;
+        setActionBusy(true);
+        try {
+          return await action();
+        } finally {
+          setActionBusy(false);
+          syncPanelMetaState();
+        }
+      },
+      [syncPanelMetaState]
     );
-  }, [applyPanelPosition, viewportSize]);
-  const syncPanelMetaState = import_react14.default.useCallback(() => {
-    setModifiedCount(Math.max(0, options.getModifiedElementCount?.() ?? 0));
-  }, [options]);
-  const runAction = import_react14.default.useCallback(
-    async (action) => {
-      if (!action) return;
-      setActionBusy(true);
-      try {
-        await action();
-      } finally {
-        setActionBusy(false);
-        syncPanelMetaState();
-      }
-    },
-    [syncPanelMetaState]
-  );
-  const agentAwake = effectiveVisualState === "awake";
-  const wakeAgentForAction = import_react14.default.useCallback(async () => {
-    if (agentWakeChecking) {
-      return false;
-    }
-    if (agentAwake && options.getAgentBridgeConnected?.() !== false) {
-      return true;
-    }
-    if (!options.onWakeAgent) {
-      return options.getAgentBridgeConnected?.() !== false;
-    }
-    setAgentWakeChecking(true);
-    const createWakeTimeout = () => new Promise((resolve) => {
-      window.setTimeout(() => resolve(false), AGENT_WAKE_TIMEOUT_MS);
-    });
-    try {
-      const wakeResult = await Promise.race([
-        options.onWakeAgent(),
-        createWakeTimeout()
-      ]);
-      if (wakeResult !== true) {
-        notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
+    const handleHtmlFileSaveAction = import_react14.default.useCallback(
+      async () => {
+        if (actionBusy || !options.htmlFileSaveEnabled || !options.onHostToolbarAction) return;
+        try {
+          let result = false;
+          await runAction(async () => {
+            result = await options.onHostToolbarAction?.({ type: "save-html-all" });
+            if (result === false) throw new Error("\u5F53\u524D\u5BBF\u4E3B\u65E0\u6CD5\u4FDD\u5B58 HTML \u6587\u4EF6");
+          });
+          const record = result && typeof result === "object" ? result : {};
+          const message3 = typeof record.message === "string" && record.message.trim() ? record.message.trim() : "HTML \u6587\u672C\u548C\u6837\u5F0F\u5DF2\u4FDD\u5B58";
+          notifyRuntimeMessage(record.changed === false ? "info" : "success", message3);
+        } catch (error) {
+          notifyRuntimeMessage(
+            "error",
+            error instanceof Error ? error.message : "HTML \u6587\u4EF6\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5"
+          );
+        }
+      },
+      [actionBusy, options.htmlFileSaveEnabled, options.onHostToolbarAction, runAction]
+    );
+    const agentAwake = effectiveVisualState === "awake";
+    const wakeAgentForAction = import_react14.default.useCallback(async () => {
+      if (agentWakeChecking) {
         return false;
       }
-      onAgentVisualStateChange("awake");
-      return true;
-    } catch {
-      notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
-      return false;
-    } finally {
-      setAgentWakeChecking(false);
-    }
-  }, [agentAwake, agentWakeChecking, onAgentVisualStateChange, options]);
-  const handleConfirmSendPromptToAgent = import_react14.default.useCallback(async () => {
-    if (!options.onSendPromptToAgent) return;
-    const ready = await wakeAgentForAction();
-    if (!ready) return;
-    setAgentPromptSending(true);
-    setAgentPromptSendingElementKey(currentAgentTask?.elementKey ?? null);
-    setAgentPromptInterrupting(false);
-    try {
-      await options.onSendPromptToAgent(currentTarget);
-    } catch {
-    } finally {
-      setAgentPromptSending(false);
-      setAgentPromptInterrupting(false);
-      setAgentPromptSendingElementKey(null);
-      syncPanelMetaState();
-    }
-  }, [
-    currentAgentTask?.elementKey,
-    currentTarget,
-    options,
-    syncPanelMetaState,
-    wakeAgentForAction
-  ]);
-  const handleInterruptSendPromptToAgent = import_react14.default.useCallback(
-    async (target) => {
-      if (!options.onAbortAgentPrompt) return;
-      setAgentPromptInterrupting(true);
-      const createInterruptTimeout = () => new Promise((resolve) => {
-        window.setTimeout(() => resolve(), AGENT_INTERRUPT_TIMEOUT_MS);
+      if (agentAwake && options.getAgentBridgeConnected?.() !== false) {
+        return true;
+      }
+      if (!options.onWakeAgent) {
+        return options.getAgentBridgeConnected?.() !== false;
+      }
+      setAgentWakeChecking(true);
+      const createWakeTimeout = () => new Promise((resolve) => {
+        window.setTimeout(() => resolve(false), AGENT_WAKE_TIMEOUT_MS);
       });
       try {
-        await Promise.race([
-          options.onAbortAgentPrompt(
-            target === void 0 ? currentTarget : target
-          ),
-          createInterruptTimeout()
-        ]);
+        const wakeResult = await Promise.race([options.onWakeAgent(), createWakeTimeout()]);
+        if (wakeResult !== true) {
+          notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
+          return false;
+        }
+        onAgentVisualStateChange("awake");
+        return true;
+      } catch {
+        notifyRuntimeMessage("warning", AGENT_WAKE_FAILURE_MESSAGE);
+        return false;
+      } finally {
+        setAgentWakeChecking(false);
+      }
+    }, [agentAwake, agentWakeChecking, onAgentVisualStateChange, options]);
+    const handleConfirmSendPromptToAgent = import_react14.default.useCallback(async () => {
+      if (!options.onSendPromptToAgent) return;
+      const ready = await wakeAgentForAction();
+      if (!ready) return;
+      setAgentPromptSending(true);
+      setAgentPromptSendingElementKey(currentAgentTask?.elementKey ?? null);
+      setAgentPromptInterrupting(false);
+      try {
+        await options.onSendPromptToAgent(currentTarget);
       } catch {
       } finally {
+        setAgentPromptSending(false);
         setAgentPromptInterrupting(false);
+        setAgentPromptSendingElementKey(null);
+        syncPanelMetaState();
       }
-    },
-    [currentTarget, options]
-  );
-  const restoreTool = import_react14.default.useCallback(() => {
-    setCompactAnchorRect(null);
-    onToolMinimizedChange(false);
-  }, [onToolMinimizedChange]);
-  const minimizeTool = import_react14.default.useCallback(() => {
-    setCompactAnchorRect(null);
-    onToolMinimizedChange(true);
-  }, [onToolMinimizedChange]);
-  const handleTogglePropertyPanel = import_react14.default.useCallback(
-    (nextOpen = !propertyPanelOpen) => {
-      if (nextOpen && toolMinimized) {
-        restoreTool();
-      }
-      onPropertyPanelOpenChange(nextOpen);
-    },
-    [onPropertyPanelOpenChange, propertyPanelOpen, restoreTool, toolMinimized]
-  );
-  const closeShortcutDialog = import_react14.default.useCallback(() => {
-    setShortcutDialogOpen(false);
-    setCapturingShortcutIndex(null);
-    options.onCommentShortcutDialogOpenChange?.(false);
-  }, [options]);
-  const shortcutValidationError = import_react14.default.useMemo(() => {
-    const [first, second] = shortcutDraft.shortcuts;
-    if (first && second && first === second) {
-      return "\u4E24\u4E2A\u5FEB\u6377\u952E\u4E0D\u80FD\u914D\u7F6E\u4E3A\u540C\u4E00\u4E2A\u4FEE\u9970\u952E\u3002";
-    }
-    return "";
-  }, [shortcutDraft.shortcuts]);
-  const showExpandedPanel = !toolMinimized && propertyPanelOpen;
-  const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
-  const previousPageZoomEnabledRef = import_react14.default.useRef(uiSettings.pageZoomEnabled);
-  const previousPageZoomActiveRef = import_react14.default.useRef(pageZoomActive);
-  const handleShortcutDraftChange = import_react14.default.useCallback(
-    (updater) => {
-      setShortcutDraft(
-        (prev) => sanitizeCommentShortcutSettings(updater(prev))
-      );
-    },
-    []
-  );
-  const handleShortcutSave = import_react14.default.useCallback(() => {
-    if (shortcutValidationError) return;
-    const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
-    const currentSettings = sanitizeCommentShortcutSettings(
-      options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS
-    );
-    if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
-      options.onCommentShortcutSettingsChange?.(nextSettings);
-    }
-    closeShortcutDialog();
-  }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
-  import_react14.default.useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-    setToolbarDragging(false);
-    const updatePosition = (nextPosition) => {
-      setCompactAnchorRect(null);
-      applyToolbarPosition(nextPosition);
-    };
-    if (toolMinimized) {
-      const handle = minimizedButtonRef.current;
-      if (!handle) return;
-      return installFloatingDrag({
-        handleEl: handle,
-        targetEl: root,
-        clampMargin: FLOATING_CLAMP_MARGIN,
-        onPositionChange: updatePosition,
-        moveThresholdPx: isMobileDevice() ? 8 : 3,
-        onDragStateChange: (active) => {
-          setToolbarDragging(active);
+    }, [
+      currentAgentTask?.elementKey,
+      currentTarget,
+      options,
+      syncPanelMetaState,
+      wakeAgentForAction
+    ]);
+    const handleInterruptSendPromptToAgent = import_react14.default.useCallback(
+      async (target) => {
+        if (!options.onAbortAgentPrompt) return;
+        setAgentPromptInterrupting(true);
+        const createInterruptTimeout = () => new Promise((resolve) => {
+          window.setTimeout(() => resolve(), AGENT_INTERRUPT_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([
+            options.onAbortAgentPrompt(target === void 0 ? currentTarget : target),
+            createInterruptTimeout()
+          ]);
+        } catch {
+        } finally {
+          setAgentPromptInterrupting(false);
         }
-      });
-    }
-    const handles = [toolbarHeaderRef.current].filter(
-      (handle) => Boolean(handle)
+      },
+      [currentTarget, options]
     );
-    if (handles.length === 0) return;
-    const cleanups = handles.map(
-      (handle) => installFloatingDrag({
-        handleEl: handle,
-        targetEl: root,
+    const restoreTool = import_react14.default.useCallback(() => {
+      setCompactAnchorRect(null);
+      onToolMinimizedChange(false);
+    }, [onToolMinimizedChange]);
+    const minimizeTool = import_react14.default.useCallback(() => {
+      setCompactAnchorRect(null);
+      onToolMinimizedChange(true);
+    }, [onToolMinimizedChange]);
+    const handleTogglePropertyPanel = import_react14.default.useCallback(
+      (nextOpen = !propertyPanelOpen) => {
+        if (nextOpen && toolMinimized) {
+          restoreTool();
+        }
+        onPropertyPanelOpenChange(nextOpen);
+      },
+      [onPropertyPanelOpenChange, propertyPanelOpen, restoreTool, toolMinimized]
+    );
+    const closeShortcutDialog = import_react14.default.useCallback(() => {
+      setShortcutDialogOpen(false);
+      setCapturingShortcutIndex(null);
+      options.onCommentShortcutDialogOpenChange?.(false);
+    }, [options]);
+    const shortcutValidationError = import_react14.default.useMemo(() => {
+      const [first, second] = shortcutDraft.shortcuts;
+      if (first && second && first === second) {
+        return "\u4E24\u4E2A\u5FEB\u6377\u952E\u4E0D\u80FD\u914D\u7F6E\u4E3A\u540C\u4E00\u4E2A\u4FEE\u9970\u952E\u3002";
+      }
+      return "";
+    }, [shortcutDraft.shortcuts]);
+    const showExpandedPanel = !toolMinimized && propertyPanelOpen;
+    const pageZoomActive = showExpandedPanel && uiSettings.pageZoomEnabled;
+    const previousPageZoomEnabledRef = import_react14.default.useRef(uiSettings.pageZoomEnabled);
+    const previousPageZoomActiveRef = import_react14.default.useRef(pageZoomActive);
+    const handleShortcutDraftChange = import_react14.default.useCallback(
+      (updater) => {
+        setShortcutDraft((prev) => sanitizeCommentShortcutSettings(updater(prev)));
+      },
+      []
+    );
+    const handleShortcutSave = import_react14.default.useCallback(() => {
+      if (shortcutValidationError) return;
+      const nextSettings = sanitizeCommentShortcutSettings(shortcutDraft);
+      const currentSettings = sanitizeCommentShortcutSettings(
+        options.getCommentShortcutSettings?.() ?? DEFAULT_COMMENT_SHORTCUT_SETTINGS
+      );
+      if (!commentShortcutSettingsEqual(nextSettings, currentSettings)) {
+        options.onCommentShortcutSettingsChange?.(nextSettings);
+      }
+      closeShortcutDialog();
+    }, [closeShortcutDialog, options, shortcutDraft, shortcutValidationError]);
+    import_react14.default.useEffect(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      setToolbarDragging(false);
+      const updatePosition = (nextPosition) => {
+        setCompactAnchorRect(null);
+        applyToolbarPosition(nextPosition);
+      };
+      if (toolMinimized) {
+        const handle = minimizedButtonRef.current;
+        if (!handle) return;
+        return installFloatingDrag({
+          handleEl: handle,
+          targetEl: root,
+          clampMargin: FLOATING_CLAMP_MARGIN,
+          onPositionChange: updatePosition,
+          moveThresholdPx: isMobileDevice() ? 8 : 3,
+          onDragStateChange: (active) => {
+            setToolbarDragging(active);
+          }
+        });
+      }
+      const handles = [toolbarHeaderRef.current].filter(
+        (handle) => Boolean(handle)
+      );
+      if (handles.length === 0) return;
+      const cleanups = handles.map(
+        (handle) => installFloatingDrag({
+          handleEl: handle,
+          targetEl: root,
+          clampMargin: FLOATING_CLAMP_MARGIN,
+          onPositionChange: updatePosition,
+          moveThresholdPx: isMobileDevice() ? 8 : 3,
+          ignoreInteractiveChildren: true,
+          onDragStateChange: (active) => {
+            setToolbarDragging(active);
+          }
+        })
+      );
+      return () => {
+        setToolbarDragging(false);
+        cleanups.forEach((cleanup) => cleanup());
+      };
+    }, [applyToolbarPosition, showExpandedPanel, toolMinimized]);
+    import_react14.default.useEffect(() => {
+      const pagePanel = pagePanelRef.current;
+      const pagePanelHeader = pagePanelHeaderRef.current;
+      if (!pagePanel || !pagePanelHeader || !showExpandedPanel || toolMinimized) return;
+      return installFloatingDrag({
+        handleEl: pagePanelHeader,
+        targetEl: pagePanel,
         clampMargin: FLOATING_CLAMP_MARGIN,
-        onPositionChange: updatePosition,
+        onPositionChange: applyPanelPosition,
         moveThresholdPx: isMobileDevice() ? 8 : 3,
         ignoreInteractiveChildren: true,
         onDragStateChange: (active) => {
           setToolbarDragging(active);
         }
-      })
-    );
-    return () => {
-      setToolbarDragging(false);
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [applyToolbarPosition, showExpandedPanel, toolMinimized]);
-  import_react14.default.useEffect(() => {
-    const pagePanel = pagePanelRef.current;
-    const pagePanelHeader = pagePanelHeaderRef.current;
-    if (!pagePanel || !pagePanelHeader || !showExpandedPanel || toolMinimized)
-      return;
-    return installFloatingDrag({
-      handleEl: pagePanelHeader,
-      targetEl: pagePanel,
-      clampMargin: FLOATING_CLAMP_MARGIN,
-      onPositionChange: applyPanelPosition,
-      moveThresholdPx: isMobileDevice() ? 8 : 3,
-      ignoreInteractiveChildren: true,
-      onDragStateChange: (active) => {
-        setToolbarDragging(active);
-      }
-    });
-  }, [applyPanelPosition, showExpandedPanel, toolMinimized]);
-  import_react14.default.useEffect(() => {
-    const updateViewport = () => {
-      setViewportSize({ width: window.innerWidth, height: window.innerHeight });
-    };
-    window.addEventListener("resize", updateViewport);
-    return () => {
-      window.removeEventListener("resize", updateViewport);
-    };
-  }, []);
-  import_react14.default.useEffect(() => {
-    const onWindowWheel = (event) => {
-      const body = pagePanelBodyRef.current;
-      if (!body || !showExpandedPanel) return;
-      const rect = body.getBoundingClientRect();
-      const withinX = event.clientX >= rect.left && event.clientX <= rect.right;
-      const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom;
-      if (!withinX || !withinY) return;
-      if (body.scrollHeight <= body.clientHeight) return;
-      body.scrollTop += event.deltaY;
-      if (event.cancelable) {
-        event.preventDefault();
-      }
-      event.stopPropagation();
-    };
-    window.addEventListener("wheel", onWindowWheel, {
-      capture: true,
-      passive: false
-    });
-    return () => {
-      window.removeEventListener("wheel", onWindowWheel, { capture: true });
-    };
-  }, [showExpandedPanel]);
-  import_react14.default.useEffect(() => {
-    connectStyleObserver(currentTarget);
-    return () => {
-      disconnectStyleObserver();
-    };
-  }, [connectStyleObserver, currentTarget, disconnectStyleObserver]);
-  import_react14.default.useEffect(() => {
-    requestPanelRefresh();
-  }, [currentTarget, requestPanelRefresh]);
-  import_react14.default.useEffect(() => {
-    return () => {
-      options.onCommentShortcutDialogOpenChange?.(false);
-    };
-  }, [options]);
-  const blockingLayerOpen = settingsPopoverOpen || commentarySkillDialogOpen || shortcutDialogOpen || keyboardShortcutsDialogOpen || directoryPickerOpen;
-  import_react14.default.useEffect(() => {
-    onBlockingLayerOpenChange?.(blockingLayerOpen);
-    return () => {
-      onBlockingLayerOpenChange?.(false);
-    };
-  }, [blockingLayerOpen, onBlockingLayerOpenChange]);
-  import_react14.default.useEffect(() => {
-    if (!directoryPickerOpen) return void 0;
-    return lockPageScrollForRuntimeModal();
-  }, [directoryPickerOpen]);
-  const focusPanelTextInput = import_react14.default.useCallback(() => {
-    if (inlineTextEditingRef.current) return false;
-    const input = textComposerRef.current?.querySelector("input");
-    if (!(input instanceof HTMLInputElement) || input.disabled) return false;
-    input.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
-    input.focus({ preventScroll: true });
-    try {
-      input.setSelectionRange(input.value.length, input.value.length);
-    } catch {
-    }
-    return true;
-  }, []);
-  const focusPanelNoteTextarea = import_react14.default.useCallback(() => {
-    if (inlineTextEditingRef.current) return false;
-    const textarea = noteComposerRef.current?.querySelector("textarea");
-    if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled)
-      return false;
-    textarea.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
-    textarea.focus({ preventScroll: true });
-    try {
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    } catch {
-    }
-    return true;
-  }, []);
-  import_react14.default.useEffect(() => {
-    if (inlineTextEditing || toolMinimized || !showExpandedPanel) return;
-    const rafId = window.requestAnimationFrame(() => {
-      focusPanelTextInput();
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [
-    focusPanelTextInput,
-    inlineTextEditing,
-    showExpandedPanel,
-    toolMinimized
-  ]);
-  import_react14.default.useEffect(() => {
-    if (!inlineTextEditing) return;
-    const textarea = noteComposerRef.current?.querySelector("textarea");
-    if (textarea instanceof HTMLTextAreaElement) {
-      textarea.blur();
-    }
-    const input = textComposerRef.current?.querySelector("input");
-    if (input instanceof HTMLInputElement) {
-      input.blur();
-    }
-  }, [inlineTextEditing]);
-  const saveAndCloseNoteComposer = import_react14.default.useCallback(async () => {
-    await onConfirmNote();
-    const textarea = noteComposerRef.current?.querySelector("textarea");
-    if (textarea instanceof HTMLTextAreaElement) {
-      textarea.blur();
-    }
-    onDismissSelection?.();
-  }, [onConfirmNote, onDismissSelection]);
-  import_react14.default.useEffect(() => {
-    if (toolMinimized) {
-      onHoverSelectionSuppressedChange(false);
-    }
-  }, [onHoverSelectionSuppressedChange, toolMinimized]);
-  import_react14.default.useEffect(() => {
-    if (toolMinimized) {
-      onSelectionInteractionLockChange(false);
-    }
-  }, [onSelectionInteractionLockChange, toolMinimized]);
-  import_react14.default.useEffect(() => {
-    if (!toolMinimized) return;
-    setSessionActivityCardOpen(false);
-    setSettingsPopoverOpen(false);
-    setCommentarySkillDialogOpen(false);
-    setDirectoryPickerOpen(false);
-  }, [toolMinimized]);
-  import_react14.default.useEffect(() => {
-    return () => {
-      onHoverSelectionSuppressedChange(false);
-      onSelectionInteractionLockChange(false);
-    };
-  }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
-  import_react14.default.useEffect(() => {
-    syncPanelMetaState();
-  }, [syncPanelMetaState]);
-  import_react14.default.useEffect(() => {
-    setPageAnimationsDisabled(uiSettings.disablePageAnimations);
-    return () => {
-      setPageAnimationsDisabled(false);
-    };
-  }, [uiSettings.disablePageAnimations]);
-  import_react14.default.useEffect(() => {
-    if (previousPageZoomEnabledRef.current !== uiSettings.pageZoomEnabled) {
-      onDismissSelection?.();
-      onTargetChange(null);
-    }
-    previousPageZoomEnabledRef.current = uiSettings.pageZoomEnabled;
-  }, [onDismissSelection, onTargetChange, uiSettings.pageZoomEnabled]);
-  import_react14.default.useEffect(() => {
-    if (previousPageZoomActiveRef.current !== pageZoomActive) {
-      onDismissSelection?.();
-      onTargetChange(null);
-    }
-    previousPageZoomActiveRef.current = pageZoomActive;
-  }, [onDismissSelection, onTargetChange, pageZoomActive]);
-  import_react14.default.useEffect(() => {
-    setPageZoomEnabled(pageZoomActive, {
-      reservedRightWidth: PAGE_CONFIG_PANEL_WIDTH + PROPERTY_PANEL_RIGHT + 24
-    });
-    return () => {
-      setPageZoomEnabled(false);
-    };
-  }, [pageZoomActive]);
-  import_react14.default.useEffect(
-    () => () => {
-      if (!previousPageZoomActiveRef.current) return;
-      onDismissSelectionRef.current?.();
-      onTargetChangeRef.current(null);
-    },
-    []
-  );
-  import_react14.default.useEffect(() => {
-    if (!toolMinimized) return;
-    if (shortcutDialogOpen) {
-      closeShortcutDialog();
-    }
-  }, [closeShortcutDialog, shortcutDialogOpen, toolMinimized]);
-  import_react14.default.useLayoutEffect(() => {
-    if (toolMinimized) return;
-    const updateAnchor = () => {
-      const rect = rootRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      setCompactAnchorRect((prev) => {
-        const next = {
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height
-        };
-        if (prev && prev.left === next.left && prev.top === next.top && prev.width === next.width && prev.height === next.height) {
-          return prev;
+      });
+    }, [applyPanelPosition, showExpandedPanel, toolMinimized]);
+    import_react14.default.useEffect(() => {
+      const updateViewport = () => {
+        setViewportSize({ width: window.innerWidth, height: window.innerHeight });
+      };
+      window.addEventListener("resize", updateViewport);
+      return () => {
+        window.removeEventListener("resize", updateViewport);
+      };
+    }, []);
+    import_react14.default.useEffect(() => {
+      const onWindowWheel = (event) => {
+        const body = pagePanelBodyRef.current;
+        if (!body || !showExpandedPanel) return;
+        const rect = body.getBoundingClientRect();
+        const withinX = event.clientX >= rect.left && event.clientX <= rect.right;
+        const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom;
+        if (!withinX || !withinY) return;
+        if (body.scrollHeight <= body.clientHeight) return;
+        body.scrollTop += event.deltaY;
+        if (event.cancelable) {
+          event.preventDefault();
         }
-        return next;
+        event.stopPropagation();
+      };
+      window.addEventListener("wheel", onWindowWheel, {
+        capture: true,
+        passive: false
       });
-    };
-    updateAnchor();
-    window.addEventListener("resize", updateAnchor);
-    return () => {
-      window.removeEventListener("resize", updateAnchor);
-    };
-  }, [
-    actionBusy,
-    currentTarget,
-    modifiedCount,
-    pagePanelPosition,
-    redoCount,
-    shortcutDialogOpen,
-    toolbarPosition,
-    toolMinimized,
-    uiMode,
-    undoCount
-  ]);
-  import_react14.default.useEffect(() => {
-    if (capturingShortcutIndex === null) return;
-    const button = shortcutCardRefs.current[capturingShortcutIndex];
-    if (!button) return;
-    const rafId = window.requestAnimationFrame(() => {
-      button.focus({ preventScroll: true });
-    });
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [capturingShortcutIndex]);
-  const copyReason = options.getCopyPromptBlockReason?.();
-  const copyBlocked = !options.onCopyPrompt || !!copyReason;
-  const agentPromptToolbarAction = getAgentPromptToolbarActionState({
-    toolMinimized,
-    visualState: effectiveVisualState,
-    waking: agentWakeChecking,
-    sending: currentTaskIsSending,
-    interrupting: agentPromptInterrupting,
-    hasReusableConversation,
-    pageTaskRunning,
-    pageTaskSessionReady,
-    currentTaskRunning,
-    currentTaskSessionReady,
-    canInterrupt: activeTaskCanInterrupt || pageTaskCanInterrupt,
-    canWakeAgent: Boolean(options.onWakeAgent),
-    onSendPromptToAgent: options.onSendPromptToAgent,
-    getAgentBridgeConnected: options.getAgentBridgeConnected,
-    getSendPromptToAgentBlockReason: () => options.getSendPromptToAgentBlockReason?.(currentTarget)
-  });
-  const agentPromptCanInterrupt = activeTaskCanInterrupt;
-  const agentShellAwake = agentPromptToolbarAction.robotState === "awake" || agentPromptToolbarAction.robotState === "working";
-  const currentTaskSessionHref = currentAgentTask?.sessionUrl ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : "");
-  const currentTaskDescription = resolveExternalEditingStatusDescription(
-    currentAgentTask,
-    options.externalEditingStatusDescription
-  );
-  const handleOpenCurrentTaskSession = import_react14.default.useCallback(() => {
-    if (!currentTaskSessionHref) return;
-    window.open(currentTaskSessionHref, "_blank", "noopener,noreferrer");
-  }, [currentTaskSessionHref]);
-  const handleDismissCurrentTaskState = import_react14.default.useCallback(() => {
-    if (!currentTarget || !options.dismissElementAgentTaskState) return;
-    options.dismissElementAgentTaskState(currentTarget);
-  }, [currentTarget, options]);
-  const agentTaskStatusCard = currentAgentTask ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      style: {
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        padding: "12px 14px",
-        borderRadius: 18,
-        border: currentAgentTask.status === "error" ? "1px solid rgba(239, 68, 68, 0.24)" : currentAgentTask.status === "completed" ? "1px solid rgba(34, 197, 94, 0.24)" : "1px solid rgba(0, 143, 93, 0.22)",
-        background: currentAgentTask.status === "error" ? "rgba(127, 29, 29, 0.14)" : currentAgentTask.status === "completed" ? "rgba(20, 83, 45, 0.14)" : "rgba(0, 143, 93, 0.08)",
-        boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)"
-      },
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
-          currentAgentTask.status === "completed" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CheckCircleFilled, { style: { color: "#22c55e" } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ExclamationCircleFilled, { style: { color: "#ef4444" } }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(AgentSparkleIcon, {}),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            "span",
-            {
-              style: {
-                fontSize: 12,
-                fontWeight: 700,
-                color: EDITOR_CHROME.textPrimary
-              },
-              children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25"
-            }
-          )
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-          "span",
-          {
-            style: {
-              fontSize: 12,
-              lineHeight: 1.6,
-              color: EDITOR_CHROME.textSecondary,
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis"
-            },
-            children: [
-              currentTaskDescription,
-              currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
-            ]
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_antd9.Space, { size: 8, wrap: true, children: [
-          !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Button,
-            {
-              size: "small",
-              danger: true,
-              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.StopOutlined, {}),
-              disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
-              loading: agentPromptInterrupting,
-              onClick: () => {
-                void handleInterruptSendPromptToAgent();
-              },
-              children: "\u4E2D\u65AD"
-            }
-          ) : null,
-          !hideExecutionControls && currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Button,
-            {
-              size: "small",
-              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ReloadOutlined, {}),
-              disabled: agentPromptToolbarAction.sendDisabled || actionBusy,
-              onClick: () => {
-                void handleConfirmSendPromptToAgent();
-              },
-              children: "\u91CD\u8BD5"
-            }
-          ) : null,
-          currentTaskSessionHref ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Button,
-            {
-              size: "small",
-              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.LinkOutlined, {}),
-              onClick: handleOpenCurrentTaskSession,
-              children: "\u6253\u5F00\u4F1A\u8BDD"
-            }
-          ) : null,
-          currentTaskTerminal ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Button,
-            {
-              size: "small",
-              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(CloseToolIcon, {}),
-              onClick: handleDismissCurrentTaskState,
-              children: "\u5173\u95ED\u63D0\u793A"
-            }
-          ) : null
-        ] })
-      ]
-    }
-  ) : null;
-  const compactPosition = import_react14.default.useMemo(
-    () => computeCompactPanelPosition({
-      actionRect: compactAnchorRect,
-      floatingPosition: toolbarPosition,
-      viewport: viewportSize,
-      panelWidth: PAGE_CONFIG_PANEL_WIDTH,
-      panelTop: PROPERTY_PANEL_TOP,
-      panelRight: PROPERTY_PANEL_RIGHT,
-      panelBottom: TOOLBAR_BOTTOM,
-      compactSize: COMPACT_TOOL_SIZE,
-      compactWidth: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH,
-      compactHeight: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_HEIGHT,
-      margin: FLOATING_CLAMP_MARGIN,
-      headerPaddingX: HEADER_HORIZONTAL_PADDING,
-      headerPaddingY: HEADER_VERTICAL_PADDING,
-      controlSize: HEADER_CONTROL_SIZE
-    }),
-    [compactAnchorRect, toolbarPosition, toolMinimized, viewportSize]
-  );
-  const clampedExpandedToolbarPosition = import_react14.default.useMemo(
-    () => toolbarPosition ? clampToViewport(toolbarPosition, {
-      width: COMPACT_TOOLBAR_WIDTH,
-      height: COMPACT_TOOLBAR_HEIGHT
-    }) : null,
-    [clampToViewport, toolbarPosition]
-  );
-  const mobileHideToolbar = isMobileDevice() && !toolMinimized && uiMode === "bubble-card" && !!currentTarget;
-  const shellStyle = toolMinimized ? {
-    ...toolbarPosition ? {
-      left: toolbarPosition.left,
-      top: toolbarPosition.top,
-      right: "auto",
-      bottom: "auto"
-    } : compactAnchorRect ? {
-      left: compactPosition.left,
-      top: compactPosition.top,
-      right: "auto",
-      bottom: "auto"
-    } : {
-      right: PROPERTY_PANEL_RIGHT,
-      bottom: TOOLBAR_BOTTOM,
-      top: "auto"
-    },
-    position: "absolute",
-    zIndex: panelStyle.zIndex,
-    width: COMPACT_TOOL_SIZE,
-    height: COMPACT_TOOL_SIZE,
-    maxWidth: COMPACT_TOOL_SIZE,
-    borderRadius: 999,
-    pointerEvents: "auto",
-    overflow: "visible",
-    border: "none",
-    background: "transparent",
-    boxShadow: "none"
-  } : !showExpandedPanel ? {
-    ...panelStyle,
-    width: "fit-content",
-    height: "auto",
-    maxWidth: "calc(100vw - 32px)",
-    border: "none",
-    background: "transparent",
-    boxShadow: "none",
-    pointerEvents: mobileHideToolbar ? "none" : "auto",
-    overflow: "visible",
-    opacity: mobileHideToolbar ? 0 : 1,
-    ...clampedExpandedToolbarPosition ? {
-      left: clampedExpandedToolbarPosition.left,
-      top: clampedExpandedToolbarPosition.top,
-      right: "auto",
-      bottom: "auto"
-    } : {
-      right: PROPERTY_PANEL_RIGHT,
-      bottom: TOOLBAR_BOTTOM,
-      top: "auto"
-    }
-  } : {
-    ...panelStyle,
-    width: "fit-content",
-    height: "auto",
-    maxWidth: "calc(100vw - 32px)",
-    border: "none",
-    background: "transparent",
-    boxShadow: "none",
-    pointerEvents: mobileHideToolbar ? "none" : "auto",
-    overflow: "visible",
-    opacity: mobileHideToolbar ? 0 : 1,
-    ...clampedExpandedToolbarPosition ? {
-      left: clampedExpandedToolbarPosition.left,
-      top: clampedExpandedToolbarPosition.top,
-      right: "auto",
-      bottom: "auto"
-    } : {
-      right: PROPERTY_PANEL_RIGHT,
-      bottom: TOOLBAR_BOTTOM,
-      top: "auto"
-    }
-  };
-  const showCopyPromptAction = options.showCopyPromptAction !== false;
-  const hasPrototypeClearableEdits = isHostToolbarMode && Boolean(options.hasPrototypeComments?.());
-  const hasClearableEdits = modifiedCount + visibleTerminalTaskCount > 0 || hasPrototypeClearableEdits;
-  const clearAllEditsDisabled = actionBusy || !hasClearableEdits || !options.onClearEdits;
-  const copyPromptDisabled = clearAllEditsDisabled || copyBlocked;
-  const copyToolbarButton = showCopyPromptAction ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: copyReason ?? "\u590D\u5236 Prompt",
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
-      awake: agentShellAwake,
-      disabled: copyPromptDisabled,
-      onClick: () => {
-        void runAction(options.onCopyPrompt);
-      }
-    }
-  ) : null;
-  const copyPromptVisible = Boolean(copyToolbarButton);
-  const inlineSendVisible = !hideExecutionControls && agentPromptToolbarAction.sendVisible;
-  const inlineInterruptVisible = !hideExecutionControls && agentPromptToolbarAction.interruptVisible;
-  const hostSendVisible = agentPromptToolbarAction.sendVisible;
-  const sessionActivityCardContent = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      style: {
-        width: 320,
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        padding: 4
-      },
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-          "div",
-          {
-            style: {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12
-            },
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                "span",
-                {
-                  style: {
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: EDITOR_CHROME.textPrimary
-                  },
-                  children: "\u6700\u8FD1\u52A8\u6001"
-                }
-              ),
-              !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                import_antd9.Button,
-                {
-                  size: "small",
-                  danger: true,
-                  icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.StopOutlined, {}),
-                  disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
-                  loading: agentPromptInterrupting,
-                  onClick: () => {
-                    void handleInterruptSendPromptToAgent();
-                  },
-                  children: "\u505C\u6B62\u6267\u884C"
-                }
-              ) : null
-            ]
-          }
-        ),
-        visibleSessionActivities.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          import_antd9.Timeline,
-          {
-            items: visibleSessionActivities.map((item) => ({
-              key: item.id,
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                "div",
-                {
-                  style: {
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                    paddingBottom: 4
-                  },
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      "span",
-                      {
-                        style: {
-                          fontSize: 12,
-                          lineHeight: 1.6,
-                          color: EDITOR_CHROME.textPrimary,
-                          display: "-webkit-box",
-                          WebkitBoxOrient: "vertical",
-                          WebkitLineClamp: 2,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          wordBreak: "break-word"
-                        },
-                        children: item.text
-                      }
-                    ),
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      "span",
-                      {
-                        style: {
-                          fontSize: 11,
-                          lineHeight: 1.5,
-                          color: EDITOR_CHROME.textMuted
-                        },
-                        children: formatSessionActivityTime(item.timestamp)
-                      }
-                    )
-                  ]
-                }
-              )
-            }))
-          }
-        ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "div",
-          {
-            style: {
-              fontSize: 12,
-              lineHeight: 1.6,
-              color: EDITOR_CHROME.textMuted
-            },
-            children: "\u6700\u8FD1\u6682\u65E0\u52A8\u6001"
-          }
-        )
-      ]
-    }
-  );
-  const agentPrimaryMenuLabel = agentPromptToolbarAction.sendTitle.includes(
-    "\u8FFD\u52A0"
-  ) ? "\u8FFD\u52A0" : "\u5FEB\u901F\u6267\u884C";
-  const clearAllEditsToolbarButton = clearAllEditsDisabled ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.DeleteOutlined, {}),
-      awake: agentShellAwake,
-      disabled: true
-    }
-  ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    import_antd9.Popconfirm,
-    {
-      title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-      description: "\u786E\u8BA4\u540E\u4F1A\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\uFF0C\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
-      arrow: { pointAtCenter: true },
-      getPopupContainer: resolveRuntimePopupContainer,
-      okText: "\u6E05\u7A7A",
-      cancelText: "\u53D6\u6D88",
-      okButtonProps: { danger: true },
-      onConfirm: () => runAction(() => options.onClearEdits?.({ skipConfirm: true })),
-      children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-        AgentToolbarIconButton,
-        {
-          title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-          icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.DeleteOutlined, {}),
-          awake: agentShellAwake
-        }
-      ) })
-    }
-  );
-  const agentExecutionToolbarButton = inlineInterruptVisible ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    import_antd9.Popconfirm,
-    {
-      title: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
-      description: "\u786E\u8BA4\u540E\u4F1A\u7EC8\u6B62\u5F53\u524D\u9875\u9762\u6240\u6709\u6B63\u5728\u8FDB\u884C\u7684 AI \u4FEE\u6539\u3002",
-      okText: "\u7EC8\u6B62",
-      cancelText: "\u53D6\u6D88",
-      okButtonProps: { danger: true },
-      disabled: agentPromptToolbarAction.interruptDisabled,
-      getPopupContainer: resolveRuntimePopupContainer,
-      onConfirm: () => {
-        void handleInterruptSendPromptToAgent(null);
-      },
-      children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-        AgentToolbarIconButton,
-        {
-          title: agentPromptToolbarAction.interruptTitle,
-          ariaLabel: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
-          icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.PoweroffOutlined, {}),
-          awake: agentShellAwake,
-          active: !agentPromptToolbarAction.interruptDisabled,
-          disabled: agentPromptToolbarAction.interruptDisabled,
-          loading: agentPromptToolbarAction.interruptLoading
-        }
-      ) })
-    }
-  ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: agentPromptToolbarAction.sendDisabled ? agentPromptToolbarAction.sendTitle : agentPrimaryMenuLabel,
-      ariaLabel: agentPrimaryMenuLabel,
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CaretRightFilled, {}),
-      awake: agentShellAwake,
-      active: inlineSendVisible && !agentPromptToolbarAction.sendDisabled,
-      disabled: !inlineSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy,
-      loading: agentPromptToolbarAction.sendLoading,
-      onClick: () => {
-        void handleConfirmSendPromptToAgent();
-      }
-    }
-  );
-  const handleCopySkillInstallPrompt = import_react14.default.useCallback(async () => {
-    const text = buildSkillInstallPrompt(options.skillInstallSource);
-    try {
-      await copyRuntimeTextToClipboard(text);
-      if (text) {
-        notifyRuntimeMessage(
-          "success",
-          "\u5DF2\u590D\u5236\u6280\u80FD\u8BF4\u660E\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406"
-        );
-        return;
-      }
-      notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
-    } catch {
-      notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
-    }
-  }, []);
-  const handleCopyGlobalPanelPrompt = import_react14.default.useCallback(async () => {
-    const pageUrl = typeof window !== "undefined" && typeof window.location?.href === "string" ? window.location.href : "";
-    const text = buildGlobalPanelPrompt(options.skillInstallSource, pageUrl);
-    try {
-      await copyRuntimeTextToClipboard(text);
-      if (text) {
-        notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u63D0\u793A\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
-        return;
-      }
-      notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
-    } catch {
-      notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
-    }
-  }, []);
-  const handleRefreshAgentProviders = import_react14.default.useCallback(async () => {
-    if (!onRefreshAgentProviderAvailabilities) return;
-    setAgentProviderRefreshPending(true);
-    try {
-      await onRefreshAgentProviderAvailabilities(
-        AGENT_MENU_OPTIONS.map((item) => item.value)
-      );
-    } finally {
-      setAgentProviderRefreshPending(false);
-    }
-  }, [onRefreshAgentProviderAvailabilities]);
-  const agentProviderSettingsMenuItems = AGENT_MENU_OPTIONS.map((item) => {
-    const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
-    const agentInstalled = availability?.installed !== false;
-    return {
-      key: `agent-provider:${item.value}`,
-      label: `${item.label}${agentInstalled ? "" : "\uFF08\u672A\u5B89\u88C5\uFF09"}`,
-      disabled: !agentInstalled
-    };
-  });
-  const selectedAgentMenuKey = uiSettings.agentProvider ? `agent-provider:${uiSettings.agentProvider}` : AGENT_DEFAULT_MENU_KEY;
-  const agentProviderDropdownItems = hideExecutionControls ? [] : [
-    {
-      key: AGENT_DEFAULT_MENU_KEY,
-      label: "\u9ED8\u8BA4"
-    },
-    ...agentProviderSettingsMenuItems
-  ];
-  const handleAgentProviderMenuClick = import_react14.default.useCallback(
-    ({ key }) => {
-      if (key === AGENT_DEFAULT_MENU_KEY) {
-        onUiSettingsChange({ ...uiSettings, agentProvider: null });
-        return;
-      }
-      if (String(key).startsWith("agent-provider:")) {
-        const nextAgent = String(key).replace("agent-provider:", "").trim();
-        if (nextAgent && nextAgent !== uiSettings.agentProvider) {
-          onUiSettingsChange({
-            ...uiSettings,
-            agentProvider: nextAgent
-          });
-        }
-        return;
-      }
-    },
-    [onUiSettingsChange, uiSettings]
-  );
-  const selectedAgentMenuLabel = uiSettings.agentProvider ? AGENT_MENU_OPTIONS.find(
-    (item) => item.value === uiSettings.agentProvider
-  )?.label ?? uiSettings.agentProvider : "\u9ED8\u8BA4";
-  const aiExecutionProviderOptions = import_react14.default.useMemo(() => {
-    const merged = /* @__PURE__ */ new Map();
-    for (const item of AI_EXECUTION_PROVIDER_OPTIONS) {
-      merged.set(item.value, item);
-    }
-    for (const item of aiExecutionProviderOptionsState) {
-      const value = normalizeAiExecutionWorkspacePath(item.value);
-      if (!value) continue;
-      merged.set(value, {
-        value,
-        label: normalizeAiExecutionWorkspacePath(item.label) || value,
-        disabled: item.disabled === true
-      });
-    }
-    if (aiExecutionProvider && !merged.has(aiExecutionProvider)) {
-      merged.set(aiExecutionProvider, {
-        value: aiExecutionProvider,
-        label: aiExecutionProvider
-      });
-    }
-    return [...merged.values()];
-  }, [aiExecutionProvider, aiExecutionProviderOptionsState]);
-  const applyAiExecutionConfigResult = import_react14.default.useCallback((result) => {
-    const resultRecord = result && typeof result === "object" ? result : null;
-    const resolved = readAiExecutionConfigResult(result);
-    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "provider")) {
-      setAiExecutionProvider(
-        normalizeAiExecutionProvider(resultRecord.provider)
-      );
-    } else if (resolved.provider) {
-      setAiExecutionProvider(resolved.provider);
-    }
-    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "workspacePath")) {
-      setAiExecutionWorkspacePath(
-        normalizeAiExecutionWorkspacePath(resultRecord.workspacePath)
-      );
-    } else if (resolved.workspacePath) {
-      setAiExecutionWorkspacePath(resolved.workspacePath);
-    }
-    if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "runConcurrency")) {
-      setAiExecutionRunConcurrency(
-        normalizeAiExecutionRunConcurrency(resultRecord.runConcurrency)
-      );
-    } else if (resolved.runConcurrency) {
-      setAiExecutionRunConcurrency(resolved.runConcurrency);
-    }
-    if (resolved.providerOptions?.length) {
-      setAiExecutionProviderOptionsState(resolved.providerOptions);
-    }
-    return resolved;
-  }, []);
-  const commitAiExecutionConfig = import_react14.default.useCallback(
-    async (nextProvider, nextWorkspacePath, nextRunConcurrency) => {
-      const result = await options.onHostToolbarAction?.({
-        type: "set-ai-execution-config",
-        provider: normalizeAiExecutionProvider(nextProvider),
-        workspacePath: normalizeAiExecutionWorkspacePath(nextWorkspacePath),
-        runConcurrency: normalizeAiExecutionRunConcurrency(nextRunConcurrency)
-      });
-      applyAiExecutionConfigResult(result);
-      return result;
-    },
-    [applyAiExecutionConfigResult, options]
-  );
-  const handleRefreshAiExecutionConfig = import_react14.default.useCallback(async () => {
-    if (!options.onHostToolbarAction) return;
-    setAiExecutionConfigBusy(true);
-    try {
-      const result = await options.onHostToolbarAction({
-        type: "get-ai-execution-config"
-      });
-      applyAiExecutionConfigResult(result);
-    } catch (error) {
-      notifyRuntimeMessage(
-        "warning",
-        error instanceof Error ? error.message : String(error)
-      );
-    } finally {
-      setAiExecutionConfigBusy(false);
-    }
-  }, [applyAiExecutionConfigResult, options]);
-  const handleAiExecutionProviderChange = import_react14.default.useCallback(
-    (nextProvider) => {
-      const normalizedProvider = normalizeAiExecutionProvider(nextProvider);
-      setAiExecutionProvider(normalizedProvider);
-      setAiExecutionConfigBusy(true);
-      void commitAiExecutionConfig(
-        normalizedProvider,
-        aiExecutionWorkspacePath,
-        aiExecutionRunConcurrency
-      ).catch((error) => {
-        notifyRuntimeMessage(
-          "error",
-          error instanceof Error ? error.message : String(error)
-        );
-      }).finally(() => {
-        setAiExecutionConfigBusy(false);
-      });
-    },
-    [
-      aiExecutionRunConcurrency,
-      aiExecutionWorkspacePath,
-      commitAiExecutionConfig
-    ]
-  );
-  const handleAiExecutionWorkspacePathCommit = import_react14.default.useCallback(() => {
-    const normalizedWorkspacePath = normalizeAiExecutionWorkspacePath(
-      aiExecutionWorkspacePath
-    );
-    setAiExecutionWorkspacePath(normalizedWorkspacePath);
-    setAiExecutionConfigBusy(true);
-    void commitAiExecutionConfig(
-      aiExecutionProvider,
-      normalizedWorkspacePath,
-      aiExecutionRunConcurrency
-    ).catch((error) => {
-      notifyRuntimeMessage(
-        "error",
-        error instanceof Error ? error.message : String(error)
-      );
-    }).finally(() => {
-      setAiExecutionConfigBusy(false);
-    });
-  }, [
-    aiExecutionProvider,
-    aiExecutionRunConcurrency,
-    aiExecutionWorkspacePath,
-    commitAiExecutionConfig
-  ]);
-  const handleAiExecutionRunConcurrencyCommit = import_react14.default.useCallback(() => {
-    const normalizedRunConcurrency = normalizeAiExecutionRunConcurrency(
-      aiExecutionRunConcurrency
-    );
-    setAiExecutionRunConcurrency(normalizedRunConcurrency);
-    setAiExecutionConfigBusy(true);
-    void commitAiExecutionConfig(
-      aiExecutionProvider,
-      aiExecutionWorkspacePath,
-      normalizedRunConcurrency
-    ).catch((error) => {
-      notifyRuntimeMessage(
-        "error",
-        error instanceof Error ? error.message : String(error)
-      );
-    }).finally(() => {
-      setAiExecutionConfigBusy(false);
-    });
-  }, [
-    aiExecutionProvider,
-    aiExecutionRunConcurrency,
-    aiExecutionWorkspacePath,
-    commitAiExecutionConfig
-  ]);
-  const browseAiExecutionDirectories = import_react14.default.useCallback(
-    async (path) => {
-      if (!options.onHostToolbarAction) return;
-      setDirectoryPickerBusy(true);
-      setDirectoryPickerError("");
+      return () => {
+        window.removeEventListener("wheel", onWindowWheel, { capture: true });
+      };
+    }, [showExpandedPanel]);
+    import_react14.default.useEffect(() => {
+      connectStyleObserver(currentTarget);
+      return () => {
+        disconnectStyleObserver();
+      };
+    }, [connectStyleObserver, currentTarget, disconnectStyleObserver]);
+    import_react14.default.useEffect(() => {
+      requestPanelRefresh();
+    }, [currentTarget, requestPanelRefresh]);
+    import_react14.default.useEffect(() => {
+      return () => {
+        options.onCommentShortcutDialogOpenChange?.(false);
+      };
+    }, [options]);
+    const blockingLayerOpen = settingsPopoverOpen || aiSettingsDialogOpen || commentarySkillDialogOpen || shortcutDialogOpen || keyboardShortcutsDialogOpen || directoryPickerOpen;
+    import_react14.default.useEffect(() => {
+      onBlockingLayerOpenChange?.(blockingLayerOpen);
+      return () => {
+        onBlockingLayerOpenChange?.(false);
+      };
+    }, [blockingLayerOpen, onBlockingLayerOpenChange]);
+    import_react14.default.useEffect(() => {
+      if (!directoryPickerOpen) return void 0;
+      return lockPageScrollForRuntimeModal();
+    }, [directoryPickerOpen]);
+    const focusPanelTextInput = import_react14.default.useCallback(() => {
+      if (inlineTextEditingRef.current) return false;
+      const input = textComposerRef.current?.querySelector("input");
+      if (!(input instanceof HTMLInputElement) || input.disabled) return false;
+      input.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
+      input.focus({ preventScroll: true });
       try {
-        const result = await options.onHostToolbarAction({
-          type: "browse-ai-execution-directories",
-          ...path ? { path } : {}
-        });
-        const nextState = readLocalDirectoryBrowserResult(result);
-        if (!nextState) {
-          throw new Error("ACP \u672A\u8FD4\u56DE\u53EF\u7528\u76EE\u5F55\u5217\u8868");
-        }
-        setDirectoryPickerState(nextState);
-        return nextState;
-      } catch (error) {
-        const message3 = error instanceof Error ? error.message : String(error);
-        setDirectoryPickerError(message3);
-        notifyRuntimeMessage("error", message3);
-        return null;
-      } finally {
-        setDirectoryPickerBusy(false);
+        input.setSelectionRange(input.value.length, input.value.length);
+      } catch {
       }
-    },
-    [options]
-  );
-  const handleOpenDirectoryPicker = import_react14.default.useCallback(async () => {
-    setDirectoryPickerOpen(true);
-    setSettingsPopoverOpen(false);
-    const initialPath = normalizeAiExecutionWorkspacePath(
-      aiExecutionWorkspacePath
-    );
-    const opened = await browseAiExecutionDirectories(initialPath || void 0);
-    if (!opened && initialPath) {
-      await browseAiExecutionDirectories(void 0);
-    }
-  }, [aiExecutionWorkspacePath, browseAiExecutionDirectories]);
-  const handleConfirmDirectoryPicker = import_react14.default.useCallback(async () => {
-    const selectedPath = normalizeAiExecutionWorkspacePath(
-      directoryPickerState?.path
-    );
-    if (!selectedPath) return;
-    setDirectoryPickerBusy(true);
-    try {
-      setAiExecutionWorkspacePath(selectedPath);
-      await commitAiExecutionConfig(
-        aiExecutionProvider,
-        selectedPath,
-        aiExecutionRunConcurrency
-      );
-      setDirectoryPickerOpen(false);
-      notifyRuntimeMessage("success", "\u5DF2\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55");
-    } catch (error) {
-      const message3 = error instanceof Error ? error.message : String(error);
-      setDirectoryPickerError(message3);
-      notifyRuntimeMessage("error", message3);
-    } finally {
-      setDirectoryPickerBusy(false);
-    }
-  }, [
-    aiExecutionProvider,
-    aiExecutionRunConcurrency,
-    commitAiExecutionConfig,
-    directoryPickerState?.path
-  ]);
-  const aiExecutionProviderLabel = aiExecutionProviderOptions.find(
-    (item) => item.value === aiExecutionProvider
-  )?.label ?? aiExecutionProvider ?? DEFAULT_AI_EXECUTION_PROVIDER;
-  const aiExecutionWorkspaceDisplayName = getPathDisplayName(
-    aiExecutionWorkspacePath
-  );
-  const aiExecutionConfigSummary = aiExecutionWorkspaceDisplayName ? `${aiExecutionProviderLabel} / ${aiExecutionWorkspaceDisplayName}` : `${aiExecutionProviderLabel} / \u672A\u914D\u7F6E AI \u5DE5\u4F5C\u76EE\u5F55`;
-  const aiExecutionConfigConfigured = Boolean(aiExecutionWorkspacePath) || options.aiExecutionConfigConfigured === true;
-  const toggleSelectionMode = import_react14.default.useCallback(() => {
-    const nextSelectionModeActive = !selectionModeActive;
-    if (!nextSelectionModeActive) {
+      return true;
+    }, []);
+    const focusPanelNoteTextarea = import_react14.default.useCallback(() => {
+      if (inlineTextEditingRef.current) return false;
+      const textarea = noteComposerRef.current?.querySelector("textarea");
+      if (!(textarea instanceof HTMLTextAreaElement) || textarea.disabled) return false;
+      textarea.setAttribute(PARENT_SELECT_INPUT_TOUCHED_ATTR2, "false");
+      textarea.focus({ preventScroll: true });
+      try {
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      } catch {
+      }
+      return true;
+    }, []);
+    import_react14.default.useEffect(() => {
+      if (inlineTextEditing || toolMinimized || !showExpandedPanel) return;
+      const rafId = window.requestAnimationFrame(() => {
+        focusPanelTextInput();
+      });
+      return () => {
+        window.cancelAnimationFrame(rafId);
+      };
+    }, [focusPanelTextInput, inlineTextEditing, showExpandedPanel, toolMinimized]);
+    import_react14.default.useEffect(() => {
+      if (!inlineTextEditing) return;
+      const textarea = noteComposerRef.current?.querySelector("textarea");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.blur();
+      }
+      const input = textComposerRef.current?.querySelector("input");
+      if (input instanceof HTMLInputElement) {
+        input.blur();
+      }
+    }, [inlineTextEditing]);
+    const saveAndCloseNoteComposer = import_react14.default.useCallback(async () => {
+      await onConfirmNote();
+      const textarea = noteComposerRef.current?.querySelector("textarea");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.blur();
+      }
       onDismissSelection?.();
-      onTargetChange(null);
-      onSelectionInteractionLockChange(false);
-      onHoverSelectionSuppressedChange(false);
-    }
-    if (nextSelectionModeActive) {
-      onSelectionInteractionLockChange(false);
-      onHoverSelectionSuppressedChange(false);
-    }
-    onSelectionModeActiveChange(nextSelectionModeActive);
-  }, [
-    onDismissSelection,
-    onHoverSelectionSuppressedChange,
-    onSelectionInteractionLockChange,
-    onSelectionModeActiveChange,
-    onTargetChange,
-    selectionModeActive
-  ]);
-  const handleOpenCommentarySkillDialog = import_react14.default.useCallback(async () => {
-    setSettingsPopoverOpen(false);
-    setCommentarySkillDraftIds(
-      resolveCommentarySkillIds(
-        options.commentarySelectedSkillIds,
-        commentarySkillOptions,
-        options.commentarySkillSettingsConfigured === true
-      )
-    );
-    setCommentarySkillDialogOpen(true);
-    try {
-      const selectedSkillIds = await options.onCommentarySkillSelectionLoad?.();
-      if (selectedSkillIds) {
-        setCommentarySkillDraftIds(
-          normalizeCommentarySkillIds(selectedSkillIds, commentarySkillOptions)
-        );
+    }, [onConfirmNote, onDismissSelection]);
+    import_react14.default.useEffect(() => {
+      if (toolMinimized) {
+        onHoverSelectionSuppressedChange(false);
       }
-    } catch {
-      notifyRuntimeMessage("error", "\u8BFB\u53D6\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
-    }
-  }, [commentarySkillOptions, options]);
-  const handleSaveCommentarySkillSelection = import_react14.default.useCallback(async () => {
-    const nextSkillIds = normalizeCommentarySkillIds(
-      commentarySkillDraftIds,
-      commentarySkillOptions
-    );
-    setCommentarySkillSaving(true);
-    try {
-      await options.onCommentarySkillSelectionChange?.(nextSkillIds);
-      setCommentarySkillDraftIds(nextSkillIds);
+    }, [onHoverSelectionSuppressedChange, toolMinimized]);
+    import_react14.default.useEffect(() => {
+      if (toolMinimized) {
+        onSelectionInteractionLockChange(false);
+      }
+    }, [onSelectionInteractionLockChange, toolMinimized]);
+    import_react14.default.useEffect(() => {
+      if (!toolMinimized) return;
+      setSessionActivityCardOpen(false);
+      setSettingsPopoverOpen(false);
       setCommentarySkillDialogOpen(false);
-      notifyRuntimeMessage("success", "\u6280\u80FD\u914D\u7F6E\u5DF2\u4FDD\u5B58");
-    } catch {
-      notifyRuntimeMessage("error", "\u4FDD\u5B58\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
-    } finally {
-      setCommentarySkillSaving(false);
-    }
-  }, [commentarySkillDraftIds, commentarySkillOptions, options]);
-  const agentProviderSettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
-    key: "agent-provider",
-    label: "\u6267\u884C AI",
-    control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-      import_antd9.Dropdown,
-      {
-        trigger: ["click"],
-        placement: "bottomRight",
-        getPopupContainer: resolveRuntimePopupContainer,
-        overlayClassName: "we-runtime-agent-menu-dropdown",
-        menu: {
-          items: agentProviderDropdownItems,
-          onClick: handleAgentProviderMenuClick,
-          selectedKeys: [selectedAgentMenuKey]
-        },
-        onOpenChange: (open) => {
-          if (open) {
-            void handleRefreshAgentProviders();
-          }
-        },
-        children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          import_antd9.Button,
-          {
-            type: "text",
-            size: "small",
-            loading: agentProviderRefreshPending,
-            disabled: agentProviderRefreshPending,
-            style: {
-              color: EDITOR_CHROME.textSecondary,
-              paddingInline: 4,
-              height: 24
-            },
-            children: selectedAgentMenuLabel
-          }
-        )
+      setDirectoryPickerOpen(false);
+    }, [toolMinimized]);
+    import_react14.default.useEffect(() => {
+      return () => {
+        onHoverSelectionSuppressedChange(false);
+        onSelectionInteractionLockChange(false);
+      };
+    }, [onHoverSelectionSuppressedChange, onSelectionInteractionLockChange]);
+    import_react14.default.useEffect(() => {
+      syncPanelMetaState();
+    }, [syncPanelMetaState]);
+    import_react14.default.useEffect(() => {
+      setPageAnimationsDisabled(uiSettings.disablePageAnimations);
+      return () => {
+        setPageAnimationsDisabled(false);
+      };
+    }, [uiSettings.disablePageAnimations]);
+    import_react14.default.useEffect(() => {
+      if (previousPageZoomEnabledRef.current !== uiSettings.pageZoomEnabled) {
+        onDismissSelection?.();
+        onTargetChange(null);
       }
-    )
-  };
-  const aiExecutionConfigSettingsItem = hideExecutionControls || !options.onHostToolbarAction ? null : {
-    key: "ai-execution-config",
-    fullWidth: true,
-    control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      previousPageZoomEnabledRef.current = uiSettings.pageZoomEnabled;
+    }, [onDismissSelection, onTargetChange, uiSettings.pageZoomEnabled]);
+    import_react14.default.useEffect(() => {
+      if (previousPageZoomActiveRef.current !== pageZoomActive) {
+        onDismissSelection?.();
+        onTargetChange(null);
+      }
+      previousPageZoomActiveRef.current = pageZoomActive;
+    }, [onDismissSelection, onTargetChange, pageZoomActive]);
+    import_react14.default.useEffect(() => {
+      setPageZoomEnabled(pageZoomActive, {
+        reservedRightWidth: PAGE_CONFIG_PANEL_WIDTH + PROPERTY_PANEL_RIGHT + 24
+      });
+      return () => {
+        setPageZoomEnabled(false);
+      };
+    }, [pageZoomActive]);
+    import_react14.default.useEffect(
+      () => () => {
+        if (!previousPageZoomActiveRef.current) return;
+        onDismissSelectionRef.current?.();
+        onTargetChangeRef.current(null);
+      },
+      []
+    );
+    import_react14.default.useEffect(() => {
+      if (!toolMinimized) return;
+      if (shortcutDialogOpen) {
+        closeShortcutDialog();
+      }
+    }, [closeShortcutDialog, shortcutDialogOpen, toolMinimized]);
+    import_react14.default.useLayoutEffect(() => {
+      if (toolMinimized) return;
+      const updateAnchor = () => {
+        const rect = rootRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        setCompactAnchorRect((prev) => {
+          const next = {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height
+          };
+          if (prev && prev.left === next.left && prev.top === next.top && prev.width === next.width && prev.height === next.height) {
+            return prev;
+          }
+          return next;
+        });
+      };
+      updateAnchor();
+      window.addEventListener("resize", updateAnchor);
+      return () => {
+        window.removeEventListener("resize", updateAnchor);
+      };
+    }, [
+      actionBusy,
+      currentTarget,
+      modifiedCount,
+      pagePanelPosition,
+      redoCount,
+      shortcutDialogOpen,
+      toolbarPosition,
+      toolMinimized,
+      uiMode,
+      undoCount
+    ]);
+    import_react14.default.useEffect(() => {
+      if (capturingShortcutIndex === null) return;
+      const button = shortcutCardRefs.current[capturingShortcutIndex];
+      if (!button) return;
+      const rafId = window.requestAnimationFrame(() => {
+        button.focus({ preventScroll: true });
+      });
+      return () => {
+        window.cancelAnimationFrame(rafId);
+      };
+    }, [capturingShortcutIndex]);
+    const copyReason = options.getCopyPromptBlockReason?.();
+    const copyBlocked = !options.onCopyPrompt || !!copyReason;
+    const agentPromptToolbarAction = getAgentPromptToolbarActionState({
+      toolMinimized,
+      visualState: effectiveVisualState,
+      waking: agentWakeChecking,
+      sending: currentTaskIsSending,
+      interrupting: agentPromptInterrupting,
+      hasReusableConversation,
+      pageTaskRunning,
+      pageTaskSessionReady,
+      currentTaskRunning,
+      currentTaskSessionReady,
+      canInterrupt: activeTaskCanInterrupt || pageTaskCanInterrupt,
+      canWakeAgent: Boolean(options.onWakeAgent),
+      onSendPromptToAgent: options.onSendPromptToAgent,
+      getAgentBridgeConnected: options.getAgentBridgeConnected,
+      getSendPromptToAgentBlockReason: () => options.getSendPromptToAgentBlockReason?.(currentTarget)
+    });
+    const agentPromptCanInterrupt = activeTaskCanInterrupt;
+    const agentShellAwake = agentPromptToolbarAction.robotState === "awake" || agentPromptToolbarAction.robotState === "working";
+    const acpUiConnected = options.getAcpUiConnected ? Boolean(options.getAcpUiConnected()) : agentShellAwake;
+    const currentTaskSessionHref = currentAgentTask?.sessionUrl ?? (currentAgentTask?.sessionId ? `/session/${currentAgentTask.sessionId}` : "");
+    const currentTaskDescription = resolveExternalEditingStatusDescription(
+      currentAgentTask,
+      options.externalEditingStatusDescription
+    );
+    const handleOpenCurrentTaskSession = import_react14.default.useCallback(() => {
+      if (!currentTaskSessionHref) return;
+      window.open(currentTaskSessionHref, "_blank", "noopener,noreferrer");
+    }, [currentTaskSessionHref]);
+    const handleDismissCurrentTaskState = import_react14.default.useCallback(() => {
+      if (!currentTarget || !options.dismissElementAgentTaskState) return;
+      options.dismissElementAgentTaskState(currentTarget);
+    }, [currentTarget, options]);
+    const agentTaskStatusCard = currentAgentTask ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
       "div",
       {
         style: {
           display: "flex",
           flexDirection: "column",
           gap: 10,
-          width: "100%"
+          padding: "12px 14px",
+          borderRadius: 18,
+          border: currentAgentTask.status === "error" ? "1px solid rgba(239, 68, 68, 0.24)" : currentAgentTask.status === "completed" ? "1px solid rgba(34, 197, 94, 0.24)" : "1px solid rgba(0, 143, 93, 0.22)",
+          background: currentAgentTask.status === "error" ? "rgba(127, 29, 29, 0.14)" : currentAgentTask.status === "completed" ? "rgba(20, 83, 45, 0.14)" : "rgba(0, 143, 93, 0.08)",
+          boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.03)"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
+            currentAgentTask.status === "completed" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CheckCircleFilled, { style: { color: "#22c55e" } }) : currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ExclamationCircleFilled, { style: { color: "#ef4444" } }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(AgentSparkleIcon, {}),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              "span",
+              {
+                style: {
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: EDITOR_CHROME.textPrimary
+                },
+                children: currentAgentTask.status === "pending" ? "AI \u51C6\u5907\u4E2D" : currentAgentTask.status === "created" ? "AI \u6B63\u5728\u4FEE\u6539" : currentAgentTask.status === "completed" ? "AI \u4FEE\u6539\u5B8C\u6210" : "AI \u4FEE\u6539\u5931\u8D25"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+            "span",
+            {
+              style: {
+                fontSize: 12,
+                lineHeight: 1.6,
+                color: EDITOR_CHROME.textSecondary,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis"
+              },
+              children: [
+                currentTaskDescription,
+                currentAgentTask.sessionId ? ` \xB7 Session ${currentAgentTask.sessionId}` : ""
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_antd9.Space, { size: 8, wrap: true, children: [
+            !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Button,
+              {
+                size: "small",
+                danger: true,
+                icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.StopOutlined, {}),
+                disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
+                loading: agentPromptInterrupting,
+                onClick: () => {
+                  void handleInterruptSendPromptToAgent();
+                },
+                children: "\u4E2D\u65AD"
+              }
+            ) : null,
+            !hideExecutionControls && currentAgentTask.status === "error" ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Button,
+              {
+                size: "small",
+                icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ReloadOutlined, {}),
+                disabled: agentPromptToolbarAction.sendDisabled || actionBusy,
+                onClick: () => {
+                  void handleConfirmSendPromptToAgent();
+                },
+                children: "\u91CD\u8BD5"
+              }
+            ) : null,
+            currentTaskSessionHref ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_antd9.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.LinkOutlined, {}), onClick: handleOpenCurrentTaskSession, children: "\u6253\u5F00\u4F1A\u8BDD" }) : null,
+            currentTaskTerminal ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_antd9.Button, { size: "small", icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(CloseToolIcon, {}), onClick: handleDismissCurrentTaskState, children: "\u5173\u95ED\u63D0\u793A" }) : null
+          ] })
+        ]
+      }
+    ) : null;
+    const compactPosition = import_react14.default.useMemo(
+      () => computeCompactPanelPosition({
+        actionRect: compactAnchorRect,
+        floatingPosition: toolbarPosition,
+        viewport: viewportSize,
+        panelWidth: PAGE_CONFIG_PANEL_WIDTH,
+        panelTop: PROPERTY_PANEL_TOP,
+        panelRight: PROPERTY_PANEL_RIGHT,
+        panelBottom: TOOLBAR_BOTTOM,
+        compactSize: COMPACT_TOOL_SIZE,
+        compactWidth: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_WIDTH,
+        compactHeight: toolMinimized ? COMPACT_TOOL_SIZE : COMPACT_TOOLBAR_HEIGHT,
+        margin: FLOATING_CLAMP_MARGIN,
+        headerPaddingX: HEADER_HORIZONTAL_PADDING,
+        headerPaddingY: HEADER_VERTICAL_PADDING,
+        controlSize: HEADER_CONTROL_SIZE
+      }),
+      [compactAnchorRect, toolbarPosition, toolMinimized, viewportSize]
+    );
+    const clampedExpandedToolbarPosition = import_react14.default.useMemo(
+      () => toolbarPosition ? clampToViewport(toolbarPosition, {
+        width: COMPACT_TOOLBAR_WIDTH,
+        height: COMPACT_TOOLBAR_HEIGHT
+      }) : null,
+      [clampToViewport, toolbarPosition]
+    );
+    const mobileHideToolbar = isMobileDevice() && !toolMinimized && uiMode === "bubble-card" && !!currentTarget;
+    const shellStyle = toolMinimized ? {
+      ...toolbarPosition ? {
+        left: toolbarPosition.left,
+        top: toolbarPosition.top,
+        right: "auto",
+        bottom: "auto"
+      } : compactAnchorRect ? {
+        left: compactPosition.left,
+        top: compactPosition.top,
+        right: "auto",
+        bottom: "auto"
+      } : {
+        right: PROPERTY_PANEL_RIGHT,
+        bottom: TOOLBAR_BOTTOM,
+        top: "auto"
+      },
+      position: "absolute",
+      zIndex: panelStyle.zIndex,
+      width: COMPACT_TOOL_SIZE,
+      height: COMPACT_TOOL_SIZE,
+      maxWidth: COMPACT_TOOL_SIZE,
+      borderRadius: 999,
+      pointerEvents: "auto",
+      overflow: "visible",
+      border: "none",
+      background: "transparent",
+      boxShadow: "none"
+    } : !showExpandedPanel ? {
+      ...panelStyle,
+      width: "fit-content",
+      height: "auto",
+      maxWidth: "calc(100vw - 32px)",
+      border: "none",
+      background: "transparent",
+      boxShadow: "none",
+      pointerEvents: mobileHideToolbar ? "none" : "auto",
+      overflow: "visible",
+      opacity: mobileHideToolbar ? 0 : 1,
+      ...clampedExpandedToolbarPosition ? {
+        left: clampedExpandedToolbarPosition.left,
+        top: clampedExpandedToolbarPosition.top,
+        right: "auto",
+        bottom: "auto"
+      } : {
+        right: PROPERTY_PANEL_RIGHT,
+        bottom: TOOLBAR_BOTTOM,
+        top: "auto"
+      }
+    } : {
+      ...panelStyle,
+      width: "fit-content",
+      height: "auto",
+      maxWidth: "calc(100vw - 32px)",
+      border: "none",
+      background: "transparent",
+      boxShadow: "none",
+      pointerEvents: mobileHideToolbar ? "none" : "auto",
+      overflow: "visible",
+      opacity: mobileHideToolbar ? 0 : 1,
+      ...clampedExpandedToolbarPosition ? {
+        left: clampedExpandedToolbarPosition.left,
+        top: clampedExpandedToolbarPosition.top,
+        right: "auto",
+        bottom: "auto"
+      } : {
+        right: PROPERTY_PANEL_RIGHT,
+        bottom: TOOLBAR_BOTTOM,
+        top: "auto"
+      }
+    };
+    const showCopyPromptAction = options.showCopyPromptAction !== false;
+    const hasPrototypeClearableEdits = isHostToolbarMode && Boolean(options.hasPrototypeComments?.());
+    const hasClearableEdits = modifiedCount + visibleTerminalTaskCount > 0 || hasPrototypeClearableEdits;
+    const clearAllEditsDisabled = actionBusy || !hasClearableEdits || !options.onClearEdits;
+    const copyPromptDisabled = clearAllEditsDisabled || copyBlocked;
+    const copyToolbarButton = showCopyPromptAction ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: copyReason ?? "\u590D\u5236 Prompt",
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
+        awake: agentShellAwake,
+        disabled: copyPromptDisabled,
+        onClick: () => {
+          void runAction(options.onCopyPrompt);
+        }
+      }
+    ) : null;
+    const copyPromptVisible = Boolean(copyToolbarButton);
+    const inlineSendVisible = !hideExecutionControls && agentPromptToolbarAction.sendVisible;
+    const inlineInterruptVisible = !hideExecutionControls && agentPromptToolbarAction.interruptVisible;
+    const hostSendVisible = agentPromptToolbarAction.sendVisible;
+    const sessionActivityCardContent = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "div",
+      {
+        style: {
+          width: 320,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
+          padding: 4
         },
         children: [
           /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
@@ -18982,103 +19463,1897 @@ var PropertyPanelView = import_react14.default.forwardRef(function PropertyPanel
                   "span",
                   {
                     style: {
-                      fontSize: 14,
-                      color: EDITOR_CHROME.textPrimary,
-                      whiteSpace: "nowrap"
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: EDITOR_CHROME.textPrimary
                     },
-                    children: "\u6267\u884C AI"
+                    children: "\u6700\u8FD1\u52A8\u6001"
                   }
                 ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Select,
+                !hideExecutionControls && currentTaskRunning ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                  import_antd9.Button,
                   {
                     size: "small",
-                    value: aiExecutionProvider,
-                    options: aiExecutionProviderOptions,
-                    disabled: aiExecutionConfigBusy,
-                    onChange: handleAiExecutionProviderChange,
-                    getPopupContainer: resolveRuntimePopupContainer,
-                    popupClassName: "we-runtime-ai-execution-provider-dropdown",
-                    placement: "bottomRight",
-                    style: { width: 142 }
+                    danger: true,
+                    icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.StopOutlined, {}),
+                    disabled: !agentPromptCanInterrupt || agentPromptInterrupting,
+                    loading: agentPromptInterrupting,
+                    onClick: () => {
+                      void handleInterruptSendPromptToAgent();
+                    },
+                    children: "\u505C\u6B62\u6267\u884C"
                   }
-                )
+                ) : null
               ]
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-            "div",
+          visibleSessionActivities.length > 0 ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            import_antd9.Timeline,
             {
-              style: {
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12
-              },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  "span",
-                  {
-                    style: {
-                      fontSize: 14,
-                      color: EDITOR_CHROME.textPrimary,
-                      whiteSpace: "nowrap"
-                    },
-                    children: "AI \u5E76\u53D1\u6570"
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.InputNumber,
-                  {
-                    min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
-                    max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
-                    precision: 0,
-                    size: "small",
-                    value: aiExecutionRunConcurrency,
-                    disabled: aiExecutionConfigBusy,
-                    onChange: (value) => {
-                      setAiExecutionRunConcurrency(
-                        normalizeAiExecutionRunConcurrency(value)
-                      );
-                    },
-                    onBlur: handleAiExecutionRunConcurrencyCommit,
-                    style: { width: 76 }
-                  }
-                )
-              ]
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-            "div",
-            {
-              style: {
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12
-              },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  "span",
-                  {
-                    style: {
-                      fontSize: 14,
-                      color: EDITOR_CHROME.textPrimary,
-                      whiteSpace: "nowrap"
-                    },
-                    children: "AI \u5DE5\u4F5C\u76EE\u5F55"
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              items: visibleSessionActivities.map((item) => ({
+                key: item.id,
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
                   "div",
                   {
                     style: {
-                      flex: "0 0 auto"
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      paddingBottom: 4
                     },
-                    children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                        "span",
+                        {
+                          style: {
+                            fontSize: 12,
+                            lineHeight: 1.6,
+                            color: EDITOR_CHROME.textPrimary,
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: 2,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            wordBreak: "break-word"
+                          },
+                          children: item.text
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                        "span",
+                        {
+                          style: {
+                            fontSize: 11,
+                            lineHeight: 1.5,
+                            color: EDITOR_CHROME.textMuted
+                          },
+                          children: formatSessionActivityTime(item.timestamp)
+                        }
+                      )
+                    ]
+                  }
+                )
+              }))
+            }
+          ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "div",
+            {
+              style: {
+                fontSize: 12,
+                lineHeight: 1.6,
+                color: EDITOR_CHROME.textMuted
+              },
+              children: "\u6700\u8FD1\u6682\u65E0\u52A8\u6001"
+            }
+          )
+        ]
+      }
+    );
+    const agentPrimaryMenuLabel = agentPromptToolbarAction.sendTitle.includes("\u8FFD\u52A0") ? "\u8FFD\u52A0" : "\u5FEB\u901F\u6267\u884C";
+    const clearAllEditsToolbarButton = clearAllEditsDisabled ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.DeleteOutlined, {}),
+        awake: agentShellAwake,
+        disabled: true
+      }
+    ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      import_antd9.Popconfirm,
+      {
+        title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+        description: "\u786E\u8BA4\u540E\u4F1A\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\uFF0C\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
+        arrow: { pointAtCenter: true },
+        getPopupContainer: resolveRuntimePopupContainer,
+        okText: "\u6E05\u7A7A",
+        cancelText: "\u53D6\u6D88",
+        okButtonProps: { danger: true },
+        onConfirm: () => runAction(() => options.onClearEdits?.({ skipConfirm: true })),
+        children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          AgentToolbarIconButton,
+          {
+            title: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+            icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.DeleteOutlined, {}),
+            awake: agentShellAwake
+          }
+        ) })
+      }
+    );
+    const htmlFileSaveToolbarButton = options.htmlFileSaveEnabled && options.onHostToolbarAction ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: "\u4FDD\u5B58\u6587\u672C\u548C\u6837\u5F0F",
+        ariaLabel: "\u4FDD\u5B58\u6587\u672C\u548C\u6837\u5F0F",
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SaveOutlined, {}),
+        awake: agentShellAwake,
+        disabled: actionBusy,
+        onClick: () => {
+          void handleHtmlFileSaveAction();
+        }
+      }
+    ) : null;
+    const agentExecutionToolbarButton = inlineInterruptVisible ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      import_antd9.Popconfirm,
+      {
+        title: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
+        description: "\u786E\u8BA4\u540E\u4F1A\u7EC8\u6B62\u5F53\u524D\u9875\u9762\u6240\u6709\u6B63\u5728\u8FDB\u884C\u7684 AI \u4FEE\u6539\u3002",
+        okText: "\u7EC8\u6B62",
+        cancelText: "\u53D6\u6D88",
+        okButtonProps: { danger: true },
+        disabled: agentPromptToolbarAction.interruptDisabled,
+        getPopupContainer: resolveRuntimePopupContainer,
+        onConfirm: () => {
+          void handleInterruptSendPromptToAgent(null);
+        },
+        children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          AgentToolbarIconButton,
+          {
+            title: agentPromptToolbarAction.interruptTitle,
+            ariaLabel: "\u7EC8\u6B62\u5168\u90E8\u4FEE\u6539",
+            icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.PoweroffOutlined, {}),
+            awake: agentShellAwake,
+            active: !agentPromptToolbarAction.interruptDisabled,
+            disabled: agentPromptToolbarAction.interruptDisabled,
+            loading: agentPromptToolbarAction.interruptLoading
+          }
+        ) })
+      }
+    ) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: agentPromptToolbarAction.sendDisabled ? agentPromptToolbarAction.sendTitle : agentPrimaryMenuLabel,
+        ariaLabel: agentPrimaryMenuLabel,
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CaretRightFilled, {}),
+        awake: agentShellAwake,
+        active: inlineSendVisible && !agentPromptToolbarAction.sendDisabled,
+        disabled: !inlineSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy,
+        loading: agentPromptToolbarAction.sendLoading,
+        onClick: () => {
+          void handleConfirmSendPromptToAgent();
+        }
+      }
+    );
+    const handleCopySkillInstallPrompt = import_react14.default.useCallback(async () => {
+      const text = buildSkillInstallPrompt(options.skillInstallSource);
+      try {
+        await copyRuntimeTextToClipboard(text);
+        setSkillInstallPromptCopied(true);
+        if (skillInstallFeedbackTimerRef.current !== null) {
+          window.clearTimeout(skillInstallFeedbackTimerRef.current);
+        }
+        skillInstallFeedbackTimerRef.current = window.setTimeout(() => {
+          setSkillInstallPromptCopied(false);
+          skillInstallFeedbackTimerRef.current = null;
+        }, 1800);
+        notifyRuntimeMessage("success", "\u5B89\u88C5\u63D0\u793A\u8BCD\u5DF2\u590D\u5236\uFF0C\u8BF7\u53D1\u9001\u7ED9 AI");
+      } catch {
+        setSkillInstallPromptCopied(false);
+        notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
+      }
+    }, [options.skillInstallSource]);
+    const handleCopyGlobalPanelPrompt = import_react14.default.useCallback(async () => {
+      const pageUrl = typeof window !== "undefined" && typeof window.location?.href === "string" ? window.location.href : "";
+      const text = buildGlobalPanelPrompt(options.skillInstallSource, pageUrl);
+      try {
+        await copyRuntimeTextToClipboard(text);
+        if (text) {
+          notifyRuntimeMessage("success", "\u5DF2\u590D\u5236\u63D0\u793A\uFF0C\u8BF7\u53D1\u7ED9\u5BF9\u5E94 agent \u5904\u7406");
+          return;
+        }
+        notifyRuntimeMessage("info", "\u63D0\u793A\u8BCD\u6682\u672A\u914D\u7F6E\uFF0C\u5DF2\u590D\u5236\u7A7A\u6A21\u677F");
+      } catch {
+        notifyRuntimeMessage("error", "\u590D\u5236\u5931\u8D25");
+      }
+    }, []);
+    const handleRefreshAgentProviders = import_react14.default.useCallback(async () => {
+      if (!onRefreshAgentProviderAvailabilities) return;
+      setAgentProviderRefreshPending(true);
+      try {
+        await onRefreshAgentProviderAvailabilities(AGENT_MENU_OPTIONS.map((item) => item.value));
+      } finally {
+        setAgentProviderRefreshPending(false);
+      }
+    }, [onRefreshAgentProviderAvailabilities]);
+    const agentProviderSettingsMenuItems = AGENT_MENU_OPTIONS.map(
+      (item) => {
+        const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
+        const agentInstalled = availability?.installed !== false;
+        return {
+          key: `agent-provider:${item.value}`,
+          label: `${item.label}${agentInstalled ? "" : "\uFF08\u672A\u5B89\u88C5\uFF09"}`,
+          disabled: !agentInstalled
+        };
+      }
+    );
+    const selectedAgentMenuKey = uiSettings.agentProvider ? `agent-provider:${uiSettings.agentProvider}` : AGENT_DEFAULT_MENU_KEY;
+    const agentProviderDropdownItems = hideExecutionControls ? [] : [
+      {
+        key: AGENT_DEFAULT_MENU_KEY,
+        label: "\u9ED8\u8BA4"
+      },
+      ...agentProviderSettingsMenuItems
+    ];
+    const handleAgentProviderMenuClick = import_react14.default.useCallback(
+      ({ key }) => {
+        if (key === AGENT_DEFAULT_MENU_KEY) {
+          onUiSettingsChange({ ...uiSettings, agentProvider: null });
+          return;
+        }
+        if (String(key).startsWith("agent-provider:")) {
+          const nextAgent = String(key).replace("agent-provider:", "").trim();
+          if (nextAgent && nextAgent !== uiSettings.agentProvider) {
+            onUiSettingsChange({
+              ...uiSettings,
+              agentProvider: nextAgent
+            });
+          }
+          return;
+        }
+      },
+      [onUiSettingsChange, uiSettings]
+    );
+    const selectedAgentMenuLabel = uiSettings.agentProvider ? AGENT_MENU_OPTIONS.find((item) => item.value === uiSettings.agentProvider)?.label ?? uiSettings.agentProvider : "\u9ED8\u8BA4";
+    const aiExecutionProviderOptions = import_react14.default.useMemo(() => {
+      const merged = /* @__PURE__ */ new Map();
+      for (const item of AI_EXECUTION_PROVIDER_OPTIONS) {
+        merged.set(item.value, item);
+      }
+      for (const item of aiExecutionProviderOptionsState) {
+        const value = normalizeAiExecutionWorkspacePath(item.value);
+        if (!value) continue;
+        merged.set(value, {
+          value,
+          label: normalizeAiExecutionWorkspacePath(item.label) || value,
+          disabled: item.disabled === true
+        });
+      }
+      if (aiExecutionProvider && !merged.has(aiExecutionProvider)) {
+        merged.set(aiExecutionProvider, {
+          value: aiExecutionProvider,
+          label: aiExecutionProvider
+        });
+      }
+      return [...merged.values()];
+    }, [aiExecutionProvider, aiExecutionProviderOptionsState]);
+    const applyAiExecutionConfigResult = import_react14.default.useCallback((result) => {
+      const resultRecord = result && typeof result === "object" ? result : null;
+      const resolved = readAiExecutionConfigResult(result);
+      if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "provider")) {
+        setAiExecutionProvider(normalizeAiExecutionProvider(resultRecord.provider));
+      } else if (resolved.provider) {
+        setAiExecutionProvider(resolved.provider);
+      }
+      if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "workspacePath")) {
+        setAiExecutionWorkspacePath(normalizeAiExecutionWorkspacePath(resultRecord.workspacePath));
+      } else if (resolved.workspacePath) {
+        setAiExecutionWorkspacePath(resolved.workspacePath);
+      }
+      if (resultRecord && Object.prototype.hasOwnProperty.call(resultRecord, "runConcurrency")) {
+        setAiExecutionRunConcurrency(
+          normalizeAiExecutionRunConcurrency(resultRecord.runConcurrency)
+        );
+      } else if (resolved.runConcurrency) {
+        setAiExecutionRunConcurrency(resolved.runConcurrency);
+      }
+      if (resolved.providerOptions?.length) {
+        setAiExecutionProviderOptionsState(resolved.providerOptions);
+      }
+      return resolved;
+    }, []);
+    const commitAiExecutionConfig = import_react14.default.useCallback(
+      async (nextProvider, nextWorkspacePath, nextRunConcurrency) => {
+        const result = await options.onHostToolbarAction?.({
+          type: "set-ai-execution-config",
+          provider: normalizeAiExecutionProvider(nextProvider),
+          workspacePath: normalizeAiExecutionWorkspacePath(nextWorkspacePath),
+          runConcurrency: normalizeAiExecutionRunConcurrency(nextRunConcurrency)
+        });
+        applyAiExecutionConfigResult(result);
+        return result;
+      },
+      [applyAiExecutionConfigResult, options]
+    );
+    const handleRefreshAiExecutionConfig = import_react14.default.useCallback(async () => {
+      if (!options.onHostToolbarAction) return;
+      setAiExecutionConfigBusy(true);
+      try {
+        const result = await options.onHostToolbarAction({
+          type: "get-ai-execution-config"
+        });
+        applyAiExecutionConfigResult(result);
+      } catch (error) {
+        notifyRuntimeMessage("warning", error instanceof Error ? error.message : String(error));
+      } finally {
+        setAiExecutionConfigBusy(false);
+      }
+    }, [applyAiExecutionConfigResult, options]);
+    const handleOpenAiSettingsDialog = import_react14.default.useCallback(() => {
+      setSettingsPopoverOpen(false);
+      setAiSettingsDialogOpen(true);
+    }, []);
+    const handleAiExecutionProviderChange = import_react14.default.useCallback(
+      (nextProvider) => {
+        const normalizedProvider = normalizeAiExecutionProvider(nextProvider);
+        setAiExecutionProvider(normalizedProvider);
+        setAiExecutionConfigBusy(true);
+        void commitAiExecutionConfig(
+          normalizedProvider,
+          aiExecutionWorkspacePath,
+          aiExecutionRunConcurrency
+        ).catch((error) => {
+          notifyRuntimeMessage("error", error instanceof Error ? error.message : String(error));
+        }).finally(() => {
+          setAiExecutionConfigBusy(false);
+        });
+      },
+      [aiExecutionRunConcurrency, aiExecutionWorkspacePath, commitAiExecutionConfig]
+    );
+    const handleAiExecutionWorkspacePathCommit = import_react14.default.useCallback(() => {
+      const normalizedWorkspacePath = normalizeAiExecutionWorkspacePath(aiExecutionWorkspacePath);
+      setAiExecutionWorkspacePath(normalizedWorkspacePath);
+      setAiExecutionConfigBusy(true);
+      void commitAiExecutionConfig(
+        aiExecutionProvider,
+        normalizedWorkspacePath,
+        aiExecutionRunConcurrency
+      ).catch((error) => {
+        notifyRuntimeMessage("error", error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        setAiExecutionConfigBusy(false);
+      });
+    }, [
+      aiExecutionProvider,
+      aiExecutionRunConcurrency,
+      aiExecutionWorkspacePath,
+      commitAiExecutionConfig
+    ]);
+    const handleAiExecutionRunConcurrencyCommit = import_react14.default.useCallback(() => {
+      const normalizedRunConcurrency = normalizeAiExecutionRunConcurrency(aiExecutionRunConcurrency);
+      setAiExecutionRunConcurrency(normalizedRunConcurrency);
+      setAiExecutionConfigBusy(true);
+      void commitAiExecutionConfig(
+        aiExecutionProvider,
+        aiExecutionWorkspacePath,
+        normalizedRunConcurrency
+      ).catch((error) => {
+        notifyRuntimeMessage("error", error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        setAiExecutionConfigBusy(false);
+      });
+    }, [
+      aiExecutionProvider,
+      aiExecutionRunConcurrency,
+      aiExecutionWorkspacePath,
+      commitAiExecutionConfig
+    ]);
+    const browseAiExecutionDirectories = import_react14.default.useCallback(
+      async (path) => {
+        if (!options.onHostToolbarAction) return;
+        setDirectoryPickerBusy(true);
+        setDirectoryPickerError("");
+        try {
+          const result = await options.onHostToolbarAction({
+            type: "browse-ai-execution-directories",
+            ...path ? { path } : {}
+          });
+          const nextState = readLocalDirectoryBrowserResult(result);
+          if (!nextState) {
+            throw new Error("ACP \u672A\u8FD4\u56DE\u53EF\u7528\u76EE\u5F55\u5217\u8868");
+          }
+          setDirectoryPickerState(nextState);
+          setDirectoryPickerPathInput(nextState.path);
+          return nextState;
+        } catch (error) {
+          const message3 = error instanceof Error ? error.message : String(error);
+          setDirectoryPickerError(message3);
+          notifyRuntimeMessage("error", message3);
+          return null;
+        } finally {
+          setDirectoryPickerBusy(false);
+        }
+      },
+      [options]
+    );
+    const loadAiExecutionRecentWorkspaces = import_react14.default.useCallback(async () => {
+      if (!options.onHostToolbarAction) return;
+      setDirectoryPickerRecentError("");
+      try {
+        const result = await options.onHostToolbarAction({
+          type: "list-ai-execution-recent-workspaces"
+        });
+        setDirectoryPickerRecentWorkspaces(normalizeAiExecutionRecentWorkspaces(result));
+      } catch (error) {
+        setDirectoryPickerRecentError(error instanceof Error ? error.message : String(error));
+      }
+    }, [options]);
+    const handleOpenDirectoryPicker = import_react14.default.useCallback(async () => {
+      setDirectoryPickerOpen(true);
+      setSettingsPopoverOpen(false);
+      setDirectoryPickerRecentOpen(false);
+      setDirectoryPickerRecentQuery("");
+      setDirectoryPickerRecentActiveIndex(0);
+      const initialPath = normalizeAiExecutionWorkspacePath(aiExecutionWorkspacePath);
+      setDirectoryPickerPathInput(initialPath);
+      void loadAiExecutionRecentWorkspaces();
+      const opened = await browseAiExecutionDirectories(initialPath || void 0);
+      if (!opened && initialPath) {
+        await browseAiExecutionDirectories(void 0);
+      }
+    }, [aiExecutionWorkspacePath, browseAiExecutionDirectories, loadAiExecutionRecentWorkspaces]);
+    const filteredDirectoryPickerRecentWorkspaces = import_react14.default.useMemo(
+      () => filterAiExecutionRecentWorkspaces(
+        directoryPickerRecentWorkspaces,
+        directoryPickerRecentQuery
+      ),
+      [directoryPickerRecentQuery, directoryPickerRecentWorkspaces]
+    );
+    const directoryPickerBreadcrumbs = import_react14.default.useMemo(
+      () => buildAiWorkspaceBreadcrumbs(directoryPickerState?.path || ""),
+      [directoryPickerState?.path]
+    );
+    import_react14.default.useEffect(() => {
+      if (!directoryPickerState?.path) return;
+      const navigation = directoryPickerBreadcrumbRef.current;
+      if (navigation) navigation.scrollLeft = navigation.scrollWidth;
+    }, [directoryPickerState?.path]);
+    import_react14.default.useEffect(() => {
+      if (!directoryPickerRecentOpen) return;
+      directoryPickerPathFieldRef.current?.querySelector(`#we-runtime-directory-picker-recent-${directoryPickerRecentActiveIndex}`)?.scrollIntoView({ block: "nearest" });
+    }, [
+      directoryPickerRecentActiveIndex,
+      directoryPickerRecentOpen,
+      filteredDirectoryPickerRecentWorkspaces.length
+    ]);
+    const handleDirectoryPickerPathSubmit = import_react14.default.useCallback(() => {
+      const path = normalizeAiExecutionWorkspacePath(directoryPickerPathInput);
+      if (path && !directoryPickerBusy) {
+        setDirectoryPickerRecentOpen(false);
+        void browseAiExecutionDirectories(path);
+      }
+    }, [browseAiExecutionDirectories, directoryPickerBusy, directoryPickerPathInput]);
+    const handleDirectoryPickerPathClick = import_react14.default.useCallback(() => {
+      if (directoryPickerBusy) return;
+      if (!directoryPickerRecentOpen) {
+        setDirectoryPickerRecentQuery("");
+        setDirectoryPickerRecentActiveIndex(0);
+      }
+      if (directoryPickerRecentWorkspaces.length > 0) {
+        setDirectoryPickerRecentOpen(true);
+      }
+    }, [directoryPickerBusy, directoryPickerRecentOpen, directoryPickerRecentWorkspaces.length]);
+    const handleDirectoryPickerPathBlur = import_react14.default.useCallback(() => {
+      window.requestAnimationFrame(() => {
+        if (!directoryPickerPathFieldRef.current?.contains(document.activeElement)) {
+          setDirectoryPickerRecentOpen(false);
+        }
+      });
+    }, []);
+    const handleDirectoryPickerRecentBrowse = import_react14.default.useCallback(
+      (workspacePath) => {
+        if (directoryPickerBusy) return;
+        setDirectoryPickerPathInput(workspacePath);
+        setDirectoryPickerRecentOpen(false);
+        setDirectoryPickerRecentQuery("");
+        void browseAiExecutionDirectories(workspacePath);
+      },
+      [browseAiExecutionDirectories, directoryPickerBusy]
+    );
+    const handleDirectoryPickerRecentRemove = import_react14.default.useCallback(
+      (workspacePath) => {
+        const next = removeAiExecutionRecentWorkspace(
+          directoryPickerRecentWorkspaces,
+          workspacePath
+        );
+        setDirectoryPickerRecentWorkspaces(next);
+        setDirectoryPickerRecentActiveIndex(
+          (index) => Math.max(0, Math.min(index, next.length - 1))
+        );
+        const request = options.onHostToolbarAction?.({
+          type: "remove-ai-execution-recent-workspace",
+          path: workspacePath
+        });
+        if (!request) return;
+        void Promise.resolve(request).then((result) => {
+          setDirectoryPickerRecentWorkspaces(normalizeAiExecutionRecentWorkspaces(result));
+        }).catch(() => void 0);
+      },
+      [directoryPickerRecentWorkspaces, options]
+    );
+    const handleDirectoryPickerPathKeyDown = import_react14.default.useCallback(
+      (event) => {
+        if (event.key === "Escape" && directoryPickerRecentOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          setDirectoryPickerRecentOpen(false);
+          return;
+        }
+        if (event.key === "ArrowDown") {
+          if (directoryPickerBusy || filteredDirectoryPickerRecentWorkspaces.length === 0) {
+            return;
+          }
+          event.preventDefault();
+          setDirectoryPickerRecentOpen(true);
+          setDirectoryPickerRecentActiveIndex(
+            (index) => directoryPickerRecentOpen ? (index + 1) % filteredDirectoryPickerRecentWorkspaces.length : Math.min(index, filteredDirectoryPickerRecentWorkspaces.length - 1)
+          );
+          return;
+        }
+        if (event.key === "ArrowUp" && directoryPickerRecentOpen) {
+          if (filteredDirectoryPickerRecentWorkspaces.length === 0) return;
+          event.preventDefault();
+          setDirectoryPickerRecentActiveIndex(
+            (index) => (index - 1 + filteredDirectoryPickerRecentWorkspaces.length) % filteredDirectoryPickerRecentWorkspaces.length
+          );
+          return;
+        }
+        if (event.key === "Enter" && directoryPickerRecentOpen) {
+          const workspace = filteredDirectoryPickerRecentWorkspaces[directoryPickerRecentActiveIndex];
+          if (!workspace) return;
+          event.preventDefault();
+          handleDirectoryPickerRecentBrowse(workspace.path);
+        }
+      },
+      [
+        directoryPickerBusy,
+        directoryPickerRecentActiveIndex,
+        directoryPickerRecentOpen,
+        filteredDirectoryPickerRecentWorkspaces,
+        handleDirectoryPickerRecentBrowse
+      ]
+    );
+    const handleConfirmDirectoryPicker = import_react14.default.useCallback(async () => {
+      const selectedPath = normalizeAiExecutionWorkspacePath(directoryPickerState?.path);
+      if (!selectedPath) return;
+      setDirectoryPickerBusy(true);
+      try {
+        setAiExecutionWorkspacePath(selectedPath);
+        await commitAiExecutionConfig(aiExecutionProvider, selectedPath, aiExecutionRunConcurrency);
+        const optimisticRecentWorkspaces = recordAiExecutionRecentWorkspace(
+          directoryPickerRecentWorkspaces,
+          selectedPath
+        );
+        setDirectoryPickerRecentWorkspaces(optimisticRecentWorkspaces);
+        const recentWorkspaceRequest = options.onHostToolbarAction?.({
+          type: "record-ai-execution-recent-workspace",
+          path: selectedPath
+        });
+        if (recentWorkspaceRequest) {
+          void Promise.resolve(recentWorkspaceRequest).then((result) => {
+            setDirectoryPickerRecentWorkspaces(normalizeAiExecutionRecentWorkspaces(result));
+          }).catch(() => void 0);
+        }
+        setDirectoryPickerOpen(false);
+        notifyRuntimeMessage("success", "\u5DF2\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55");
+      } catch (error) {
+        const message3 = error instanceof Error ? error.message : String(error);
+        setDirectoryPickerError(message3);
+        notifyRuntimeMessage("error", message3);
+      } finally {
+        setDirectoryPickerBusy(false);
+      }
+    }, [
+      aiExecutionProvider,
+      aiExecutionRunConcurrency,
+      commitAiExecutionConfig,
+      directoryPickerRecentWorkspaces,
+      directoryPickerState?.path,
+      options
+    ]);
+    const aiExecutionProviderLabel = aiExecutionProviderOptions.find((item) => item.value === aiExecutionProvider)?.label ?? aiExecutionProvider ?? DEFAULT_AI_EXECUTION_PROVIDER;
+    const aiExecutionWorkspaceDisplayName = getPathDisplayName(aiExecutionWorkspacePath);
+    const aiExecutionConfigSummary = aiExecutionWorkspaceDisplayName ? `${aiExecutionProviderLabel} / ${aiExecutionWorkspaceDisplayName}` : `${aiExecutionProviderLabel} / \u672A\u914D\u7F6E AI \u5DE5\u4F5C\u76EE\u5F55`;
+    const aiExecutionConfigConfigured = Boolean(aiExecutionWorkspacePath) || options.aiExecutionConfigConfigured === true;
+    const toggleSelectionMode = import_react14.default.useCallback(() => {
+      const nextSelectionModeActive = !selectionModeActive;
+      if (!nextSelectionModeActive) {
+        onDismissSelection?.();
+        onTargetChange(null);
+        onSelectionInteractionLockChange(false);
+        onHoverSelectionSuppressedChange(false);
+      }
+      if (nextSelectionModeActive) {
+        onSelectionInteractionLockChange(false);
+        onHoverSelectionSuppressedChange(false);
+      }
+      onSelectionModeActiveChange(nextSelectionModeActive);
+    }, [
+      onDismissSelection,
+      onHoverSelectionSuppressedChange,
+      onSelectionInteractionLockChange,
+      onSelectionModeActiveChange,
+      onTargetChange,
+      selectionModeActive
+    ]);
+    const handleOpenCommentarySkillDialog = import_react14.default.useCallback(async () => {
+      setSettingsPopoverOpen(false);
+      setCommentarySkillEditorDraft(null);
+      setCommentarySkillEditorError("");
+      setCommentarySkillDraftOptions(commentarySkillOptions);
+      setCommentarySkillDraftIds(
+        resolveCommentarySkillIds(
+          options.commentarySelectedSkillIds,
+          commentarySkillOptions,
+          options.commentarySkillSettingsConfigured === true
+        )
+      );
+      setCommentarySkillDialogOpen(true);
+      try {
+        const settings = await options.onCommentarySkillSettingsLoad?.();
+        if (settings) {
+          const nextSkillOptions = mergeCommentarySkillOptions(settings.skillOptions);
+          setCommentarySkillDraftOptions(nextSkillOptions);
+          setCommentarySkillDraftIds(
+            normalizeCommentarySkillIds(settings.selectedSkillIds, nextSkillOptions)
+          );
+          return;
+        }
+        const selectedSkillIds = await options.onCommentarySkillSelectionLoad?.();
+        if (selectedSkillIds) {
+          setCommentarySkillDraftIds(
+            normalizeCommentarySkillIds(selectedSkillIds, commentarySkillOptions)
+          );
+        }
+      } catch {
+        notifyRuntimeMessage("error", "\u8BFB\u53D6\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
+      }
+    }, [commentarySkillOptions, options]);
+    const handleSaveCommentarySkillSelection = import_react14.default.useCallback(async () => {
+      const nextSkillIds = normalizeCommentarySkillIds(
+        commentarySkillDraftIds,
+        commentarySkillDraftOptions
+      );
+      setCommentarySkillSaving(true);
+      try {
+        const saved = options.onCommentarySkillSettingsChange ? await options.onCommentarySkillSettingsChange({
+          selectedSkillIds: nextSkillIds,
+          skillOptions: commentarySkillDraftOptions
+        }) : void 0;
+        if (!options.onCommentarySkillSettingsChange) {
+          await options.onCommentarySkillSelectionChange?.(nextSkillIds);
+        }
+        const savedSkillOptions = mergeCommentarySkillOptions(
+          saved?.skillOptions ?? commentarySkillDraftOptions
+        );
+        setCommentarySkillDraftOptions(savedSkillOptions);
+        setCommentarySkillDraftIds(
+          normalizeCommentarySkillIds(saved?.selectedSkillIds ?? nextSkillIds, savedSkillOptions)
+        );
+        setCommentarySkillDialogOpen(false);
+        notifyRuntimeMessage("success", "\u6280\u80FD\u914D\u7F6E\u5DF2\u4FDD\u5B58");
+      } catch {
+        notifyRuntimeMessage("error", "\u4FDD\u5B58\u6280\u80FD\u914D\u7F6E\u5931\u8D25");
+      } finally {
+        setCommentarySkillSaving(false);
+      }
+    }, [commentarySkillDraftIds, commentarySkillDraftOptions, options]);
+    const handleSaveCommentaryCustomSkillDraft = import_react14.default.useCallback(() => {
+      if (!commentarySkillEditorDraft) return;
+      const label = commentarySkillEditorDraft.label.trim();
+      const prompt = commentarySkillEditorDraft.prompt.trim();
+      if (!label) {
+        setCommentarySkillEditorError("\u8BF7\u8F93\u5165\u6280\u80FD\u540D\u79F0");
+        return;
+      }
+      if (label.length > 30) {
+        setCommentarySkillEditorError("\u6280\u80FD\u540D\u79F0\u4E0D\u80FD\u8D85\u8FC7 30 \u4E2A\u5B57");
+        return;
+      }
+      if (!prompt) {
+        setCommentarySkillEditorError("\u8BF7\u8F93\u5165\u63D0\u793A\u8BCD");
+        return;
+      }
+      if (prompt.length > 4e3) {
+        setCommentarySkillEditorError("\u63D0\u793A\u8BCD\u4E0D\u80FD\u8D85\u8FC7 4000 \u4E2A\u5B57");
+        return;
+      }
+      const nextSkill = {
+        id: commentarySkillEditorDraft.id,
+        label,
+        prompt,
+        description: summarizeCommentaryCustomSkillPrompt(prompt),
+        custom: true
+      };
+      setCommentarySkillDraftOptions(
+        (current) => mergeCommentarySkillOptions([
+          ...current.filter((skill) => skill.id !== nextSkill.id),
+          nextSkill
+        ])
+      );
+      setCommentarySkillDraftIds(
+        (current) => current.includes(nextSkill.id) ? current : [...current, nextSkill.id]
+      );
+      setCommentarySkillEditorDraft(null);
+      setCommentarySkillEditorError("");
+    }, [commentarySkillEditorDraft]);
+    const commentarySystemSkillDraftOptions = commentarySkillDraftOptions.filter(
+      (skill) => skill.custom !== true
+    );
+    const commentaryCustomSkillDraftOptions = commentarySkillDraftOptions.filter(
+      (skill) => skill.custom === true
+    );
+    const commentarySkillEditorIsExisting = Boolean(
+      commentarySkillEditorDraft && commentaryCustomSkillDraftOptions.some(
+        (skill) => skill.id === commentarySkillEditorDraft.id
+      )
+    );
+    const renderCommentarySkillOption = (skill) => {
+      const checked = commentarySkillDraftIds.includes(skill.id);
+      const toggleSkill = () => {
+        if (commentarySkillSaving) return;
+        setCommentarySkillDraftIds((prev) => {
+          const current = new Set(prev);
+          if (current.has(skill.id)) {
+            current.delete(skill.id);
+          } else {
+            current.add(skill.id);
+          }
+          return normalizeCommentarySkillIds([...current], commentarySkillDraftOptions);
+        });
+      };
+      return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+        "div",
+        {
+          role: "checkbox",
+          "aria-checked": checked,
+          "aria-label": `${skill.label}\uFF1A${checked ? "\u5DF2\u542F\u7528" : "\u672A\u542F\u7528"}`,
+          tabIndex: commentarySkillSaving ? -1 : 0,
+          className: `we-runtime-commentary-skill-dialog__item${commentarySkillSaving ? " we-runtime-commentary-skill-dialog__item--disabled" : ""}`,
+          onClick: toggleSkill,
+          onKeyDown: (event) => {
+            if (commentarySkillSaving) return;
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleSkill();
+          },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-commentary-skill-dialog__copy", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-commentary-skill-dialog__name", children: skill.label }),
+              skill.description ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-commentary-skill-dialog__description", children: skill.description }) : null
+            ] }),
+            skill.custom === true ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Button,
+              {
+                type: "text",
+                size: "small",
+                className: "we-runtime-commentary-skill-dialog__edit",
+                "aria-label": `\u7F16\u8F91${skill.label}`,
+                icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.EditOutlined, {}),
+                disabled: commentarySkillSaving,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  setCommentarySkillEditorDraft({
+                    id: skill.id,
+                    label: skill.label,
+                    prompt: skill.prompt ?? ""
+                  });
+                  setCommentarySkillEditorError("");
+                }
+              }
+            ) : null,
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Checkbox,
+              {
+                checked,
+                disabled: commentarySkillSaving,
+                "aria-label": `${checked ? "\u505C\u7528" : "\u542F\u7528"}${skill.label}`,
+                onClick: (event) => {
+                  event.stopPropagation();
+                },
+                onChange: (event) => {
+                  const nextChecked = event.target.checked;
+                  setCommentarySkillDraftIds((prev) => {
+                    const current = new Set(prev);
+                    if (nextChecked) {
+                      current.add(skill.id);
+                    } else {
+                      current.delete(skill.id);
+                    }
+                    return normalizeCommentarySkillIds([...current], commentarySkillDraftOptions);
+                  });
+                }
+              }
+            )
+          ]
+        },
+        skill.id
+      );
+    };
+    const commentarySkillInstallSettingsItem = {
+      key: "commentary-skill-install",
+      compactControl: true,
+      label: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "we-runtime-settings-card__skill-label", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u6279\u6CE8\u6280\u80FD" }),
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-settings-card__recommended-badge", children: "\u63A8\u8350" })
+      ] }),
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+        import_antd9.Tooltip,
+        {
+          title: skillInstallPromptCopied ? "\u5B89\u88C5\u63D0\u793A\u8BCD\u5DF2\u590D\u5236" : "\u590D\u5236\u5B89\u88C5\u63D0\u793A\u8BCD",
+          placement: "bottomRight",
+          getPopupContainer: resolveRuntimePopupContainer,
+          children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "we-runtime-settings-card__install-button",
+              "aria-label": "\u590D\u5236\u6279\u6CE8\u6280\u80FD\u5B89\u88C5\u63D0\u793A\u8BCD",
+              onClick: (event) => {
+                event.stopPropagation();
+                void handleCopySkillInstallPrompt();
+              },
+              children: skillInstallPromptCopied ? "\u5DF2\u590D\u5236" : "\u5B89\u88C5"
+            }
+          )
+        }
+      )
+    };
+    const agentProviderSettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
+      key: "agent-provider",
+      label: "\u6267\u884C AI",
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+        import_antd9.Dropdown,
+        {
+          trigger: ["click"],
+          placement: "bottomRight",
+          getPopupContainer: resolveRuntimePopupContainer,
+          overlayClassName: "we-runtime-agent-menu-dropdown",
+          menu: {
+            items: agentProviderDropdownItems,
+            onClick: handleAgentProviderMenuClick,
+            selectedKeys: [selectedAgentMenuKey]
+          },
+          onOpenChange: (open) => {
+            if (open) {
+              void handleRefreshAgentProviders();
+            }
+          },
+          children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            import_antd9.Button,
+            {
+              type: "text",
+              size: "small",
+              loading: agentProviderRefreshPending,
+              disabled: agentProviderRefreshPending,
+              style: {
+                color: EDITOR_CHROME.textSecondary,
+                paddingInline: 4,
+                height: 24
+              },
+              children: selectedAgentMenuLabel
+            }
+          )
+        }
+      )
+    };
+    const aiSettingsItem = hideExecutionControls || !options.onHostToolbarAction ? null : {
+      key: "ai-settings",
+      label: "AI \u8BBE\u7F6E",
+      action: handleOpenAiSettingsDialog,
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "we-runtime-settings-card__value", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "3 \u9879" }),
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
+      ] })
+    };
+    const propertyPanelSettingsItem = showPropertyPanelSettingsItem ? {
+      key: "property-panel",
+      label: "\u8BBE\u8BA1\u51B3\u7B56",
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+        import_antd9.Switch,
+        {
+          checked: propertyPanelOpen,
+          onChange: (checked) => {
+            handleTogglePropertyPanel(checked);
+          }
+        }
+      )
+    } : null;
+    const agentRunConcurrencySettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
+      key: "agent-run-concurrency",
+      label: "AI \u5E76\u53D1\u6570",
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+        import_antd9.InputNumber,
+        {
+          min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
+          max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
+          precision: 0,
+          size: "small",
+          value: uiSettings.agentRunConcurrency,
+          onChange: (value) => {
+            onUiSettingsChange({
+              ...uiSettings,
+              agentRunConcurrency: typeof value === "number" ? value : uiSettings.agentRunConcurrency
+            });
+          },
+          style: { width: 64 }
+        }
+      )
+    };
+    const commentarySkillSettingsItem = showCommentarySkillSettings ? {
+      key: "commentary-skills",
+      label: "\u6280\u80FD\u7BA1\u7406",
+      action: handleOpenCommentarySkillDialog,
+      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+        "span",
+        {
+          style: {
+            color: EDITOR_CHROME.textSecondary,
+            fontSize: 13,
+            display: "flex",
+            alignItems: "center",
+            gap: 6
+          },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: commentarySkillDraftIds.length > 0 ? `${commentarySkillDraftIds.length} \u9879` : "\u672A\u9009\u62E9" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
+          ]
+        }
+      )
+    } : null;
+    const settingsItems = [
+      commentarySkillInstallSettingsItem,
+      ...aiSettingsItem ? [aiSettingsItem] : [],
+      ...agentProviderSettingsItem ? [agentProviderSettingsItem] : [],
+      ...commentarySkillSettingsItem ? [commentarySkillSettingsItem] : [],
+      ...propertyPanelSettingsItem ? [propertyPanelSettingsItem] : [],
+      ...agentRunConcurrencySettingsItem ? [agentRunConcurrencySettingsItem] : [],
+      {
+        key: "disable-page-animations",
+        label: "\u5173\u95ED\u9875\u9762\u52A8\u753B",
+        control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          import_antd9.Switch,
+          {
+            checked: uiSettings.disablePageAnimations,
+            onChange: (checked) => {
+              onUiSettingsChange({
+                ...uiSettings,
+                disablePageAnimations: checked
+              });
+            }
+          }
+        )
+      },
+      ...options.documentCommentModeAvailable === false ? [] : [
+        {
+          key: "document-comment-mode",
+          label: "\u6587\u6863\u6279\u6CE8\u6A21\u5F0F",
+          control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            import_antd9.Switch,
+            {
+              checked: uiSettings.documentCommentMode,
+              onChange: (checked) => {
+                onUiSettingsChange({
+                  ...uiSettings,
+                  documentCommentMode: checked
+                });
+              }
+            }
+          )
+        }
+      ],
+      {
+        key: "keyboard-shortcuts",
+        label: "\u5FEB\u6377\u952E",
+        action: () => {
+          setKeyboardShortcutsDialogOpen(true);
+          setSettingsPopoverOpen(false);
+        },
+        control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+          "span",
+          {
+            style: {
+              color: EDITOR_CHROME.textSecondary,
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              gap: 6
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u67E5\u770B" }),
+              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
+            ]
+          }
+        )
+      }
+    ];
+    const settingsCardContent = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "div",
+      {
+        className: "we-runtime-settings-card",
+        onPointerDownCapture: (event) => event.stopPropagation(),
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-settings-card__header", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-settings-card__title", children: "Axhub \u6279\u6CE8" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Tooltip,
+              {
+                title: uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
+                placement: "bottomRight",
+                getPopupContainer: resolveRuntimePopupContainer,
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                  import_antd9.Button,
+                  {
+                    type: "text",
+                    size: "small",
+                    className: "we-runtime-settings-dark-mode-button",
+                    "aria-label": uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
+                    icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.MoonOutlined, { style: { fontSize: 18 } }),
+                    onClick: (event) => {
+                      event.stopPropagation();
+                      onUiSettingsChange({
+                        ...uiSettings,
+                        darkMode: !uiSettings.darkMode
+                      });
+                    },
+                    style: {
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 32,
+                      width: 32,
+                      padding: 0,
+                      color: uiSettings.darkMode ? EDITOR_CHROME.accent : EDITOR_CHROME.textSecondary
+                    }
+                  }
+                )
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-settings-card__list", children: settingsItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "div",
+            {
+              className: [
+                "we-runtime-settings-card__row",
+                item.fullWidth ? "we-runtime-settings-card__row--full" : "",
+                item.compactControl ? "we-runtime-settings-card__row--compact-control" : "",
+                "action" in item && item.action ? "we-runtime-settings-card__row--action" : ""
+              ].filter(Boolean).join(" "),
+              onClick: () => {
+                if ("action" in item && item.action) {
+                  void item.action();
+                }
+              },
+              children: item.fullWidth ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-settings-card__full-control", children: item.control }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
+                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-settings-card__label", children: item.label }),
+                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-settings-card__row-control", children: item.control })
+              ] })
+            },
+            item.key
+          )) })
+        ]
+      }
+    );
+    const settingsToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      import_antd9.Popover,
+      {
+        trigger: "click",
+        placement: "bottomRight",
+        arrow: { pointAtCenter: true },
+        open: settingsPopoverOpen,
+        onOpenChange: (nextOpen) => {
+          if (actionBusy && nextOpen) return;
+          setSettingsPopoverOpen(nextOpen);
+          if (nextOpen) {
+            void handleRefreshAiExecutionConfig();
+          }
+        },
+        content: settingsCardContent,
+        getPopupContainer: resolveRuntimePopupContainer,
+        children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          AgentToolbarIconButton,
+          {
+            title: "\u8BBE\u7F6E",
+            icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SettingOutlined, {}),
+            awake: agentShellAwake,
+            disabled: actionBusy
+          }
+        ) })
+      }
+    );
+    const selectionModeToolbarTitle = `${selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20"}\uFF08${SELECTION_MODE_TOGGLE_SHORTCUT_LABEL}\uFF09`;
+    const selectionModeToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: selectionModeToolbarTitle,
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SelectOutlined, {}),
+        ariaLabel: selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20",
+        awake: agentShellAwake,
+        active: selectionModeActive,
+        disabled: actionBusy,
+        onClick: toggleSelectionMode
+      }
+    );
+    const closeToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(CloseToolIcon, {}),
+        ariaLabel: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
+        awake: agentShellAwake,
+        disabled: actionBusy,
+        onClick: () => {
+          if (options.onRequestFullExit) {
+            void options.onRequestFullExit();
+            return;
+          }
+          minimizeTool();
+        }
+      }
+    );
+    const propertyPanelEmptyState = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "div",
+      {
+        className: "we-runtime-prop-panel__empty-state",
+        style: {
+          padding: "14px 0 4px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            import_antd9.Typography.Text,
+            {
+              style: {
+                color: EDITOR_CHROME.textMuted,
+                fontSize: 12,
+                lineHeight: 1.7
+              },
+              children: "\u6682\u65F6\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u8BBE\u8BA1\u51B3\u7B56\u3002\u53EF\u4EE5\u5148\u751F\u6210\u591A\u4E2A\u8BBE\u8BA1\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            import_antd9.Button,
+            {
+              type: "default",
+              size: "small",
+              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
+              onClick: () => {
+                void handleCopyGlobalPanelPrompt();
+              },
+              style: { alignSelf: "flex-start" },
+              children: "\u590D\u5236\u63D0\u793A\u8BCD"
+            }
+          )
+        ]
+      }
+    );
+    const propertyPanelToggleButton = showPropertyPanelToolbarButton ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarIconButton,
+      {
+        title: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
+        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SlidersOutlined, {}),
+        ariaLabel: "\u8BBE\u8BA1\u51B3\u7B56",
+        awake: agentShellAwake,
+        active: propertyPanelOpen,
+        disabled: actionBusy,
+        onClick: () => handleTogglePropertyPanel()
+      }
+    ) : null;
+    const handleTogglePageZoom = import_react14.default.useCallback(() => {
+      onDismissSelection?.();
+      onTargetChange(null);
+      const nextPageZoomEnabled = !uiSettings.pageZoomEnabled;
+      if (nextPageZoomEnabled) {
+        dockPagePanelRight();
+      }
+      onUiSettingsChange({ ...uiSettings, pageZoomEnabled: nextPageZoomEnabled });
+    }, [dockPagePanelRight, onDismissSelection, onTargetChange, onUiSettingsChange, uiSettings]);
+    const hostToolbarState = import_react14.default.useMemo(() => {
+      const agentOptions = [
+        { value: null, label: "\u9ED8\u8BA4" },
+        ...AGENT_MENU_OPTIONS.map((item) => {
+          const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
+          return {
+            value: item.value,
+            label: item.label,
+            disabled: availability?.installed === false
+          };
+        })
+      ];
+      const annotationEnabled = options.getAnnotationEnabled?.() ?? false;
+      const annotationEnableAvailable = options.getAnnotationEnableAvailable?.() ?? false;
+      const annotationEnableLoading = options.getAnnotationEnableLoading?.() ?? false;
+      return {
+        toolbarMode,
+        visible: isHostToolbarMode,
+        robotState: agentPromptToolbarAction.robotState,
+        robotTitle: agentPromptToolbarAction.robotTitle,
+        robotDisabled: agentPromptToolbarAction.robotDisabled,
+        robotLoading: agentPromptToolbarAction.robotLoading,
+        sendVisible: hostSendVisible,
+        sendTitle: agentPromptToolbarAction.sendTitle,
+        sendDisabled: agentPromptToolbarAction.sendDisabled || actionBusy,
+        sendLoading: agentPromptToolbarAction.sendLoading,
+        interruptVisible: !hideExecutionControls && agentPromptToolbarAction.interruptVisible,
+        interruptTitle: agentPromptToolbarAction.interruptTitle,
+        interruptDisabled: agentPromptToolbarAction.interruptDisabled,
+        interruptLoading: agentPromptToolbarAction.interruptLoading,
+        copyPromptVisible,
+        copyPromptTitle: copyReason ?? "\u590D\u5236 Prompt",
+        copyPromptDisabled,
+        clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+        clearEditsDisabled: clearAllEditsDisabled,
+        propertyPanelVisible: showPropertyPanelToolbarButton,
+        propertyPanelOpen,
+        propertyPanelTitle: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
+        modifiedCount,
+        terminalTaskCount: visibleTerminalTaskCount,
+        selectedAgent: hideExecutionControls ? null : uiSettings.agentProvider,
+        agentOptions: hideExecutionControls ? [] : agentOptions,
+        aiExecutionConfigSummary,
+        aiExecutionConfigConfigured,
+        aiExecutionProvider,
+        aiExecutionWorkspacePath,
+        aiExecutionRunConcurrency,
+        aiExecutionProviderOptions,
+        darkMode: uiSettings.darkMode,
+        disablePageAnimations: uiSettings.disablePageAnimations,
+        pageZoomEnabled: uiSettings.pageZoomEnabled,
+        copySkillInstallPromptDisabled: actionBusy || agentProviderRefreshPending,
+        selectionModeActive,
+        fullExitAvailable: Boolean(options.onRequestFullExit),
+        annotationEnabled,
+        annotationEnableAvailable,
+        annotationEnableLoading,
+        annotationEnableDisabled: Boolean(
+          annotationEnabled || annotationEnableLoading || !annotationEnableAvailable || !options.onEnableAnnotation
+        ),
+        annotationEnableTitle: annotationEnabled ? "\u9700\u6C42\u6807\u6CE8\u5DF2\u5F00\u542F" : "\u5F00\u542F\u9700\u6C42\u6807\u6CE8"
+      };
+    }, [
+      actionBusy,
+      annotationToolbarTick,
+      clearAllEditsDisabled,
+      copyBlocked,
+      copyPromptDisabled,
+      copyPromptVisible,
+      copyReason,
+      agentPromptToolbarAction,
+      agentProviderAvailabilityMap,
+      agentProviderRefreshPending,
+      hideExecutionControls,
+      hostSendVisible,
+      isHostToolbarMode,
+      aiExecutionProvider,
+      aiExecutionProviderOptions,
+      aiExecutionRunConcurrency,
+      aiExecutionWorkspacePath,
+      modifiedCount,
+      options.getAnnotationEnabled,
+      options.getAnnotationEnableAvailable,
+      options.getAnnotationEnableLoading,
+      options.onEnableAnnotation,
+      options.onRequestFullExit,
+      aiExecutionConfigConfigured,
+      aiExecutionConfigSummary,
+      propertyPanelOpen,
+      showPropertyPanelToolbarButton,
+      selectionModeActive,
+      toolbarMode,
+      uiSettings.disablePageAnimations,
+      uiSettings.darkMode,
+      uiSettings.agentProvider,
+      uiSettings.pageZoomEnabled,
+      visibleTerminalTaskCount
+    ]);
+    const onHostToolbarStateChange = props.onHostToolbarStateChange;
+    const optionHostToolbarStateChange = options.onHostToolbarStateChange;
+    import_react14.default.useEffect(() => {
+      onHostToolbarStateChange?.(hostToolbarState);
+      optionHostToolbarStateChange?.(hostToolbarState);
+      for (const listener of hostToolbarListenersRef.current) {
+        try {
+          listener(hostToolbarState);
+        } catch {
+        }
+      }
+    }, [hostToolbarState, onHostToolbarStateChange, optionHostToolbarStateChange]);
+    const runHostToolbarAction = import_react14.default.useCallback(
+      async (action) => {
+        switch (action.type) {
+          case "wake-agent":
+            if (agentPromptToolbarAction.robotDisabled) return false;
+            return wakeAgentForAction();
+          case "send-to-agent":
+            if (!hostSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy) {
+              return false;
+            }
+            await handleConfirmSendPromptToAgent();
+            return true;
+          case "interrupt-agent":
+            if (!agentPromptToolbarAction.interruptVisible || agentPromptToolbarAction.interruptDisabled) {
+              return false;
+            }
+            await handleInterruptSendPromptToAgent(null);
+            return true;
+          case "copy-prompt":
+            if (!copyPromptVisible || copyPromptDisabled) return false;
+            await runAction(options.onCopyPrompt);
+            return true;
+          case "clear-edits":
+            if (clearAllEditsDisabled || !options.onClearEdits) return false;
+            const clearedTarget = await runAction(
+              () => options.onClearEdits?.({
+                ...action.skipConfirm ? { skipConfirm: true } : {},
+                ...action.scope ? { scope: action.scope } : {}
+              })
+            );
+            return Boolean(clearedTarget);
+          case "toggle-property-panel": {
+            const nextOpen = action.open ?? !propertyPanelOpen;
+            handleTogglePropertyPanel(nextOpen);
+            return true;
+          }
+          case "set-active-agent": {
+            const nextAgent = action.agent;
+            if (nextAgent && !AGENT_MENU_OPTIONS.some((item) => item.value === nextAgent)) {
+              return false;
+            }
+            onUiSettingsChange({ ...uiSettings, agentProvider: nextAgent });
+            return true;
+          }
+          case "open-ai-settings":
+            return Boolean(await options.onHostToolbarAction?.(action));
+          case "get-acp-ui-status":
+            return Boolean(await options.onHostToolbarAction?.(action));
+          case "save-html-all":
+          case "save-html-text":
+          case "save-html-style":
+          case "clear-html-style":
+            if (!options.htmlFileSaveEnabled) return false;
+            return Boolean(await options.onHostToolbarAction?.(action));
+          case "get-ai-execution-config":
+          case "set-ai-execution-config":
+          case "browse-ai-execution-directories":
+          case "list-ai-execution-recent-workspaces":
+          case "record-ai-execution-recent-workspace":
+          case "remove-ai-execution-recent-workspace":
+            return Boolean(await options.onHostToolbarAction?.(action));
+          case "disconnect-agent":
+            setAgentWakeChecking(false);
+            setAgentPromptInterrupting(false);
+            setAgentPromptSending(false);
+            setAgentPromptSendingElementKey(null);
+            onAgentVisualStateChange("sleeping");
+            return true;
+          case "copy-skill-install-prompt":
+            await handleCopySkillInstallPrompt();
+            return true;
+          case "copy-global-panel-prompt":
+            await handleCopyGlobalPanelPrompt();
+            return true;
+          case "toggle-dark-mode":
+            onUiSettingsChange({
+              ...uiSettings,
+              darkMode: typeof action.darkMode === "boolean" ? action.darkMode : !uiSettings.darkMode
+            });
+            return true;
+          case "toggle-page-animations":
+            onUiSettingsChange({
+              ...uiSettings,
+              disablePageAnimations: !uiSettings.disablePageAnimations
+            });
+            return true;
+          case "toggle-page-zoom":
+            handleTogglePageZoom();
+            return true;
+          case "toggle-selection-mode": {
+            const nextSelectionModeActive = action.active ?? !selectionModeActive;
+            if (!nextSelectionModeActive) {
+              onDismissSelection?.();
+              onTargetChange(null);
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            if (nextSelectionModeActive) {
+              onSelectionInteractionLockChange(false);
+              onHoverSelectionSuppressedChange(false);
+            }
+            onSelectionModeActiveChange(nextSelectionModeActive);
+            return true;
+          }
+          case "enable-annotation":
+            if (options.getAnnotationEnabled?.()) return true;
+            if (options.getAnnotationEnableLoading?.()) return false;
+            if (!(options.getAnnotationEnableAvailable?.() ?? false)) return false;
+            if (!await options.onEnableAnnotation?.()) return false;
+            setAnnotationToolbarTick((value) => value + 1);
+            return true;
+          case "open-keyboard-shortcuts":
+            setKeyboardShortcutsDialogOpen(true);
+            return true;
+          case "full-exit":
+            if (!options.onRequestFullExit) return false;
+            await options.onRequestFullExit();
+            return true;
+          default:
+            return false;
+        }
+      },
+      [
+        actionBusy,
+        clearAllEditsDisabled,
+        copyBlocked,
+        copyPromptDisabled,
+        copyPromptVisible,
+        agentPromptToolbarAction,
+        handleConfirmSendPromptToAgent,
+        handleCopyGlobalPanelPrompt,
+        handleCopySkillInstallPrompt,
+        handleTogglePropertyPanel,
+        handleInterruptSendPromptToAgent,
+        handleTogglePageZoom,
+        hostSendVisible,
+        onDismissSelection,
+        onAgentVisualStateChange,
+        onHoverSelectionSuppressedChange,
+        onSelectionInteractionLockChange,
+        onTargetChange,
+        onToolMinimizedChange,
+        onSelectionModeActiveChange,
+        onUiSettingsChange,
+        options,
+        propertyPanelOpen,
+        runAction,
+        selectionModeActive,
+        uiSettings,
+        wakeAgentForAction
+      ]
+    );
+    import_react14.default.useImperativeHandle(
+      ref,
+      () => ({
+        setTarget(element) {
+          onTargetChange(element);
+        },
+        setTab() {
+        },
+        getTab() {
+          return "tweak";
+        },
+        refresh() {
+          onRefreshNoteState();
+          requestPanelRefresh();
+          setAnnotationToolbarTick((value) => value + 1);
+          syncPanelMetaState();
+        },
+        setHistory(nextUndo, nextRedo) {
+          setUndoCount(Math.max(0, Math.floor(nextUndo)));
+          setRedoCount(Math.max(0, Math.floor(nextRedo)));
+          syncPanelMetaState();
+        },
+        getPosition() {
+          return showExpandedPanel ? pagePanelPositionRef.current : toolbarPositionRef.current;
+        },
+        setPosition(position) {
+          applyPanelPosition(position);
+        },
+        enterCommentInput(mode = "bubble-card") {
+          if (toolMinimized) {
+            restoreTool();
+          }
+          onUiModeChange(mode);
+          onRefreshNoteState();
+        },
+        enterInlineTextEdit() {
+          if (toolMinimized) {
+            restoreTool();
+          }
+          onInlineTextEditingChange?.(true);
+        },
+        getHostToolbarState() {
+          return hostToolbarState;
+        },
+        subscribeHostToolbarState(listener) {
+          hostToolbarListenersRef.current.add(listener);
+          listener(hostToolbarState);
+          return () => {
+            hostToolbarListenersRef.current.delete(listener);
+          };
+        },
+        runHostToolbarAction
+      }),
+      [
+        applyPanelPosition,
+        hostToolbarState,
+        onInlineTextEditingChange,
+        onRefreshNoteState,
+        onTargetChange,
+        onUiModeChange,
+        requestPanelRefresh,
+        restoreTool,
+        runHostToolbarAction,
+        showExpandedPanel,
+        syncPanelMetaState,
+        toolMinimized
+      ]
+    );
+    const pageConfigPanelHeader = showExpandedPanel ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "div",
+      {
+        ref: pagePanelHeaderRef,
+        className: "we-runtime-page-config-panel__header we-runtime-prop-panel__drag-handle",
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-prop-panel__header-title-group", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-prop-panel__header-title", children: "\u8BBE\u8BA1\u51B3\u7B56" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Tooltip,
+              {
+                title: PROPERTY_PANEL_HELP_TOOLTIP,
+                placement: "bottomRight",
+                arrow: { pointAtCenter: true },
+                getPopupContainer: resolveRuntimePopupContainer,
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                  import_antd9.Button,
+                  {
+                    type: "text",
+                    size: "small",
+                    className: "we-runtime-prop-panel__header-action we-runtime-prop-panel__header-help",
+                    "aria-label": "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
+                    title: "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
+                    icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.QuestionCircleOutlined, {})
+                  }
+                )
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "div",
+            {
+              className: "we-runtime-prop-panel__header-actions",
+              onPointerDownCapture: (event) => event.stopPropagation(),
+              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                import_antd9.Button,
+                {
+                  type: "text",
+                  size: "small",
+                  className: "we-runtime-prop-panel__header-action",
+                  "aria-label": "\u590D\u5236\u63D0\u793A\u8BCD",
+                  title: "\u590D\u5236\u63D0\u793A\u8BCD",
+                  icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
+                  onClick: () => {
+                    void handleCopyGlobalPanelPrompt();
+                  }
+                }
+              )
+            }
+          )
+        ]
+      }
+    ) : null;
+    const expandedToolbar = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+      AgentToolbarShell,
+      {
+        awake: agentShellAwake,
+        connected: acpUiConnected,
+        dragHandleRef: toolbarHeaderRef,
+        style: {
+          alignSelf: "flex-start",
+          width: "fit-content",
+          maxWidth: "calc(100% - 8px)",
+          margin: 0
+        },
+        children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              gap: 8,
+              width: "auto",
+              minWidth: 0
+            },
+            children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_antd9.Space, { size: 4, style: { minWidth: 0, flex: "0 0 auto" }, children: [
+              selectionModeToolbarButton,
+              agentExecutionToolbarButton,
+              copyToolbarButton,
+              propertyPanelToggleButton,
+              clearAllEditsToolbarButton,
+              htmlFileSaveToolbarButton,
+              settingsToolbarButton,
+              closeToolbarButton
+            ] })
+          }
+        )
+      }
+    );
+    const minimizedToolbar = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "button",
+      {
+        className: "we-runtime-prop-panel__minimized-trigger we-runtime-prop-panel__drag-handle",
+        ref: minimizedButtonRef,
+        type: "button",
+        "aria-label": "\u5F00\u542F\u7F16\u8F91",
+        title: "\u5F00\u542F\u7F16\u8F91",
+        onClick: restoreTool,
+        style: {
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          overflow: "visible",
+          border: "none",
+          background: "transparent",
+          color: EDITOR_CHROME.textPrimary,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 999,
+          touchAction: "none",
+          pointerEvents: toolMinimized ? "auto" : "none",
+          opacity: toolMinimized ? 1 : 0,
+          transform: toolMinimized ? "scale(1)" : "scale(0.9)",
+          transition: "opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 220ms ease"
+        },
+        children: [
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "span",
+            {
+              "aria-hidden": "true",
+              style: {
+                position: "absolute",
+                inset: 0,
+                borderRadius: 999,
+                background: EDITOR_CHROME.toolbarShellBorder,
+                boxShadow: EDITOR_CHROME.shadowCompact
+              }
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "span",
+            {
+              "aria-hidden": "true",
+              style: {
+                position: "absolute",
+                inset: 1,
+                borderRadius: 999,
+                background: EDITOR_CHROME.surface,
+                boxShadow: EDITOR_CHROME.toolbarShellInset
+              }
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "span",
+            {
+              style: {
+                position: "relative",
+                zIndex: 1,
+                width: 32,
+                height: 32,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: EDITOR_CHROME.textSecondary,
+                transition: "background-color 220ms ease, color 220ms ease, transform 220ms ease"
+              },
+              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(AgentSparkleIcon, {})
+            }
+          ),
+          modifiedCount > 0 ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "span",
+            {
+              style: {
+                position: "absolute",
+                top: -6,
+                right: -6,
+                minWidth: 18,
+                height: 18,
+                paddingInline: 5,
+                borderRadius: 999,
+                background: EDITOR_CHROME.accent,
+                color: "#FFFFFF",
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: "18px",
+                boxShadow: `0 6px 14px ${BRAND_PRIMARY_SHADOW}`,
+                pointerEvents: "none",
+                zIndex: 2
+              },
+              children: modifiedCount > 99 ? "99+" : modifiedCount
+            }
+          ) : null
+        ]
+      }
+    );
+    const pageConfigPanelStyle = {
+      position: "fixed",
+      zIndex: Number(panelStyle.zIndex ?? 10008) + 1,
+      pointerEvents: mobileHideToolbar ? "none" : "auto",
+      opacity: mobileHideToolbar ? 0 : 1,
+      ...pagePanelPosition ? {
+        left: pagePanelPosition.left,
+        top: pagePanelPosition.top,
+        right: "auto",
+        bottom: "auto"
+      } : { right: PROPERTY_PANEL_RIGHT, top: PROPERTY_PANEL_TOP }
+    };
+    const pageConfigPanel = showExpandedPanel ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+      "div",
+      {
+        ref: pagePanelRef,
+        className: "we-runtime-page-config-panel",
+        "data-we-selection-lock-root": "true",
+        style: pageConfigPanelStyle,
+        onPointerDownCapture: () => {
+          onSelectionInteractionLockChange(true);
+        },
+        onFocusCapture: () => {
+          onSelectionInteractionLockChange(true);
+        },
+        onPointerEnter: () => {
+          onHoverSelectionSuppressedChange(true);
+        },
+        onPointerLeave: () => onHoverSelectionSuppressedChange(false),
+        children: [
+          pageConfigPanelHeader,
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+            "div",
+            {
+              ref: pagePanelBodyRef,
+              className: "we-runtime-page-config-panel__body",
+              style: pageConfigPanelBodyStyle,
+              "aria-hidden": false,
+              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                "div",
+                {
+                  onPointerDownCapture: (event) => event.stopPropagation(),
+                  style: { display: "flex", flexDirection: "column", gap: 10 },
+                  children: hasPageTweakEntries ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    ReactPageTweakPanel,
+                    {
+                      entries: pageTweakEntries,
+                      disabled: actionBusy || !options.onUpdateTweakValues,
+                      onChange: (element, patch) => {
+                        if (!options.onUpdateTweakValues) return;
+                        onDismissSelection?.();
+                        onTargetChange(null);
+                        void options.onUpdateTweakValues(element, patch);
+                      },
+                      onClearEntry: options.onClearCurrentElementEdits ? (element) => {
+                        void options.onClearCurrentElementEdits?.(element);
+                      } : void 0,
+                      onLocateEntry: (element) => {
+                        onSelectionInteractionLockChange(false);
+                        onHoverSelectionSuppressedChange(false);
+                        options.onLocateElement?.(element);
+                      }
+                    }
+                  ) : propertyPanelEmptyState
+                }
+              )
+            }
+          )
+        ]
+      }
+    ) : null;
+    return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+        "div",
+        {
+          ref: rootRef,
+          "data-we-selection-lock-root": "true",
+          style: {
+            ...shellStyle,
+            transition: toolbarDragging ? "none" : "left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, border-radius 220ms ease, border-color 220ms ease, background-color 220ms ease",
+            willChange: toolbarDragging ? "left, top" : void 0
+          },
+          onPointerDownCapture: () => {
+            if (toolMinimized) return;
+            onSelectionInteractionLockChange(true);
+          },
+          onFocusCapture: () => {
+            if (toolMinimized) return;
+            onSelectionInteractionLockChange(true);
+          },
+          onPointerEnter: () => {
+            if (!toolMinimized) {
+              onHoverSelectionSuppressedChange(true);
+            }
+          },
+          onPointerLeave: () => onHoverSelectionSuppressedChange(false),
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
+            isHostToolbarMode ? null : toolMinimized ? minimizedToolbar : expandedToolbar,
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Modal,
+              {
+                title: "AI \u8BBE\u7F6E",
+                open: aiSettingsDialogOpen,
+                centered: true,
+                width: 500,
+                className: "we-runtime-ai-settings-modal",
+                getContainer: false,
+                onCancel: () => setAiSettingsDialogOpen(false),
+                footer: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      onClick: () => setAiSettingsDialogOpen(false),
+                      children: "\u5B8C\u6210"
+                    },
+                    "done"
+                  )
+                ],
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-ai-settings-dialog", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-ai-settings-dialog__row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("label", { className: "we-runtime-ai-settings-dialog__label", htmlFor: "we-ai-provider", children: "\u6267\u884C AI" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-ai-settings-dialog__control", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      import_antd9.Select,
+                      {
+                        id: "we-ai-provider",
+                        value: aiExecutionProvider,
+                        options: aiExecutionProviderOptions,
+                        disabled: aiExecutionConfigBusy,
+                        onChange: handleAiExecutionProviderChange,
+                        getPopupContainer: resolveRuntimePopupContainer,
+                        popupClassName: "we-runtime-ai-execution-provider-dropdown",
+                        placement: "bottomRight",
+                        style: { width: "100%" }
+                      }
+                    ) })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-ai-settings-dialog__row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      "label",
+                      {
+                        className: "we-runtime-ai-settings-dialog__label",
+                        htmlFor: "we-ai-run-concurrency",
+                        children: "AI \u5E76\u53D1\u6570"
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-ai-settings-dialog__control", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      import_antd9.InputNumber,
+                      {
+                        id: "we-ai-run-concurrency",
+                        min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
+                        max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
+                        precision: 0,
+                        value: aiExecutionRunConcurrency,
+                        disabled: aiExecutionConfigBusy,
+                        onChange: (value) => {
+                          setAiExecutionRunConcurrency(normalizeAiExecutionRunConcurrency(value));
+                        },
+                        onBlur: handleAiExecutionRunConcurrencyCommit,
+                        style: { width: "100%" }
+                      }
+                    ) })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-ai-settings-dialog__row", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      "label",
+                      {
+                        className: "we-runtime-ai-settings-dialog__label",
+                        htmlFor: "we-ai-workspace-path",
+                        children: "AI \u5DE5\u4F5C\u76EE\u5F55"
+                      }
+                    ),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-ai-settings-dialog__control", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
                       import_antd9.Input,
                       {
-                        size: "small",
+                        id: "we-ai-workspace-path",
+                        className: "we-runtime-ai-settings-dialog__workspace-input",
                         value: aiExecutionWorkspacePath,
                         placeholder: "\u5DE5\u4F5C\u76EE\u5F55",
                         title: aiExecutionWorkspacePath || void 0,
@@ -19100,7 +21375,6 @@ var PropertyPanelView = import_react14.default.forwardRef(function PropertyPanel
                               import_antd9.Button,
                               {
                                 type: "text",
-                                size: "small",
                                 "aria-label": "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55",
                                 icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.FolderOpenOutlined, {}),
                                 loading: directoryPickerBusy,
@@ -19112,1678 +21386,753 @@ var PropertyPanelView = import_react14.default.forwardRef(function PropertyPanel
                                 onClick: (event) => {
                                   event.stopPropagation();
                                   void handleOpenDirectoryPicker();
-                                },
-                                style: {
-                                  width: 22,
-                                  height: 20,
-                                  paddingInline: 0,
-                                  marginInlineEnd: -4,
-                                  color: EDITOR_CHROME.textSecondary
                                 }
                               }
                             )
                           }
-                        ),
-                        style: { width: 180 }
+                        )
                       }
-                    )
+                    ) })
+                  ] })
+                ] })
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Modal,
+              {
+                title: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-commentary-skill-dialog__title", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: commentarySkillEditorDraft ? commentarySkillEditorIsExisting ? "\u7F16\u8F91\u81EA\u5B9A\u4E49\u6280\u80FD" : "\u65B0\u5EFA\u81EA\u5B9A\u4E49\u6280\u80FD" : "\u6280\u80FD\u7BA1\u7406" }),
+                  !commentarySkillEditorDraft ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-commentary-skill-dialog__subtitle", children: "\u7BA1\u7406\u6279\u6CE8\u4E2D\u53EF\u4F7F\u7528\u7684\u6280\u80FD" }) : null
+                ] }),
+                open: commentarySkillDialogOpen,
+                centered: true,
+                width: 560,
+                className: "we-runtime-commentary-skill-modal",
+                getContainer: false,
+                maskClosable: !commentarySkillSaving,
+                onCancel: () => {
+                  if (commentarySkillSaving) return;
+                  if (commentarySkillEditorDraft) {
+                    setCommentarySkillEditorDraft(null);
+                    setCommentarySkillEditorError("");
+                    return;
                   }
-                )
-              ]
-            }
-          ),
-          showCommentarySkillSettings ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-            "button",
-            {
-              type: "button",
-              onClick: () => {
-                void handleOpenCommentarySkillDialog();
-              },
-              style: {
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                padding: 0,
-                border: 0,
-                background: "transparent",
-                color: "inherit",
-                cursor: "pointer",
-                textAlign: "left"
-              },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  "span",
-                  {
-                    style: {
-                      fontSize: 14,
-                      color: EDITOR_CHROME.textPrimary,
-                      whiteSpace: "nowrap"
-                    },
-                    children: "\u6280\u80FD\u7BA1\u7406"
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                  "span",
-                  {
-                    style: {
-                      color: EDITOR_CHROME.textSecondary,
-                      fontSize: 13,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6
-                    },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: commentarySkillDraftIds.length > 0 ? `${commentarySkillDraftIds.length} \u9879` : "\u672A\u9009\u62E9" }),
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
-                    ]
-                  }
-                )
-              ]
-            }
-          ) : null
-        ]
-      }
-    )
-  };
-  const propertyPanelSettingsItem = showPropertyPanelSettingsItem ? {
-    key: "property-panel",
-    label: "\u8BBE\u8BA1\u51B3\u7B56",
-    control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-      import_antd9.Switch,
-      {
-        checked: propertyPanelOpen,
-        onChange: (checked) => {
-          handleTogglePropertyPanel(checked);
-        }
-      }
-    )
-  } : null;
-  const agentRunConcurrencySettingsItem = hideExecutionControls || options.onHostToolbarAction ? null : {
-    key: "agent-run-concurrency",
-    label: "AI \u5E76\u53D1\u6570",
-    control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-      import_antd9.InputNumber,
-      {
-        min: MIN_AI_EXECUTION_RUN_CONCURRENCY,
-        max: MAX_AI_EXECUTION_RUN_CONCURRENCY,
-        precision: 0,
-        size: "small",
-        value: uiSettings.agentRunConcurrency,
-        onChange: (value) => {
-          onUiSettingsChange({
-            ...uiSettings,
-            agentRunConcurrency: typeof value === "number" ? value : uiSettings.agentRunConcurrency
-          });
-        },
-        style: { width: 64 }
-      }
-    )
-  };
-  const commentarySkillSettingsItem = showCommentarySkillSettings ? {
-    key: "commentary-skills",
-    label: "\u6280\u80FD\u7BA1\u7406",
-    action: handleOpenCommentarySkillDialog,
-    control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-      "span",
-      {
-        style: {
-          color: EDITOR_CHROME.textSecondary,
-          fontSize: 13,
-          display: "flex",
-          alignItems: "center",
-          gap: 6
-        },
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: commentarySkillDraftIds.length > 0 ? `${commentarySkillDraftIds.length} \u9879` : "\u672A\u9009\u62E9" }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
-        ]
-      }
-    )
-  } : null;
-  const settingsItems = [
-    ...aiExecutionConfigSettingsItem ? [aiExecutionConfigSettingsItem] : [],
-    ...agentProviderSettingsItem ? [agentProviderSettingsItem] : [],
-    ...propertyPanelSettingsItem ? [propertyPanelSettingsItem] : [],
-    ...agentRunConcurrencySettingsItem ? [agentRunConcurrencySettingsItem] : [],
-    ...!options.onHostToolbarAction && commentarySkillSettingsItem ? [commentarySkillSettingsItem] : [],
-    {
-      key: "disable-page-animations",
-      label: "\u5173\u95ED\u9875\u9762\u52A8\u753B",
-      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-        import_antd9.Switch,
-        {
-          checked: uiSettings.disablePageAnimations,
-          onChange: (checked) => {
-            onUiSettingsChange({
-              ...uiSettings,
-              disablePageAnimations: checked
-            });
-          }
-        }
-      )
-    },
-    {
-      key: "keyboard-shortcuts",
-      label: "\u5FEB\u6377\u952E",
-      action: () => {
-        setKeyboardShortcutsDialogOpen(true);
-        setSettingsPopoverOpen(false);
-      },
-      control: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-        "span",
-        {
-          style: {
-            color: EDITOR_CHROME.textSecondary,
-            fontSize: 13,
-            display: "flex",
-            alignItems: "center",
-            gap: 6
-          },
-          children: [
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u67E5\u770B" }),
-            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.RightOutlined, { style: { fontSize: 10 } })
-          ]
-        }
-      )
-    }
-  ];
-  const settingsCardContent = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      onPointerDownCapture: (event) => event.stopPropagation(),
-      style: { width: 286 },
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-          "div",
-          {
-            style: {
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              paddingBottom: 12,
-              borderBottom: `1px solid ${EDITOR_CHROME.divider}`,
-              marginBottom: 4
-            },
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                "span",
-                {
-                  style: {
-                    fontSize: 15,
-                    fontWeight: 700,
-                    color: EDITOR_CHROME.textPrimary
-                  },
-                  children: "Axhub \u6279\u6CE8"
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                import_antd9.Tooltip,
-                {
-                  title: uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
-                  placement: "bottomRight",
-                  getPopupContainer: resolveRuntimePopupContainer,
-                  children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                  setCommentarySkillDialogOpen(false);
+                },
+                footer: commentarySkillEditorDraft ? [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
                     import_antd9.Button,
                     {
-                      type: "text",
-                      size: "small",
-                      className: "we-runtime-settings-dark-mode-button",
-                      "aria-label": uiSettings.darkMode ? "\u5173\u95ED\u6DF1\u8272\u6A21\u5F0F" : "\u5F00\u542F\u6DF1\u8272\u6A21\u5F0F",
-                      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.MoonOutlined, { style: { fontSize: 18 } }),
-                      onClick: (event) => {
-                        event.stopPropagation();
-                        onUiSettingsChange({
-                          ...uiSettings,
-                          darkMode: !uiSettings.darkMode
-                        });
+                      onClick: () => {
+                        setCommentarySkillEditorDraft(null);
+                        setCommentarySkillEditorError("");
                       },
-                      style: {
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        height: 32,
-                        width: 32,
-                        padding: 0,
-                        color: uiSettings.darkMode ? EDITOR_CHROME.accent : EDITOR_CHROME.textSecondary
-                      }
-                    }
+                      children: "\u53D6\u6D88"
+                    },
+                    "cancel-editor"
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      onClick: handleSaveCommentaryCustomSkillDraft,
+                      children: "\u4FDD\u5B58"
+                    },
+                    "save-editor"
                   )
-                }
-              )
-            ]
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", flexDirection: "column" }, children: settingsItems.map((item) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "div",
-          {
-            onClick: () => {
-              if ("action" in item && item.action) {
-                void item.action();
+                ] : [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      disabled: commentarySkillSaving,
+                      onClick: () => setCommentarySkillDialogOpen(false),
+                      children: "\u53D6\u6D88"
+                    },
+                    "cancel"
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      loading: commentarySkillSaving,
+                      onClick: () => {
+                        void handleSaveCommentarySkillSelection();
+                      },
+                      children: "\u4FDD\u5B58"
+                    },
+                    "save"
+                  )
+                ],
+                children: commentarySkillEditorDraft ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-commentary-skill-editor", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("label", { className: "we-runtime-commentary-skill-editor__field", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u540D\u79F0" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      import_antd9.Input,
+                      {
+                        value: commentarySkillEditorDraft.label,
+                        maxLength: 30,
+                        autoFocus: true,
+                        placeholder: "\u4F8B\u5982\uFF1A\u7ADE\u54C1\u6587\u6848\u5BA1\u67E5",
+                        onChange: (event) => {
+                          setCommentarySkillEditorDraft(
+                            (current) => current ? { ...current, label: event.target.value } : current
+                          );
+                          setCommentarySkillEditorError("");
+                        }
+                      }
+                    )
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("label", { className: "we-runtime-commentary-skill-editor__field", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u63D0\u793A\u8BCD" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      import_antd9.Input.TextArea,
+                      {
+                        value: commentarySkillEditorDraft.prompt,
+                        maxLength: 4e3,
+                        autoSize: { minRows: 7, maxRows: 12 },
+                        placeholder: "\u8F93\u5165\u5E0C\u671B AI \u6267\u884C\u7684\u63D0\u793A\u8BCD",
+                        onChange: (event) => {
+                          setCommentarySkillEditorDraft(
+                            (current) => current ? { ...current, prompt: event.target.value } : current
+                          );
+                          setCommentarySkillEditorError("");
+                        }
+                      }
+                    )
+                  ] }),
+                  commentarySkillEditorError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-commentary-skill-editor__error", children: commentarySkillEditorError }) : null
+                ] }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-commentary-skill-dialog", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-commentary-skill-dialog__list", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-commentary-skill-dialog__section-title", children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u7CFB\u7EDF\u6280\u80FD" }) }),
+                  commentarySystemSkillDraftOptions.map(renderCommentarySkillOption),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-commentary-skill-dialog__section-title we-runtime-commentary-skill-dialog__section-title--custom", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u6211\u7684\u6280\u80FD" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                      import_antd9.Button,
+                      {
+                        type: "link",
+                        size: "small",
+                        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.PlusOutlined, {}),
+                        disabled: commentarySkillSaving,
+                        onClick: () => {
+                          setCommentarySkillEditorDraft({
+                            id: createCommentaryCustomSkillId(),
+                            label: "",
+                            prompt: ""
+                          });
+                          setCommentarySkillEditorError("");
+                        },
+                        children: "\u81EA\u5B9A\u4E49"
+                      }
+                    )
+                  ] }),
+                  commentaryCustomSkillDraftOptions.length > 0 ? commentaryCustomSkillDraftOptions.map(renderCommentarySkillOption) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-commentary-skill-dialog__empty", children: "\u6682\u65E0\u81EA\u5B9A\u4E49\u6280\u80FD" })
+                ] }) })
               }
-            },
-            style: {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "10px 8px",
-              borderRadius: 10,
-              cursor: "action" in item && item.action ? "pointer" : "default",
-              transition: "background-color 160ms ease, color 160ms ease"
-            },
-            onMouseEnter: (event) => {
-              if (!("action" in item && item.action)) return;
-              event.currentTarget.style.background = EDITOR_CHROME.hoverSubtle;
-            },
-            onMouseLeave: (event) => {
-              event.currentTarget.style.background = "transparent";
-            },
-            children: item.fullWidth ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { width: "100%" }, children: item.control }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                "span",
-                {
-                  style: {
-                    fontSize: 14,
-                    color: EDITOR_CHROME.textPrimary,
-                    whiteSpace: "nowrap",
-                    flex: "0 0 auto"
-                  },
-                  children: item.label
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                "div",
-                {
-                  style: {
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "flex-end",
-                    flex: "0 0 auto"
-                  },
-                  children: item.control
-                }
-              )
-            ] })
-          },
-          item.key
-        )) })
-      ]
-    }
-  );
-  const settingsToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    import_antd9.Popover,
-    {
-      trigger: "click",
-      placement: "bottomRight",
-      open: settingsPopoverOpen,
-      onOpenChange: (nextOpen) => {
-        if (actionBusy && nextOpen) return;
-        setSettingsPopoverOpen(nextOpen);
-        if (nextOpen) {
-          void handleRefreshAiExecutionConfig();
-        }
-      },
-      content: settingsCardContent,
-      getPopupContainer: resolveRuntimePopupContainer,
-      children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { style: { display: "inline-flex" }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-        AgentToolbarIconButton,
-        {
-          title: "\u8BBE\u7F6E",
-          icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SettingOutlined, {}),
-          awake: agentShellAwake,
-          disabled: actionBusy
-        }
-      ) })
-    }
-  );
-  const selectionModeToolbarTitle = `${selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20"}\uFF08${SELECTION_MODE_TOGGLE_SHORTCUT_LABEL}\uFF09`;
-  const selectionModeToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: selectionModeToolbarTitle,
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SelectOutlined, {}),
-      ariaLabel: selectionModeActive ? "\u5173\u95ED\u9009\u62E9\u5143\u7D20" : "\u5F00\u542F\u9009\u62E9\u5143\u7D20",
-      awake: agentShellAwake,
-      active: selectionModeActive,
-      disabled: actionBusy,
-      onClick: toggleSelectionMode
-    }
-  );
-  const closeToolbarButton = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(CloseToolIcon, {}),
-      ariaLabel: options.onRequestFullExit ? "\u9000\u51FA\u6279\u6CE8" : "\u5173\u95ED\u5DE5\u5177\u680F",
-      awake: agentShellAwake,
-      disabled: actionBusy,
-      onClick: () => {
-        if (options.onRequestFullExit) {
-          void options.onRequestFullExit();
-          return;
-        }
-        minimizeTool();
-      }
-    }
-  );
-  const propertyPanelEmptyState = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      className: "we-runtime-prop-panel__empty-state",
-      style: {
-        padding: "14px 0 4px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8
-      },
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          import_antd9.Typography.Text,
-          {
-            style: {
-              color: EDITOR_CHROME.textMuted,
-              fontSize: 12,
-              lineHeight: 1.7
-            },
-            children: "\u6682\u65F6\u6CA1\u6709\u9700\u8981\u5904\u7406\u7684\u8BBE\u8BA1\u51B3\u7B56\u3002\u53EF\u4EE5\u5148\u751F\u6210\u591A\u4E2A\u8BBE\u8BA1\u65B9\u6848\uFF0C\u518D\u8FDB\u884C\u5BF9\u6BD4\u548C\u51B3\u7B56\u3002"
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          import_antd9.Button,
-          {
-            type: "default",
-            size: "small",
-            icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
-            onClick: () => {
-              void handleCopyGlobalPanelPrompt();
-            },
-            style: { alignSelf: "flex-start" },
-            children: "\u590D\u5236\u63D0\u793A\u8BCD"
-          }
-        )
-      ]
-    }
-  );
-  const propertyPanelToggleButton = showPropertyPanelToolbarButton ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarIconButton,
-    {
-      title: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
-      icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.SlidersOutlined, {}),
-      ariaLabel: "\u8BBE\u8BA1\u51B3\u7B56",
-      awake: agentShellAwake,
-      active: propertyPanelOpen,
-      disabled: actionBusy,
-      onClick: () => handleTogglePropertyPanel()
-    }
-  ) : null;
-  const handleTogglePageZoom = import_react14.default.useCallback(() => {
-    onDismissSelection?.();
-    onTargetChange(null);
-    const nextPageZoomEnabled = !uiSettings.pageZoomEnabled;
-    if (nextPageZoomEnabled) {
-      dockPagePanelRight();
-    }
-    onUiSettingsChange({ ...uiSettings, pageZoomEnabled: nextPageZoomEnabled });
-  }, [
-    dockPagePanelRight,
-    onDismissSelection,
-    onTargetChange,
-    onUiSettingsChange,
-    uiSettings
-  ]);
-  const hostToolbarState = import_react14.default.useMemo(() => {
-    const agentOptions = [
-      { value: null, label: "\u9ED8\u8BA4" },
-      ...AGENT_MENU_OPTIONS.map((item) => {
-        const availability = agentProviderAvailabilityMap.get(item.value) ?? null;
-        return {
-          value: item.value,
-          label: item.label,
-          disabled: availability?.installed === false
-        };
-      })
-    ];
-    const annotationEnabled = options.getAnnotationEnabled?.() ?? false;
-    const annotationEnableAvailable = options.getAnnotationEnableAvailable?.() ?? false;
-    const annotationEnableLoading = options.getAnnotationEnableLoading?.() ?? false;
-    return {
-      toolbarMode,
-      visible: isHostToolbarMode,
-      robotState: agentPromptToolbarAction.robotState,
-      robotTitle: agentPromptToolbarAction.robotTitle,
-      robotDisabled: agentPromptToolbarAction.robotDisabled,
-      robotLoading: agentPromptToolbarAction.robotLoading,
-      sendVisible: hostSendVisible,
-      sendTitle: agentPromptToolbarAction.sendTitle,
-      sendDisabled: agentPromptToolbarAction.sendDisabled || actionBusy,
-      sendLoading: agentPromptToolbarAction.sendLoading,
-      interruptVisible: !hideExecutionControls && agentPromptToolbarAction.interruptVisible,
-      interruptTitle: agentPromptToolbarAction.interruptTitle,
-      interruptDisabled: agentPromptToolbarAction.interruptDisabled,
-      interruptLoading: agentPromptToolbarAction.interruptLoading,
-      copyPromptVisible,
-      copyPromptTitle: copyReason ?? "\u590D\u5236 Prompt",
-      copyPromptDisabled,
-      clearEditsTitle: "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-      clearEditsDisabled: clearAllEditsDisabled,
-      propertyPanelVisible: showPropertyPanelToolbarButton,
-      propertyPanelOpen,
-      propertyPanelTitle: propertyPanelOpen ? "\u5173\u95ED\u8BBE\u8BA1\u51B3\u7B56" : "\u6253\u5F00\u8BBE\u8BA1\u51B3\u7B56",
-      modifiedCount,
-      terminalTaskCount: visibleTerminalTaskCount,
-      selectedAgent: hideExecutionControls ? null : uiSettings.agentProvider,
-      agentOptions: hideExecutionControls ? [] : agentOptions,
-      aiExecutionConfigSummary,
-      aiExecutionConfigConfigured,
-      aiExecutionProvider,
-      aiExecutionWorkspacePath,
-      aiExecutionRunConcurrency,
-      aiExecutionProviderOptions,
-      darkMode: uiSettings.darkMode,
-      disablePageAnimations: uiSettings.disablePageAnimations,
-      pageZoomEnabled: uiSettings.pageZoomEnabled,
-      copySkillInstallPromptDisabled: actionBusy || agentProviderRefreshPending,
-      selectionModeActive,
-      fullExitAvailable: Boolean(options.onRequestFullExit),
-      annotationEnabled,
-      annotationEnableAvailable,
-      annotationEnableLoading,
-      annotationEnableDisabled: Boolean(
-        annotationEnabled || annotationEnableLoading || !annotationEnableAvailable || !options.onEnableAnnotation
-      ),
-      annotationEnableTitle: annotationEnabled ? "\u9700\u6C42\u6807\u6CE8\u5DF2\u5F00\u542F" : "\u5F00\u542F\u9700\u6C42\u6807\u6CE8"
-    };
-  }, [
-    actionBusy,
-    annotationToolbarTick,
-    clearAllEditsDisabled,
-    copyBlocked,
-    copyPromptDisabled,
-    copyPromptVisible,
-    copyReason,
-    agentPromptToolbarAction,
-    agentProviderAvailabilityMap,
-    agentProviderRefreshPending,
-    hideExecutionControls,
-    hostSendVisible,
-    isHostToolbarMode,
-    aiExecutionProvider,
-    aiExecutionProviderOptions,
-    aiExecutionRunConcurrency,
-    aiExecutionWorkspacePath,
-    modifiedCount,
-    options.getAnnotationEnabled,
-    options.getAnnotationEnableAvailable,
-    options.getAnnotationEnableLoading,
-    options.onEnableAnnotation,
-    options.onRequestFullExit,
-    aiExecutionConfigConfigured,
-    aiExecutionConfigSummary,
-    propertyPanelOpen,
-    showPropertyPanelToolbarButton,
-    selectionModeActive,
-    toolbarMode,
-    uiSettings.disablePageAnimations,
-    uiSettings.darkMode,
-    uiSettings.agentProvider,
-    uiSettings.pageZoomEnabled,
-    visibleTerminalTaskCount
-  ]);
-  const onHostToolbarStateChange = props.onHostToolbarStateChange;
-  const optionHostToolbarStateChange = options.onHostToolbarStateChange;
-  import_react14.default.useEffect(() => {
-    onHostToolbarStateChange?.(hostToolbarState);
-    optionHostToolbarStateChange?.(hostToolbarState);
-    for (const listener of hostToolbarListenersRef.current) {
-      try {
-        listener(hostToolbarState);
-      } catch {
-      }
-    }
-  }, [
-    hostToolbarState,
-    onHostToolbarStateChange,
-    optionHostToolbarStateChange
-  ]);
-  const runHostToolbarAction = import_react14.default.useCallback(
-    async (action) => {
-      switch (action.type) {
-        case "wake-agent":
-          if (agentPromptToolbarAction.robotDisabled) return false;
-          return wakeAgentForAction();
-        case "send-to-agent":
-          if (!hostSendVisible || agentPromptToolbarAction.sendDisabled || actionBusy) {
-            return false;
-          }
-          await handleConfirmSendPromptToAgent();
-          return true;
-        case "interrupt-agent":
-          if (!agentPromptToolbarAction.interruptVisible || agentPromptToolbarAction.interruptDisabled) {
-            return false;
-          }
-          await handleInterruptSendPromptToAgent(null);
-          return true;
-        case "copy-prompt":
-          if (!copyPromptVisible || copyPromptDisabled) return false;
-          await runAction(options.onCopyPrompt);
-          return true;
-        case "clear-edits":
-          if (clearAllEditsDisabled || !options.onClearEdits) return false;
-          await runAction(
-            () => options.onClearEdits?.({
-              ...action.skipConfirm ? { skipConfirm: true } : {},
-              ...action.scope ? { scope: action.scope } : {}
-            })
-          );
-          return true;
-        case "toggle-property-panel": {
-          const nextOpen = action.open ?? !propertyPanelOpen;
-          handleTogglePropertyPanel(nextOpen);
-          return true;
-        }
-        case "set-active-agent": {
-          const nextAgent = action.agent;
-          if (nextAgent && !AGENT_MENU_OPTIONS.some((item) => item.value === nextAgent)) {
-            return false;
-          }
-          onUiSettingsChange({ ...uiSettings, agentProvider: nextAgent });
-          return true;
-        }
-        case "open-ai-settings":
-          return Boolean(await options.onHostToolbarAction?.(action));
-        case "get-ai-execution-config":
-        case "set-ai-execution-config":
-        case "browse-ai-execution-directories":
-          return Boolean(await options.onHostToolbarAction?.(action));
-        case "disconnect-agent":
-          setAgentWakeChecking(false);
-          setAgentPromptInterrupting(false);
-          setAgentPromptSending(false);
-          setAgentPromptSendingElementKey(null);
-          onAgentVisualStateChange("sleeping");
-          return true;
-        case "copy-skill-install-prompt":
-          await handleCopySkillInstallPrompt();
-          return true;
-        case "copy-global-panel-prompt":
-          await handleCopyGlobalPanelPrompt();
-          return true;
-        case "toggle-dark-mode":
-          onUiSettingsChange({
-            ...uiSettings,
-            darkMode: typeof action.darkMode === "boolean" ? action.darkMode : !uiSettings.darkMode
-          });
-          return true;
-        case "toggle-page-animations":
-          onUiSettingsChange({
-            ...uiSettings,
-            disablePageAnimations: !uiSettings.disablePageAnimations
-          });
-          return true;
-        case "toggle-page-zoom":
-          handleTogglePageZoom();
-          return true;
-        case "toggle-selection-mode": {
-          const nextSelectionModeActive = action.active ?? !selectionModeActive;
-          if (!nextSelectionModeActive) {
-            onDismissSelection?.();
-            onTargetChange(null);
-            onSelectionInteractionLockChange(false);
-            onHoverSelectionSuppressedChange(false);
-          }
-          if (nextSelectionModeActive) {
-            onSelectionInteractionLockChange(false);
-            onHoverSelectionSuppressedChange(false);
-          }
-          onSelectionModeActiveChange(nextSelectionModeActive);
-          return true;
-        }
-        case "enable-annotation":
-          if (options.getAnnotationEnabled?.()) return true;
-          if (options.getAnnotationEnableLoading?.()) return false;
-          if (!(options.getAnnotationEnableAvailable?.() ?? false))
-            return false;
-          if (!await options.onEnableAnnotation?.()) return false;
-          setAnnotationToolbarTick((value) => value + 1);
-          return true;
-        case "open-keyboard-shortcuts":
-          setKeyboardShortcutsDialogOpen(true);
-          return true;
-        case "full-exit":
-          if (!options.onRequestFullExit) return false;
-          await options.onRequestFullExit();
-          return true;
-        default:
-          return false;
-      }
-    },
-    [
-      actionBusy,
-      clearAllEditsDisabled,
-      copyBlocked,
-      copyPromptDisabled,
-      copyPromptVisible,
-      agentPromptToolbarAction,
-      handleConfirmSendPromptToAgent,
-      handleCopyGlobalPanelPrompt,
-      handleCopySkillInstallPrompt,
-      handleTogglePropertyPanel,
-      handleInterruptSendPromptToAgent,
-      handleTogglePageZoom,
-      hostSendVisible,
-      onDismissSelection,
-      onAgentVisualStateChange,
-      onHoverSelectionSuppressedChange,
-      onSelectionInteractionLockChange,
-      onTargetChange,
-      onToolMinimizedChange,
-      onSelectionModeActiveChange,
-      onUiSettingsChange,
-      options,
-      propertyPanelOpen,
-      runAction,
-      selectionModeActive,
-      uiSettings,
-      wakeAgentForAction
-    ]
-  );
-  import_react14.default.useImperativeHandle(
-    ref,
-    () => ({
-      setTarget(element) {
-        onTargetChange(element);
-      },
-      setTab() {
-      },
-      getTab() {
-        return "tweak";
-      },
-      refresh() {
-        onRefreshNoteState();
-        requestPanelRefresh();
-        setAnnotationToolbarTick((value) => value + 1);
-        syncPanelMetaState();
-      },
-      setHistory(nextUndo, nextRedo) {
-        setUndoCount(Math.max(0, Math.floor(nextUndo)));
-        setRedoCount(Math.max(0, Math.floor(nextRedo)));
-        syncPanelMetaState();
-      },
-      getPosition() {
-        return showExpandedPanel ? pagePanelPositionRef.current : toolbarPositionRef.current;
-      },
-      setPosition(position) {
-        applyPanelPosition(position);
-      },
-      enterCommentInput(mode = "bubble-card") {
-        if (toolMinimized) {
-          restoreTool();
-        }
-        onUiModeChange(mode);
-        onRefreshNoteState();
-      },
-      enterInlineTextEdit() {
-        if (toolMinimized) {
-          restoreTool();
-        }
-        onInlineTextEditingChange?.(true);
-      },
-      getHostToolbarState() {
-        return hostToolbarState;
-      },
-      subscribeHostToolbarState(listener) {
-        hostToolbarListenersRef.current.add(listener);
-        listener(hostToolbarState);
-        return () => {
-          hostToolbarListenersRef.current.delete(listener);
-        };
-      },
-      runHostToolbarAction
-    }),
-    [
-      applyPanelPosition,
-      hostToolbarState,
-      onInlineTextEditingChange,
-      onRefreshNoteState,
-      onTargetChange,
-      onUiModeChange,
-      requestPanelRefresh,
-      restoreTool,
-      runHostToolbarAction,
-      showExpandedPanel,
-      syncPanelMetaState,
-      toolMinimized
-    ]
-  );
-  const pageConfigPanelHeader = showExpandedPanel ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      ref: pagePanelHeaderRef,
-      className: "we-runtime-page-config-panel__header we-runtime-prop-panel__drag-handle",
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-prop-panel__header-title-group", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-prop-panel__header-title", children: "\u8BBE\u8BA1\u51B3\u7B56" }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Tooltip,
-            {
-              title: PROPERTY_PANEL_HELP_TOOLTIP,
-              placement: "bottomRight",
-              arrow: { pointAtCenter: true },
-              getPopupContainer: resolveRuntimePopupContainer,
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                import_antd9.Button,
-                {
-                  type: "text",
-                  size: "small",
-                  className: "we-runtime-prop-panel__header-action we-runtime-prop-panel__header-help",
-                  "aria-label": "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
-                  title: "\u8BBE\u8BA1\u51B3\u7B56\u8BF4\u660E",
-                  icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.QuestionCircleOutlined, {})
-                }
-              )
-            }
-          )
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "div",
-          {
-            className: "we-runtime-prop-panel__header-actions",
-            onPointerDownCapture: (event) => event.stopPropagation(),
-            children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-              import_antd9.Button,
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Modal,
               {
-                type: "text",
-                size: "small",
-                className: "we-runtime-prop-panel__header-action",
-                "aria-label": "\u590D\u5236\u63D0\u793A\u8BCD",
-                title: "\u590D\u5236\u63D0\u793A\u8BCD",
-                icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CopyOutlined, {}),
-                onClick: () => {
-                  void handleCopyGlobalPanelPrompt();
-                }
-              }
-            )
-          }
-        )
-      ]
-    }
-  ) : null;
-  const expandedToolbar = /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-    AgentToolbarShell,
-    {
-      awake: agentShellAwake,
-      dragHandleRef: toolbarHeaderRef,
-      style: {
-        alignSelf: "flex-start",
-        width: "fit-content",
-        maxWidth: "calc(100% - 8px)",
-        margin: 0
-      },
-      children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-        "div",
-        {
-          style: {
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-start",
-            gap: 8,
-            width: "auto",
-            minWidth: 0
-          },
-          children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_antd9.Space, { size: 4, style: { minWidth: 0, flex: "0 0 auto" }, children: [
-            selectionModeToolbarButton,
-            agentExecutionToolbarButton,
-            copyToolbarButton,
-            propertyPanelToggleButton,
-            clearAllEditsToolbarButton,
-            settingsToolbarButton,
-            closeToolbarButton
-          ] })
-        }
-      )
-    }
-  );
-  const minimizedToolbar = /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "button",
-    {
-      className: "we-runtime-prop-panel__minimized-trigger we-runtime-prop-panel__drag-handle",
-      ref: minimizedButtonRef,
-      type: "button",
-      "aria-label": "\u5F00\u542F\u7F16\u8F91",
-      title: "\u5F00\u542F\u7F16\u8F91",
-      onClick: restoreTool,
-      style: {
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        overflow: "visible",
-        border: "none",
-        background: "transparent",
-        color: EDITOR_CHROME.textPrimary,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 999,
-        touchAction: "none",
-        pointerEvents: toolMinimized ? "auto" : "none",
-        opacity: toolMinimized ? 1 : 0,
-        transform: toolMinimized ? "scale(1)" : "scale(0.9)",
-        transition: "opacity 220ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), filter 220ms ease"
-      },
-      children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "span",
-          {
-            "aria-hidden": "true",
-            style: {
-              position: "absolute",
-              inset: 0,
-              borderRadius: 999,
-              background: EDITOR_CHROME.toolbarShellBorder,
-              boxShadow: EDITOR_CHROME.shadowCompact
-            }
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "span",
-          {
-            "aria-hidden": "true",
-            style: {
-              position: "absolute",
-              inset: 1,
-              borderRadius: 999,
-              background: EDITOR_CHROME.surface,
-              boxShadow: EDITOR_CHROME.toolbarShellInset
-            }
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "span",
-          {
-            style: {
-              position: "relative",
-              zIndex: 1,
-              width: 32,
-              height: 32,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: EDITOR_CHROME.textSecondary,
-              transition: "background-color 220ms ease, color 220ms ease, transform 220ms ease"
-            },
-            children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(AgentSparkleIcon, {})
-          }
-        ),
-        modifiedCount > 0 ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "span",
-          {
-            style: {
-              position: "absolute",
-              top: -6,
-              right: -6,
-              minWidth: 18,
-              height: 18,
-              paddingInline: 5,
-              borderRadius: 999,
-              background: EDITOR_CHROME.accent,
-              color: "#FFFFFF",
-              fontSize: 10,
-              fontWeight: 700,
-              lineHeight: "18px",
-              boxShadow: `0 6px 14px ${BRAND_PRIMARY_SHADOW}`,
-              pointerEvents: "none",
-              zIndex: 2
-            },
-            children: modifiedCount > 99 ? "99+" : modifiedCount
-          }
-        ) : null
-      ]
-    }
-  );
-  const pageConfigPanelStyle = {
-    position: "fixed",
-    zIndex: Number(panelStyle.zIndex ?? 10008) + 1,
-    pointerEvents: mobileHideToolbar ? "none" : "auto",
-    opacity: mobileHideToolbar ? 0 : 1,
-    ...pagePanelPosition ? {
-      left: pagePanelPosition.left,
-      top: pagePanelPosition.top,
-      right: "auto",
-      bottom: "auto"
-    } : { right: PROPERTY_PANEL_RIGHT, top: PROPERTY_PANEL_TOP }
-  };
-  const pageConfigPanel = showExpandedPanel ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-    "div",
-    {
-      ref: pagePanelRef,
-      className: "we-runtime-page-config-panel",
-      "data-we-selection-lock-root": "true",
-      style: pageConfigPanelStyle,
-      onPointerDownCapture: () => {
-        onSelectionInteractionLockChange(true);
-      },
-      onFocusCapture: () => {
-        onSelectionInteractionLockChange(true);
-      },
-      onPointerEnter: () => {
-        onHoverSelectionSuppressedChange(true);
-      },
-      onPointerLeave: () => onHoverSelectionSuppressedChange(false),
-      children: [
-        pageConfigPanelHeader,
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-          "div",
-          {
-            ref: pagePanelBodyRef,
-            className: "we-runtime-page-config-panel__body",
-            style: pageConfigPanelBodyStyle,
-            "aria-hidden": false,
-            children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-              "div",
-              {
-                onPointerDownCapture: (event) => event.stopPropagation(),
-                style: { display: "flex", flexDirection: "column", gap: 10 },
-                children: hasPageTweakEntries ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  ReactPageTweakPanel,
-                  {
-                    entries: pageTweakEntries,
-                    disabled: actionBusy || !options.onUpdateTweakValues,
-                    onChange: (element, patch) => {
-                      if (!options.onUpdateTweakValues) return;
-                      onDismissSelection?.();
-                      onTargetChange(null);
-                      void options.onUpdateTweakValues(element, patch);
+                title: "\u8BED\u97F3\u5FEB\u6377\u952E",
+                open: shortcutDialogOpen,
+                centered: true,
+                getContainer: false,
+                maskClosable: true,
+                onCancel: closeShortcutDialog,
+                footer: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_antd9.Button, { onClick: closeShortcutDialog, children: "\u53D6\u6D88" }, "cancel"),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      disabled: Boolean(shortcutValidationError),
+                      onClick: handleShortcutSave,
+                      children: "\u4FDD\u5B58"
                     },
-                    onClearEntry: options.onClearCurrentElementEdits ? (element) => {
-                      void options.onClearCurrentElementEdits?.(element);
-                    } : void 0,
-                    onLocateEntry: (element) => {
-                      onSelectionInteractionLockChange(false);
-                      onHoverSelectionSuppressedChange(false);
-                      options.onLocateElement?.(element);
-                    }
-                  }
-                ) : propertyPanelEmptyState
-              }
-            )
-          }
-        )
-      ]
-    }
-  ) : null;
-  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-      "div",
-      {
-        ref: rootRef,
-        "data-we-selection-lock-root": "true",
-        style: {
-          ...shellStyle,
-          transition: toolbarDragging ? "none" : "left 220ms cubic-bezier(0.2, 0.8, 0.2, 1), top 220ms cubic-bezier(0.2, 0.8, 0.2, 1), width 220ms cubic-bezier(0.2, 0.8, 0.2, 1), height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), max-height 220ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease, border-radius 220ms ease, border-color 220ms ease, background-color 220ms ease",
-          willChange: toolbarDragging ? "left, top" : void 0
-        },
-        onPointerDownCapture: () => {
-          if (toolMinimized) return;
-          onSelectionInteractionLockChange(true);
-        },
-        onFocusCapture: () => {
-          if (toolMinimized) return;
-          onSelectionInteractionLockChange(true);
-        },
-        onPointerEnter: () => {
-          if (!toolMinimized) {
-            onHoverSelectionSuppressedChange(true);
-          }
-        },
-        onPointerLeave: () => onHoverSelectionSuppressedChange(false),
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("style", { children: PROPERTY_PANEL_LOCAL_STYLES }),
-          isHostToolbarMode ? null : toolMinimized ? minimizedToolbar : expandedToolbar,
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Modal,
-            {
-              title: "\u6280\u80FD\u7BA1\u7406",
-              open: commentarySkillDialogOpen,
-              centered: true,
-              getContainer: false,
-              maskClosable: !commentarySkillSaving,
-              onCancel: () => {
-                if (commentarySkillSaving) return;
-                setCommentarySkillDialogOpen(false);
-              },
-              footer: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    disabled: commentarySkillSaving,
-                    onClick: () => setCommentarySkillDialogOpen(false),
-                    children: "\u53D6\u6D88"
-                  },
-                  "cancel"
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    type: "primary",
-                    loading: commentarySkillSaving,
-                    onClick: () => {
-                      void handleSaveCommentarySkillSelection();
-                    },
-                    children: "\u4FDD\u5B58"
-                  },
-                  "save"
-                )
-              ],
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: 10 }, children: commentarySkillOptions.map((skill) => {
-                const checked = commentarySkillDraftIds.includes(skill.id);
-                const toggleSkill = () => {
-                  if (commentarySkillSaving) return;
-                  setCommentarySkillDraftIds((prev) => {
-                    const current = new Set(prev);
-                    if (current.has(skill.id)) {
-                      current.delete(skill.id);
-                    } else {
-                      current.add(skill.id);
-                    }
-                    return normalizeCommentarySkillIds(
-                      [...current],
-                      commentarySkillOptions
-                    );
-                  });
-                };
-                return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                  "div",
-                  {
-                    role: "checkbox",
-                    "aria-checked": checked,
-                    tabIndex: commentarySkillSaving ? -1 : 0,
-                    onClick: toggleSkill,
-                    onKeyDown: (event) => {
-                      if (commentarySkillSaving) return;
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      toggleSkill();
-                    },
-                    style: {
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      border: `1px solid ${checked ? EDITOR_CHROME.accent : EDITOR_CHROME.border}`,
-                      background: checked ? EDITOR_CHROME.hoverSubtle : EDITOR_CHROME.surface,
-                      cursor: commentarySkillSaving ? "not-allowed" : "pointer",
-                      outline: "none"
-                    },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        import_antd9.Checkbox,
-                        {
-                          checked,
-                          disabled: commentarySkillSaving,
-                          onClick: (event) => {
-                            event.stopPropagation();
-                          },
-                          onChange: (event) => {
-                            const nextChecked = event.target.checked;
-                            setCommentarySkillDraftIds((prev) => {
-                              const current = new Set(prev);
-                              if (nextChecked) {
-                                current.add(skill.id);
-                              } else {
-                                current.delete(skill.id);
-                              }
-                              return normalizeCommentarySkillIds(
-                                [...current],
-                                commentarySkillOptions
-                              );
-                            });
-                          },
-                          children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                            "span",
+                    "save"
+                  )
+                ],
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 16 }, children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "12px 0"
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                            "div",
                             {
                               style: {
-                                color: EDITOR_CHROME.textPrimary,
-                                fontWeight: 600
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: EDITOR_CHROME.textPrimary
                               },
-                              children: skill.label
+                              children: "\u542F\u7528\u8BED\u97F3\u5FEB\u6377\u952E"
                             }
-                          )
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u5F00\u542F\u540E\u624D\u4F1A\u54CD\u5E94\u957F\u6309\u4FEE\u9970\u952E\u548C\u9F20\u6807\u4E2D\u952E\u3002" })
+                        ] }),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                          import_antd9.Switch,
+                          {
+                            checked: shortcutDraft.enabled,
+                            onChange: (checked) => {
+                              handleShortcutDraftChange((prev) => ({
+                                ...prev,
+                                enabled: checked
+                              }));
+                            }
+                          }
+                        )
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        padding: "12px 0",
+                        borderTop: `1px solid ${EDITOR_CHROME.border}`,
+                        borderBottom: `1px solid ${EDITOR_CHROME.border}`
+                      },
+                      children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                            "div",
+                            {
+                              style: {
+                                fontSize: 13,
+                                fontWeight: 600,
+                                color: EDITOR_CHROME.textPrimary
+                              },
+                              children: "\u542F\u7528\u9F20\u6807\u4E2D\u952E\u76D1\u542C"
+                            }
+                          ),
+                          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6279\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
+                        ] }),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                          import_antd9.Switch,
+                          {
+                            checked: shortcutDraft.middleClickEnabled,
+                            onChange: (checked) => {
+                              handleShortcutDraftChange((prev) => ({
+                                ...prev,
+                                middleClickEnabled: checked
+                              }));
+                            }
+                          }
+                        )
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    "div",
+                    {
+                      style: {
+                        display: "grid",
+                        gridTemplateColumns: "1fr 1fr",
+                        gap: 12
+                      },
+                      children: [0, 1].map((index) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                        ShortcutCaptureCard,
+                        {
+                          ref: (node) => {
+                            shortcutCardRefs.current[index] = node;
+                          },
+                          label: `\u5FEB\u6377\u952E ${index + 1}`,
+                          value: shortcutDraft.shortcuts[index] ?? null,
+                          capturing: capturingShortcutIndex === index,
+                          onActivate: () => setCapturingShortcutIndex(index),
+                          onCapture: (key) => {
+                            handleShortcutDraftChange((prev) => {
+                              const nextShortcuts = [
+                                ...prev.shortcuts
+                              ];
+                              nextShortcuts[index] = key;
+                              return {
+                                ...prev,
+                                shortcuts: nextShortcuts
+                              };
+                            });
+                            setCapturingShortcutIndex(null);
+                          },
+                          onCancelCapture: () => setCapturingShortcutIndex(null),
+                          onClear: () => {
+                            handleShortcutDraftChange((prev) => {
+                              const nextShortcuts = [
+                                ...prev.shortcuts
+                              ];
+                              nextShortcuts[index] = null;
+                              return {
+                                ...prev,
+                                shortcuts: nextShortcuts
+                              };
+                            });
+                          }
+                        },
+                        index
+                      ))
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: shortcutCaptureHintStyle, children: [
+                    "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u957F\u6309 ",
+                    COMMENT_SHORTCUT_LONG_PRESS_MS,
+                    "ms \u89E6\u53D1\u3002"
+                  ] }),
+                  shortcutValidationError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: shortcutValidationError }) : null
+                ] })
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Modal,
+              {
+                title: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-directory-picker__title", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { children: "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__description", children: "\u9009\u62E9\u6279\u6CE8\u548C AI \u6587\u4EF6\u64CD\u4F5C\u6240\u5728\u7684\u9879\u76EE\u76EE\u5F55\u3002" })
+                ] }),
+                open: directoryPickerOpen,
+                centered: true,
+                width: 720,
+                className: "we-runtime-directory-picker-modal",
+                getContainer: false,
+                closeIcon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                  import_antd9.Tooltip,
+                  {
+                    title: "\u5173\u95ED\u76EE\u5F55\u9009\u62E9\u5668",
+                    placement: "bottomRight",
+                    getPopupContainer: resolveRuntimePopupContainer,
+                    children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.CloseOutlined, { "aria-label": "\u5173\u95ED\u76EE\u5F55\u9009\u62E9\u5668" })
+                  }
+                ),
+                keyboard: !directoryPickerBusy && !directoryPickerRecentOpen,
+                maskClosable: !directoryPickerBusy,
+                onCancel: () => {
+                  if (!directoryPickerBusy) {
+                    setDirectoryPickerRecentOpen(false);
+                    setDirectoryPickerOpen(false);
+                  }
+                },
+                footer: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      disabled: directoryPickerBusy,
+                      onClick: () => setDirectoryPickerOpen(false),
+                      children: "\u53D6\u6D88"
+                    },
+                    "cancel"
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      loading: directoryPickerBusy,
+                      disabled: !directoryPickerState?.path,
+                      onClick: () => {
+                        void handleConfirmDirectoryPicker();
+                      },
+                      children: "\u9009\u62E9\u5F53\u524D\u76EE\u5F55"
+                    },
+                    "select"
+                  )
+                ],
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                  "div",
+                  {
+                    className: "we-runtime-directory-picker",
+                    onPointerDownCapture: (event) => {
+                      const field = directoryPickerPathFieldRef.current;
+                      if (directoryPickerRecentOpen && field && !event.nativeEvent.composedPath().includes(field)) {
+                        setDirectoryPickerRecentOpen(false);
+                      }
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                        "form",
+                        {
+                          className: "we-runtime-directory-picker__path-row",
+                          autoComplete: "off",
+                          onSubmit: (event) => {
+                            event.preventDefault();
+                            handleDirectoryPickerPathSubmit();
+                          },
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                              "div",
+                              {
+                                ref: directoryPickerPathFieldRef,
+                                className: "we-runtime-directory-picker__path-field",
+                                children: [
+                                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                    import_antd9.Input,
+                                    {
+                                      size: "large",
+                                      value: directoryPickerPathInput,
+                                      placeholder: "\u8F93\u5165\u7EDD\u5BF9\u8DEF\u5F84",
+                                      title: directoryPickerPathInput || void 0,
+                                      role: "combobox",
+                                      "aria-label": "AI \u5DE5\u4F5C\u76EE\u5F55\u7EDD\u5BF9\u8DEF\u5F84",
+                                      "aria-autocomplete": "list",
+                                      "aria-expanded": directoryPickerRecentOpen,
+                                      "aria-controls": "we-runtime-directory-picker-recent-list",
+                                      "aria-activedescendant": directoryPickerRecentOpen && filteredDirectoryPickerRecentWorkspaces.length > 0 ? `we-runtime-directory-picker-recent-${directoryPickerRecentActiveIndex}` : void 0,
+                                      autoComplete: "off",
+                                      spellCheck: false,
+                                      disabled: directoryPickerBusy,
+                                      onChange: (event) => {
+                                        setDirectoryPickerPathInput(event.target.value);
+                                        setDirectoryPickerRecentQuery(event.target.value);
+                                        setDirectoryPickerRecentActiveIndex(0);
+                                        if (directoryPickerRecentWorkspaces.length > 0) {
+                                          setDirectoryPickerRecentOpen(true);
+                                        }
+                                      },
+                                      onClick: handleDirectoryPickerPathClick,
+                                      onBlur: handleDirectoryPickerPathBlur,
+                                      onKeyDown: handleDirectoryPickerPathKeyDown
+                                    }
+                                  ),
+                                  directoryPickerRecentOpen ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                                    "div",
+                                    {
+                                      id: "we-runtime-directory-picker-recent-list",
+                                      role: "listbox",
+                                      "aria-label": "\u6700\u8FD1\u9879\u76EE",
+                                      className: "we-runtime-directory-picker__recent-list",
+                                      children: [
+                                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__recent-heading", children: "\u6700\u8FD1\u9879\u76EE" }),
+                                        filteredDirectoryPickerRecentWorkspaces.length > 0 ? filteredDirectoryPickerRecentWorkspaces.map((workspace, index) => {
+                                          const workspaceName = getAiExecutionRecentWorkspaceName(workspace.path);
+                                          return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                                            "div",
+                                            {
+                                              id: `we-runtime-directory-picker-recent-${index}`,
+                                              role: "option",
+                                              "aria-selected": index === directoryPickerRecentActiveIndex,
+                                              className: `we-runtime-directory-picker__recent-item${index === directoryPickerRecentActiveIndex ? " we-runtime-directory-picker__recent-item--active" : ""}`,
+                                              onPointerMove: () => setDirectoryPickerRecentActiveIndex(index),
+                                              children: [
+                                                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                                                  "button",
+                                                  {
+                                                    type: "button",
+                                                    className: "we-runtime-directory-picker__recent-main",
+                                                    onMouseDown: (event) => event.preventDefault(),
+                                                    onClick: () => handleDirectoryPickerRecentBrowse(workspace.path),
+                                                    children: [
+                                                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.HistoryOutlined, { "aria-hidden": "true" }),
+                                                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "we-runtime-directory-picker__recent-copy", children: [
+                                                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-directory-picker__recent-name", children: workspaceName }),
+                                                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                                          "span",
+                                                          {
+                                                            className: "we-runtime-directory-picker__recent-path",
+                                                            title: workspace.path,
+                                                            children: workspace.path
+                                                          }
+                                                        )
+                                                      ] })
+                                                    ]
+                                                  }
+                                                ),
+                                                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                                  import_antd9.Tooltip,
+                                                  {
+                                                    title: "\u4ECE\u6700\u8FD1\u9879\u76EE\u4E2D\u79FB\u9664",
+                                                    placement: "left",
+                                                    getPopupContainer: resolveRuntimePopupContainer,
+                                                    children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                                      import_antd9.Button,
+                                                      {
+                                                        type: "text",
+                                                        size: "small",
+                                                        className: "we-runtime-directory-picker__recent-remove",
+                                                        "aria-label": `\u4ECE\u6700\u8FD1\u9879\u76EE\u4E2D\u79FB\u9664\uFF1A${workspaceName}`,
+                                                        icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.DeleteOutlined, {}),
+                                                        onMouseDown: (event) => event.preventDefault(),
+                                                        onClick: (event) => {
+                                                          event.stopPropagation();
+                                                          handleDirectoryPickerRecentRemove(workspace.path);
+                                                        }
+                                                      }
+                                                    )
+                                                  }
+                                                )
+                                              ]
+                                            },
+                                            workspace.path
+                                          );
+                                        }) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__recent-empty", children: "\u6CA1\u6709\u5339\u914D\u7684\u6700\u8FD1\u9879\u76EE" })
+                                      ]
+                                    }
+                                  ) : null
+                                ]
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                              import_antd9.Button,
+                              {
+                                size: "large",
+                                htmlType: "submit",
+                                loading: directoryPickerBusy,
+                                disabled: !directoryPickerPathInput.trim(),
+                                children: "\u524D\u5F80"
+                              }
+                            )
+                          ]
                         }
                       ),
-                      skill.description ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        "span",
-                        {
-                          style: {
-                            marginLeft: 24,
-                            color: EDITOR_CHROME.textSecondary,
-                            fontSize: 12,
-                            lineHeight: 1.45
-                          },
-                          children: skill.description
-                        }
-                      ) : null
-                    ]
-                  },
-                  skill.id
-                );
-              }) })
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Modal,
-            {
-              title: "\u8BED\u97F3\u5FEB\u6377\u952E",
-              open: shortcutDialogOpen,
-              centered: true,
-              getContainer: false,
-              maskClosable: true,
-              onCancel: closeShortcutDialog,
-              footer: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_antd9.Button, { onClick: closeShortcutDialog, children: "\u53D6\u6D88" }, "cancel"),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    type: "primary",
-                    disabled: Boolean(shortcutValidationError),
-                    onClick: handleShortcutSave,
-                    children: "\u4FDD\u5B58"
-                  },
-                  "save"
-                )
-              ],
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 16 }, children: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "12px 0"
-                    },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-directory-picker__location", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-directory-picker__location-label", children: "\u4F4D\u7F6E" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-directory-picker__divider" }),
                         /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
                           "div",
                           {
-                            style: {
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: EDITOR_CHROME.textPrimary
-                            },
-                            children: "\u542F\u7528\u8BED\u97F3\u5FEB\u6377\u952E"
+                            ref: directoryPickerBreadcrumbRef,
+                            role: "navigation",
+                            "aria-label": "\u76EE\u5F55\u8DEF\u5F84",
+                            className: "we-runtime-directory-picker__breadcrumbs",
+                            children: directoryPickerBreadcrumbs.map((breadcrumb, index) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_react14.default.Fragment, { children: [
+                              index > 0 ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                import_icons7.RightOutlined,
+                                {
+                                  className: "we-runtime-directory-picker__breadcrumb-separator",
+                                  "aria-hidden": "true"
+                                }
+                              ) : null,
+                              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                import_antd9.Button,
+                                {
+                                  type: "text",
+                                  size: "small",
+                                  className: "we-runtime-directory-picker__breadcrumb",
+                                  title: breadcrumb.path,
+                                  disabled: directoryPickerBusy,
+                                  onClick: () => {
+                                    void browseAiExecutionDirectories(breadcrumb.path);
+                                  },
+                                  children: breadcrumb.label
+                                }
+                              )
+                            ] }, breadcrumb.path))
                           }
                         ),
-                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u5F00\u542F\u540E\u624D\u4F1A\u54CD\u5E94\u957F\u6309\u4FEE\u9970\u952E\u548C\u9F20\u6807\u4E2D\u952E\u3002" })
-                      ] }),
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        import_antd9.Switch,
-                        {
-                          checked: shortcutDraft.enabled,
-                          onChange: (checked) => {
-                            handleShortcutDraftChange((prev) => ({
-                              ...prev,
-                              enabled: checked
-                            }));
-                          }
-                        }
-                      )
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "12px 0",
-                      borderTop: `1px solid ${EDITOR_CHROME.border}`,
-                      borderBottom: `1px solid ${EDITOR_CHROME.border}`
-                    },
-                    children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
-                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                          "div",
-                          {
-                            style: {
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: EDITOR_CHROME.textPrimary
-                            },
-                            children: "\u542F\u7528\u9F20\u6807\u4E2D\u952E\u76D1\u542C"
-                          }
-                        ),
-                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: shortcutCaptureHintStyle, children: "\u9F20\u6807\u4E2D\u952E\u5355\u51FB\u4F1A\u76F4\u63A5\u8FDB\u5165\u6279\u6CE8\u6C14\u6CE1\u5361\u7247\u3002" })
-                      ] }),
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        import_antd9.Switch,
-                        {
-                          checked: shortcutDraft.middleClickEnabled,
-                          onChange: (checked) => {
-                            handleShortcutDraftChange((prev) => ({
-                              ...prev,
-                              middleClickEnabled: checked
-                            }));
-                          }
-                        }
-                      )
-                    ]
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  "div",
-                  {
-                    style: {
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 12
-                    },
-                    children: [0, 1].map((index) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      ShortcutCaptureCard,
-                      {
-                        ref: (node) => {
-                          shortcutCardRefs.current[index] = node;
-                        },
-                        label: `\u5FEB\u6377\u952E ${index + 1}`,
-                        value: shortcutDraft.shortcuts[index] ?? null,
-                        capturing: capturingShortcutIndex === index,
-                        onActivate: () => setCapturingShortcutIndex(index),
-                        onCapture: (key) => {
-                          handleShortcutDraftChange((prev) => {
-                            const nextShortcuts = [
-                              ...prev.shortcuts
-                            ];
-                            nextShortcuts[index] = key;
-                            return {
-                              ...prev,
-                              shortcuts: nextShortcuts
-                            };
-                          });
-                          setCapturingShortcutIndex(null);
-                        },
-                        onCancelCapture: () => setCapturingShortcutIndex(null),
-                        onClear: () => {
-                          handleShortcutDraftChange((prev) => {
-                            const nextShortcuts = [
-                              ...prev.shortcuts
-                            ];
-                            nextShortcuts[index] = null;
-                            return {
-                              ...prev,
-                              shortcuts: nextShortcuts
-                            };
-                          });
-                        }
-                      },
-                      index
-                    ))
-                  }
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: shortcutCaptureHintStyle, children: [
-                  "\u4EC5\u652F\u6301 Shift / Alt / Ctrl / Command\uFF0C\u957F\u6309",
-                  " ",
-                  COMMENT_SHORTCUT_LONG_PRESS_MS,
-                  "ms \u89E6\u53D1\u3002"
-                ] }),
-                shortcutValidationError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: shortcutValidationError }) : null
-              ] })
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Modal,
-            {
-              title: "\u9009\u62E9 AI \u5DE5\u4F5C\u76EE\u5F55",
-              open: directoryPickerOpen,
-              centered: true,
-              width: 720,
-              className: "we-runtime-directory-picker-modal",
-              getContainer: false,
-              maskClosable: !directoryPickerBusy,
-              onCancel: () => {
-                if (!directoryPickerBusy) {
-                  setDirectoryPickerOpen(false);
-                }
-              },
-              footer: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    disabled: directoryPickerBusy,
-                    onClick: () => setDirectoryPickerOpen(false),
-                    children: "\u53D6\u6D88"
-                  },
-                  "cancel"
-                ),
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    type: "primary",
-                    loading: directoryPickerBusy,
-                    disabled: !directoryPickerState?.path,
-                    onClick: () => {
-                      void handleConfirmDirectoryPicker();
-                    },
-                    children: "\u4F7F\u7528\u5F53\u524D\u76EE\u5F55"
-                  },
-                  "select"
-                )
-              ],
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                "div",
-                {
-                  style: {
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 12
-                  },
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                      "div",
-                      {
-                        style: {
-                          display: "grid",
-                          gridTemplateColumns: "minmax(0, 1fr) 40px",
-                          gap: 10
-                        },
-                        children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-directory-picker__divider" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-directory-picker__location-actions", children: [
                           /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                            import_antd9.Input,
+                            import_antd9.Tooltip,
                             {
-                              size: "large",
-                              readOnly: true,
-                              value: directoryPickerState?.path || "",
-                              placeholder: "\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55...",
-                              title: directoryPickerState?.path || "",
-                              style: {
-                                height: 40,
-                                borderRadius: 10,
-                                fontSize: 14
-                              }
+                              title: "\u8FD4\u56DE\u4E3B\u76EE\u5F55",
+                              placement: "bottomRight",
+                              getPopupContainer: resolveRuntimePopupContainer,
+                              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                import_antd9.Button,
+                                {
+                                  type: "text",
+                                  size: "small",
+                                  "aria-label": "\u8FD4\u56DE\u4E3B\u76EE\u5F55",
+                                  icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.HomeOutlined, {}),
+                                  disabled: directoryPickerBusy || !directoryPickerState?.home,
+                                  onClick: () => {
+                                    void browseAiExecutionDirectories(directoryPickerState?.home);
+                                  }
+                                }
+                              )
                             }
                           ),
                           /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                            import_antd9.Button,
+                            import_antd9.Tooltip,
                             {
-                              size: "large",
-                              "aria-label": "\u5237\u65B0\u76EE\u5F55",
-                              icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ReloadOutlined, {}),
-                              loading: directoryPickerBusy,
-                              onClick: () => {
-                                void browseAiExecutionDirectories(directoryPickerState?.path);
-                              },
-                              style: {
-                                height: 40,
-                                width: 40,
-                                paddingInline: 0,
-                                borderRadius: 10
-                              }
-                            }
-                          )
-                        ]
-                      }
-                    ),
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        import_antd9.Button,
-                        {
-                          size: "middle",
-                          icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.HomeOutlined, {}),
-                          disabled: directoryPickerBusy || !directoryPickerState?.home,
-                          onClick: () => {
-                            void browseAiExecutionDirectories(directoryPickerState?.home);
-                          },
-                          style: { height: 36, borderRadius: 10 },
-                          children: "Home"
-                        }
-                      ),
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        import_antd9.Button,
-                        {
-                          size: "middle",
-                          icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ArrowLeftOutlined, {}),
-                          disabled: directoryPickerBusy || !directoryPickerState?.parent,
-                          onClick: () => {
-                            void browseAiExecutionDirectories(
-                              directoryPickerState?.parent ?? void 0
-                            );
-                          },
-                          style: { height: 36, borderRadius: 10 },
-                          children: "\u4E0A\u4E00\u7EA7"
-                        }
-                      )
-                    ] }),
-                    directoryPickerState?.roots.length ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: directoryPickerState.roots.map((rootPath) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      import_antd9.Button,
-                      {
-                        size: "small",
-                        disabled: directoryPickerBusy,
-                        onClick: () => {
-                          void browseAiExecutionDirectories(rootPath);
-                        },
-                        children: rootPath
-                      },
-                      rootPath
-                    )) }) : null,
-                    directoryPickerError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { fontSize: 12, color: EDITOR_CHROME.textDanger }, children: directoryPickerError }) : null,
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      "div",
-                      {
-                        className: "we-runtime-directory-picker__list",
-                        style: {
-                          height: 260,
-                          overflow: "auto",
-                          overscrollBehavior: "contain",
-                          border: `1px solid ${EDITOR_CHROME.border}`,
-                          borderRadius: 10,
-                          padding: "8px 10px"
-                        },
-                        children: directoryPickerState?.directories.length ? directoryPickerState.directories.map((directory) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                          "button",
-                          {
-                            type: "button",
-                            className: "we-runtime-directory-picker__row",
-                            disabled: directoryPickerBusy,
-                            onClick: () => {
-                              void browseAiExecutionDirectories(directory.path);
-                            },
-                            style: {
-                              width: "100%",
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              minHeight: 34,
-                              padding: "5px 8px",
-                              border: 0,
-                              background: "transparent",
-                              color: EDITOR_CHROME.textPrimary,
-                              cursor: directoryPickerBusy ? "default" : "pointer",
-                              textAlign: "left",
-                              borderRadius: 6
-                            },
-                            children: [
-                              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                                import_icons7.FolderOpenOutlined,
+                              title: "\u8FD4\u56DE\u4E0A\u4E00\u7EA7",
+                              placement: "bottomRight",
+                              getPopupContainer: resolveRuntimePopupContainer,
+                              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                                import_antd9.Button,
                                 {
-                                  style: {
-                                    flex: "0 0 auto",
-                                    color: "#059669",
-                                    fontSize: 15
+                                  type: "text",
+                                  size: "small",
+                                  "aria-label": "\u8FD4\u56DE\u4E0A\u4E00\u7EA7",
+                                  icon: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ArrowUpOutlined, {}),
+                                  disabled: directoryPickerBusy || !directoryPickerState?.parent,
+                                  onClick: () => {
+                                    void browseAiExecutionDirectories(
+                                      directoryPickerState?.parent ?? void 0
+                                    );
                                   }
                                 }
-                              ),
-                              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                                "span",
-                                {
-                                  style: {
-                                    minWidth: 0,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                    fontSize: 14
-                                  },
-                                  children: directory.name
-                                }
                               )
-                            ]
+                            }
+                          )
+                        ] })
+                      ] }),
+                      directoryPickerRecentError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-directory-picker__recent-error", role: "status", children: [
+                        "\u6700\u8FD1\u9879\u76EE\u6682\u4E0D\u53EF\u7528\uFF1A",
+                        directoryPickerRecentError
+                      ] }) : null,
+                      directoryPickerError ? /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__error", role: "alert", children: directoryPickerError }) : null,
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__list", children: directoryPickerBusy ? /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "we-runtime-directory-picker__empty", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.ReloadOutlined, { spin: true }),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { children: "\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55..." })
+                      ] }) : directoryPickerState?.directories.length ? directoryPickerState.directories.map((directory) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                        "button",
+                        {
+                          type: "button",
+                          className: "we-runtime-directory-picker__row",
+                          title: directory.path,
+                          onClick: () => {
+                            void browseAiExecutionDirectories(directory.path);
                           },
-                          directory.path
-                        )) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                          children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(import_icons7.FolderOpenOutlined, { "aria-hidden": "true" }),
+                            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "we-runtime-directory-picker__row-name", children: directory.name }),
+                            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                              import_icons7.RightOutlined,
+                              {
+                                className: "we-runtime-directory-picker__row-arrow",
+                                "aria-hidden": "true"
+                              }
+                            )
+                          ]
+                        },
+                        directory.path
+                      )) : /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "we-runtime-directory-picker__empty", children: "\u5F53\u524D\u76EE\u5F55\u6CA1\u6709\u53EF\u8FDB\u5165\u7684\u5B50\u76EE\u5F55\uFF0C\u4F60\u4ECD\u53EF\u4EE5\u9009\u62E9\u5B83\u4F5C\u4E3A AI \u5DE5\u4F5C\u76EE\u5F55\u3002" }) })
+                    ]
+                  }
+                )
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+              import_antd9.Modal,
+              {
+                title: "\u5FEB\u6377\u952E",
+                open: keyboardShortcutsDialogOpen,
+                className: "we-runtime-keyboard-shortcuts-modal",
+                centered: true,
+                getContainer: false,
+                maskClosable: true,
+                onCancel: () => setKeyboardShortcutsDialogOpen(false),
+                footer: [
+                  /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                    import_antd9.Button,
+                    {
+                      type: "primary",
+                      onClick: () => setKeyboardShortcutsDialogOpen(false),
+                      children: "\u77E5\u9053\u4E86"
+                    },
+                    "close"
+                  )
+                ],
+                children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: 0 }, children: [
+                  {
+                    keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + Enter`, "Esc"],
+                    label: "\u4FDD\u5B58\u5E76\u5173\u95ED\u6C14\u6CE1\u5361\u7247",
+                    desc: "\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
+                  },
+                  {
+                    keys: [`${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`],
+                    label: "\u7C98\u8D34\u56FE\u7247\u6216\u6587\u6848",
+                    desc: "AI \u5F00\u542F\u65F6\uFF0C\u5728\u6C14\u6CE1\u5361\u7247\u6216\u5F85\u9009\u6846\u4E2D\u53EF\u76F4\u63A5\u7C98\u8D34\u56FE\u7247\u548C\u6587\u6848"
+                  },
+                  {
+                    keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
+                    label: "\u5F00\u542F / \u5173\u95ED\u9009\u62E9\u5143\u7D20",
+                    desc: "\u5173\u95ED\u540E\u9875\u9762\u70B9\u51FB\u6062\u590D\u539F\u751F\u4EA4\u4E92\uFF0C\u518D\u6309\u4E00\u6B21\u91CD\u65B0\u5F00\u542F\u5143\u7D20\u9009\u62E9"
+                  },
+                  {
+                    keys: [PARENT_SELECT_SHORTCUT_LABEL, PARENT_RETURN_SHORTCUT_LABEL],
+                    label: "\u9009\u62E9\u4E0A / \u4E0B\u7EA7\u5143\u7D20",
+                    desc: "\u2191 \u5207\u6362\u5230\u5F53\u524D\u5143\u7D20\u7684\u4E0A\u4E00\u7EA7\uFF0C\u2193 \u8FD4\u56DE\u521A\u624D\u9009\u4E2D\u7684\u4E0B\u4E00\u7EA7"
+                  }
+                ].map((item) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: 16,
+                      padding: "14px 0",
+                      borderBottom: `1px solid ${EDITOR_CHROME.border}`
+                    },
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { flex: 1, minWidth: 0 }, children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
                           "div",
                           {
                             style: {
-                              height: "100%",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              padding: "28px 12px",
-                              textAlign: "center",
-                              color: EDITOR_CHROME.textMuted,
-                              fontSize: 12
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: EDITOR_CHROME.textPrimary
                             },
-                            children: directoryPickerBusy ? "\u6B63\u5728\u8BFB\u53D6\u76EE\u5F55..." : "\u5F53\u524D\u76EE\u5F55\u6CA1\u6709\u53EF\u8FDB\u5165\u7684\u5B50\u76EE\u5F55"
+                            children: item.label
                           }
-                        )
-                      }
-                    )
-                  ]
-                }
-              )
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-            import_antd9.Modal,
-            {
-              title: "\u5FEB\u6377\u952E",
-              open: keyboardShortcutsDialogOpen,
-              className: "we-runtime-keyboard-shortcuts-modal",
-              centered: true,
-              getContainer: false,
-              maskClosable: true,
-              onCancel: () => setKeyboardShortcutsDialogOpen(false),
-              footer: [
-                /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                  import_antd9.Button,
-                  {
-                    type: "primary",
-                    onClick: () => setKeyboardShortcutsDialogOpen(false),
-                    children: "\u77E5\u9053\u4E86"
-                  },
-                  "close"
-                )
-              ],
-              children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", flexDirection: "column", gap: 0 }, children: [
-                {
-                  keys: [
-                    `${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + Enter`,
-                    "Esc"
-                  ],
-                  label: "\u4FDD\u5B58\u5E76\u5173\u95ED\u6C14\u6CE1\u5361\u7247",
-                  desc: "\u4FDD\u5B58\u5F53\u524D\u6279\u6CE8\u5185\u5BB9\u5E76\u5173\u95ED\u5361\u7247"
-                },
-                {
-                  keys: [
-                    `${navigator.platform?.includes("Mac") ? "\u2318" : "Ctrl"} + V`
-                  ],
-                  label: "\u7C98\u8D34\u56FE\u7247\u6216\u6587\u6848",
-                  desc: "AI \u5F00\u542F\u65F6\uFF0C\u5728\u6C14\u6CE1\u5361\u7247\u6216\u5F85\u9009\u6846\u4E2D\u53EF\u76F4\u63A5\u7C98\u8D34\u56FE\u7247\u548C\u6587\u6848"
-                },
-                {
-                  keys: [SELECTION_MODE_TOGGLE_SHORTCUT_LABEL],
-                  label: "\u5F00\u542F / \u5173\u95ED\u9009\u62E9\u5143\u7D20",
-                  desc: "\u5173\u95ED\u540E\u9875\u9762\u70B9\u51FB\u6062\u590D\u539F\u751F\u4EA4\u4E92\uFF0C\u518D\u6309\u4E00\u6B21\u91CD\u65B0\u5F00\u542F\u5143\u7D20\u9009\u62E9"
-                },
-                {
-                  keys: [PARENT_SELECT_SHORTCUT_LABEL, PARENT_RETURN_SHORTCUT_LABEL],
-                  label: "\u9009\u62E9\u4E0A / \u4E0B\u7EA7\u5143\u7D20",
-                  desc: "\u2191 \u5207\u6362\u5230\u5F53\u524D\u5143\u7D20\u7684\u4E0A\u4E00\u7EA7\uFF0C\u2193 \u8FD4\u56DE\u521A\u624D\u9009\u4E2D\u7684\u4E0B\u4E00\u7EA7"
-                }
-              ].map((item) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
-                "div",
-                {
-                  style: {
-                    display: "flex",
-                    alignItems: "flex-start",
-                    justifyContent: "space-between",
-                    gap: 16,
-                    padding: "14px 0",
-                    borderBottom: `1px solid ${EDITOR_CHROME.border}`
-                  },
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { style: { flex: 1, minWidth: 0 }, children: [
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        "div",
-                        {
-                          style: {
-                            fontSize: 13,
-                            fontWeight: 600,
-                            color: EDITOR_CHROME.textPrimary
-                          },
-                          children: item.label
-                        }
-                      ),
-                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                        "div",
-                        {
-                          style: {
-                            fontSize: 12,
-                            color: EDITOR_CHROME.textMuted,
-                            marginTop: 2
-                          },
-                          children: item.desc
-                        }
-                      )
-                    ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                      "div",
-                      {
-                        style: {
-                          display: "flex",
-                          gap: 4,
-                          flexShrink: 0,
-                          alignItems: "center",
-                          paddingTop: 2
-                        },
-                        children: item.keys.map((key) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
-                          "kbd",
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                          "div",
                           {
                             style: {
-                              display: "inline-block",
-                              padding: "2px 8px",
                               fontSize: 12,
-                              fontFamily: "system-ui, -apple-system, sans-serif",
-                              fontWeight: 500,
-                              lineHeight: "20px",
-                              color: EDITOR_CHROME.textPrimary,
-                              background: EDITOR_CHROME.surfaceMuted,
-                              border: `1px solid ${EDITOR_CHROME.border}`,
-                              borderRadius: 6,
-                              whiteSpace: "nowrap"
+                              color: EDITOR_CHROME.textMuted,
+                              marginTop: 2
                             },
-                            children: key
+                            children: item.desc
+                          }
+                        )
+                      ] }),
+                      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                        "div",
+                        {
+                          style: {
+                            display: "flex",
+                            gap: 4,
+                            flexShrink: 0,
+                            alignItems: "center",
+                            paddingTop: 2
                           },
-                          key
-                        ))
-                      }
-                    )
-                  ]
-                },
-                item.label
-              )) })
-            }
-          )
-        ]
-      }
-    ),
-    pageConfigPanel
-  ] });
-});
+                          children: item.keys.map((key) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+                            "kbd",
+                            {
+                              style: {
+                                display: "inline-block",
+                                padding: "2px 8px",
+                                fontSize: 12,
+                                fontFamily: "system-ui, -apple-system, sans-serif",
+                                fontWeight: 500,
+                                lineHeight: "20px",
+                                color: EDITOR_CHROME.textPrimary,
+                                background: EDITOR_CHROME.surfaceMuted,
+                                border: `1px solid ${EDITOR_CHROME.border}`,
+                                borderRadius: 6,
+                                whiteSpace: "nowrap"
+                              },
+                              children: key
+                            },
+                            key
+                          ))
+                        }
+                      )
+                    ]
+                  },
+                  item.label
+                )) })
+              }
+            )
+          ]
+        }
+      ),
+      pageConfigPanel
+    ] });
+  }
+);
 
 // src/ui/runtime/shared-state.ts
 function syncDraftAgainstSaved(prev, nextSaved, resetDraft) {
@@ -20870,8 +22219,20 @@ function useFeedbackBridge() {
   const app = import_antd10.App.useApp();
   import_react15.default.useEffect(() => {
     setWebEditorFeedbackBridge({
-      confirm: ({ title, content, okText, cancelText, okType, getContainer, onOk, onCancel }) => {
-        app.modal.confirm({
+      confirm: ({
+        title,
+        content,
+        okText,
+        cancelText,
+        secondaryText,
+        okType,
+        getContainer,
+        onOk,
+        onSecondary,
+        onCancel
+      }) => {
+        let modalRef = null;
+        modalRef = app.modal.confirm({
           title,
           content,
           okText,
@@ -20881,6 +22242,23 @@ function useFeedbackBridge() {
           closable: true,
           maskClosable: true,
           getContainer,
+          cancelButtonProps: cancelText ? void 0 : { style: { display: "none" } },
+          footer: secondaryText ? (_originNode, { OkBtn }) => import_react15.default.createElement(
+            import_react15.default.Fragment,
+            null,
+            import_react15.default.createElement(
+              import_antd10.Button,
+              {
+                key: "secondary",
+                onClick: () => {
+                  onSecondary?.();
+                  modalRef?.destroy();
+                }
+              },
+              secondaryText
+            ),
+            import_react15.default.createElement(OkBtn)
+          ) : void 0,
           onOk,
           onCancel
         });
@@ -21964,6 +23342,25 @@ function normalizeRuntimeSkillIds(value) {
   }
   return result;
 }
+function normalizeRuntimeSkillOptions(value) {
+  const result = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const item of value ?? []) {
+    const id = String(item.id ?? "").trim();
+    const label = String(item.label ?? "").trim();
+    if (!id || !label || seen.has(id)) continue;
+    seen.add(id);
+    result.push({
+      id,
+      label,
+      ...item.description?.trim() ? { description: item.description.trim() } : {},
+      ...item.sourceUrl?.trim() ? { sourceUrl: item.sourceUrl.trim() } : {},
+      ...item.prompt?.trim() ? { prompt: item.prompt.trim() } : {},
+      ...item.custom === true ? { custom: true } : {}
+    });
+  }
+  return result;
+}
 function resolveRuntimeSkillIds(value, options, configured) {
   if (!configured) {
     return (options ?? []).map((item) => String(item.id ?? "").trim()).filter(Boolean);
@@ -21997,7 +23394,8 @@ function WebEditorUiApp(props) {
   const [bubbleStyleEditorOpen, setBubbleStyleEditorOpen] = import_react20.default.useState(false);
   const [inlineTextEditing, setInlineTextEditing] = import_react20.default.useState(false);
   const [blockingLayerOpen, setBlockingLayerOpen] = import_react20.default.useState(false);
-  const commentarySkillSelectionManaged = Boolean(propertyPanelOptions?.commentarySkillOptions?.length);
+  const [commentarySkillOptions, setCommentarySkillOptions] = import_react20.default.useState(() => normalizeRuntimeSkillOptions(propertyPanelOptions?.commentarySkillOptions));
+  const commentarySkillSelectionManaged = commentarySkillOptions.length > 0;
   const [commentarySkillSettingsConfigured, setCommentarySkillSettingsConfigured] = import_react20.default.useState(
     () => propertyPanelOptions?.commentarySkillSettingsConfigured === true
   );
@@ -22076,11 +23474,15 @@ function WebEditorUiApp(props) {
   import_react20.default.useEffect(() => {
     if (!commentarySkillSelectionManaged) return;
     const configured = propertyPanelOptions?.commentarySkillSettingsConfigured === true;
+    const nextSkillOptions = normalizeRuntimeSkillOptions(
+      propertyPanelOptions?.commentarySkillOptions
+    );
+    setCommentarySkillOptions(nextSkillOptions);
     setCommentarySkillSettingsConfigured(configured);
     setEnabledCommentarySkillIds(
       resolveRuntimeSkillIds(
         propertyPanelOptions?.commentarySelectedSkillIds,
-        propertyPanelOptions?.commentarySkillOptions,
+        nextSkillOptions,
         configured
       )
     );
@@ -22096,6 +23498,7 @@ function WebEditorUiApp(props) {
     }
     return {
       ...propertyPanelOptions,
+      commentarySkillOptions,
       commentarySelectedSkillIds: enabledCommentarySkillIds,
       commentarySkillSettingsConfigured,
       onCommentarySkillSelectionLoad: async () => {
@@ -22109,11 +23512,41 @@ function WebEditorUiApp(props) {
         await propertyPanelOptions.onCommentarySkillSelectionChange?.(nextSkillIds);
         setCommentarySkillSettingsConfigured(true);
         setEnabledCommentarySkillIds(nextSkillIds);
-      }
+      },
+      onCommentarySkillSettingsLoad: propertyPanelOptions.onCommentarySkillSettingsLoad ? async () => {
+        const loaded = await propertyPanelOptions.onCommentarySkillSettingsLoad?.();
+        const nextSkillOptions = normalizeRuntimeSkillOptions(loaded?.skillOptions);
+        const nextSkillIds = normalizeRuntimeSkillIds(loaded?.selectedSkillIds);
+        setCommentarySkillOptions(nextSkillOptions);
+        setCommentarySkillSettingsConfigured(true);
+        setEnabledCommentarySkillIds(nextSkillIds);
+        return {
+          selectedSkillIds: nextSkillIds,
+          skillOptions: nextSkillOptions
+        };
+      } : void 0,
+      onCommentarySkillSettingsChange: propertyPanelOptions.onCommentarySkillSettingsChange ? async (settings) => {
+        const normalizedSettings = {
+          selectedSkillIds: normalizeRuntimeSkillIds(settings.selectedSkillIds),
+          skillOptions: normalizeRuntimeSkillOptions(settings.skillOptions)
+        };
+        const saved = await propertyPanelOptions.onCommentarySkillSettingsChange?.(normalizedSettings);
+        const nextSettings = saved ?? normalizedSettings;
+        const nextSkillOptions = normalizeRuntimeSkillOptions(nextSettings.skillOptions);
+        const nextSkillIds = normalizeRuntimeSkillIds(nextSettings.selectedSkillIds);
+        setCommentarySkillOptions(nextSkillOptions);
+        setCommentarySkillSettingsConfigured(true);
+        setEnabledCommentarySkillIds(nextSkillIds);
+        return {
+          selectedSkillIds: nextSkillIds,
+          skillOptions: nextSkillOptions
+        };
+      } : void 0
     };
   }, [
     commentarySkillSettingsConfigured,
     commentarySkillSelectionManaged,
+    commentarySkillOptions,
     enabledCommentarySkillIds,
     propertyPanelOptions
   ]);
@@ -22230,7 +23663,10 @@ function WebEditorUiApp(props) {
         return;
       }
       setImageState({
-        images: (propertyPanelOptions?.getAiNoteImages?.(element) ?? []).slice(0, MAX_PROMPT_IMAGE_ATTACHMENTS)
+        images: (propertyPanelOptions?.getAiNoteImages?.(element) ?? []).slice(
+          0,
+          MAX_PROMPT_IMAGE_ATTACHMENTS
+        )
       });
     },
     [imageAttachmentsEnabled, propertyPanelOptions]
@@ -22320,7 +23756,11 @@ function WebEditorUiApp(props) {
       if (!(propertyPanelOptions?.canEditText?.(element) ?? false)) return false;
       if (!textStateRef.current.textDirty) return false;
       const nextValue = textStateRef.current.draftText;
-      await propertyPanelOptions.onTextValueChange(element, nextValue, textStateRef.current.savedText);
+      await propertyPanelOptions.onTextValueChange(
+        element,
+        nextValue,
+        textStateRef.current.savedText
+      );
       if (currentTargetRef.current === element) {
         const nextState = {
           savedText: nextValue,
@@ -22341,7 +23781,8 @@ function WebEditorUiApp(props) {
       if (!(propertyPanelOptions?.canEditAnnotationMarkdown?.(element) ?? false)) return false;
       if (getAnnotationManualEditLocatorState(element).disabled) return false;
       const nextValue = typeof markdownOverride === "string" ? markdownOverride : annotationStateRef.current.annotationDraftMarkdown;
-      if (!options2.force && nextValue === annotationStateRef.current.savedAnnotationMarkdown) return false;
+      if (!options2.force && nextValue === annotationStateRef.current.savedAnnotationMarkdown)
+        return false;
       const savingState = {
         ...annotationStateRef.current,
         annotationDraftMarkdown: nextValue,
@@ -22422,7 +23863,9 @@ function WebEditorUiApp(props) {
       uiModeRef.current = normalizedMode;
       setUiMode(normalizedMode);
       propertyPanelOptions?.onUiModeChange?.(normalizedMode);
-      propertyPanelOptions?.onSelectionChromeVisibleChange?.(!selectionGuards.toolMinimizedRef.current);
+      propertyPanelOptions?.onSelectionChromeVisibleChange?.(
+        !selectionGuards.toolMinimizedRef.current
+      );
     },
     [propertyPanelOptions, selectionGuards.toolMinimizedRef]
   );
@@ -22603,13 +24046,20 @@ function WebEditorUiApp(props) {
         0,
         MAX_PROMPT_IMAGE_ATTACHMENTS
       );
-      const merged = mergePromptImageAttachments(currentImages, preparedImages, MAX_PROMPT_IMAGE_ATTACHMENTS);
+      const merged = mergePromptImageAttachments(
+        currentImages,
+        preparedImages,
+        MAX_PROMPT_IMAGE_ATTACHMENTS
+      );
       await propertyPanelOptions.onAiNoteImagesChange(element, merged.images);
       if (currentTargetRef.current === element) {
         setImageState({ images: merged.images.slice() });
       }
       if (merged.droppedCount > 0) {
-        notifyRuntimeMessage("info", `\u6700\u591A\u5141\u8BB8 ${MAX_PROMPT_IMAGE_ATTACHMENTS} \u5F20\u56FE\u7247\uFF0C\u5DF2\u5FFD\u7565\u591A\u4F59\u56FE\u7247\u3002`);
+        notifyRuntimeMessage(
+          "info",
+          `\u6700\u591A\u5141\u8BB8 ${MAX_PROMPT_IMAGE_ATTACHMENTS} \u5F20\u56FE\u7247\uFF0C\u5DF2\u5FFD\u7565\u591A\u4F59\u56FE\u7247\u3002`
+        );
       }
       return {
         acceptedCount: merged.acceptedCount,
@@ -22664,7 +24114,13 @@ function WebEditorUiApp(props) {
     syncSavedAnnotationMarkdown(element, true);
     setInlineTextEditing(false);
     propertyPanelOptions.onDismissSelection?.();
-  }, [propertyPanelOptions, syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
+  }, [
+    propertyPanelOptions,
+    syncSavedAnnotationMarkdown,
+    syncSavedImages,
+    syncSavedNote,
+    syncSavedText
+  ]);
   const handleDeleteCurrentAnnotationNode = import_react20.default.useCallback(async () => {
     const element = currentTargetRef.current;
     if (!element || !propertyPanelOptions?.onDeleteCurrentAnnotationNode) return;
@@ -22675,7 +24131,13 @@ function WebEditorUiApp(props) {
     syncSavedAnnotationMarkdown(element, true);
     setInlineTextEditing(false);
     propertyPanelOptions.onDismissSelection?.();
-  }, [propertyPanelOptions, syncSavedAnnotationMarkdown, syncSavedImages, syncSavedNote, syncSavedText]);
+  }, [
+    propertyPanelOptions,
+    syncSavedAnnotationMarkdown,
+    syncSavedImages,
+    syncSavedNote,
+    syncSavedText
+  ]);
   const handleSendCurrentElementPromptToAgent = import_react20.default.useMemo(() => {
     if (!propertyPanelOptions?.onSendCurrentElementPromptToAgent) {
       return void 0;
@@ -22849,7 +24311,14 @@ function WebEditorUiApp(props) {
       restoreInlineStyle2(editableElement, "cursor", previousCursor);
       propertyPanelOptions?.onInlineTextEditingElementChange?.(null);
     };
-  }, [canEditText, commitDraftText, currentTarget, handleCancelText, inlineTextEditing, propertyPanelOptions]);
+  }, [
+    canEditText,
+    commitDraftText,
+    currentTarget,
+    handleCancelText,
+    inlineTextEditing,
+    propertyPanelOptions
+  ]);
   return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { style: panelContainerStyle, children: [
     /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("style", { children: WEB_EDITOR_POPUP_ROOT_STYLES }),
     /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
@@ -22885,6 +24354,7 @@ function WebEditorUiApp(props) {
           breadcrumbsOptions.hideExecutionControls ?? propertyPanelOptions?.hideExecutionControls
         ),
         enabledSkillIds: commentarySkillSelectionManaged ? enabledCommentarySkillIds : void 0,
+        skillOptions: commentarySkillOptions,
         onBubbleStyleEditorOpenChange: setBubbleStyleEditorOpen,
         onSendCurrentElementPromptToAgent: handleSendCurrentElementPromptToAgent,
         onWakeAgent: propertyPanelOptions?.onWakeAgent,
@@ -28650,6 +30120,32 @@ function createLifecycleService(deps) {
   let inlineTextEditingElement = null;
   let pendingCommentContextSync = false;
   let routeChangeCleanup = null;
+  let interactionProfileRestartQueued = false;
+  function resolveActiveInteractionProfile() {
+    return options.interactionProfile === "text-comment" || state2.uiSettings.documentCommentMode ? "text-comment" : "design";
+  }
+  function handleUiSettingsChange(settings) {
+    const documentCommentModeChanged = settings.documentCommentMode !== state2.uiSettings.documentCommentMode;
+    state2.uiSettings = settings;
+    services.persistence.setUiSettings(settings);
+    if (!documentCommentModeChanged || options.interactionProfile === "text-comment" || !state2.active || interactionProfileRestartQueued) {
+      return;
+    }
+    interactionProfileRestartQueued = true;
+    void Promise.resolve().then(() => {
+      interactionProfileRestartQueued = false;
+      if (!state2.active || settings.documentCommentMode !== state2.uiSettings.documentCommentMode) {
+        return;
+      }
+      if (state2.panelOnlyMode) {
+        stopPanelOnly();
+        startPanelOnly();
+        return;
+      }
+      stop();
+      start();
+    });
+  }
   function shouldDelegateAiActionToHost() {
     return typeof rawOptions.ui?.onHostToolbarAction === "function" && typeof options.ui.onHostToolbarAction === "function";
   }
@@ -28698,7 +30194,9 @@ function createLifecycleService(deps) {
     if (!services.agentBridge.setExternalEditingStateByElementKey && !services.agentBridge.setExternalEditingState) {
       return null;
     }
-    const validTargets = targetRefs.filter((target) => String(target?.elementKey ?? "").trim() && target?.locator);
+    const validTargets = targetRefs.filter(
+      (target) => String(target?.elementKey ?? "").trim() && target?.locator
+    );
     if (validTargets.length === 0) {
       return null;
     }
@@ -28848,7 +30346,7 @@ function createLifecycleService(deps) {
   }
   function resolvePromptTargetsFromEditHistory() {
     const metas = Array.from(state2.editMetaByKey.values()).filter(
-      (meta) => meta.dirtySince !== null || String(meta.note ?? "").trim() || Array.isArray(meta.images) && meta.images.length > 0
+      (meta) => services.persistence.getCommentTaskState?.(meta.elementKey) !== "completed" && (meta.dirtySince !== null || String(meta.note ?? "").trim() || Array.isArray(meta.images) && meta.images.length > 0)
     ).sort((a, b) => Number(b.dirtySince ?? 0) - Number(a.dirtySince ?? 0));
     const elements = [];
     const seen = /* @__PURE__ */ new Set();
@@ -28866,7 +30364,7 @@ function createLifecycleService(deps) {
   }
   function resolvePromptTargetRefsFromEditHistory() {
     return Array.from(state2.editMetaByKey.values()).filter(
-      (meta) => meta.dirtySince !== null || String(meta.note ?? "").trim() || Array.isArray(meta.images) && meta.images.length > 0
+      (meta) => services.persistence.getCommentTaskState?.(meta.elementKey) !== "completed" && (meta.dirtySince !== null || String(meta.note ?? "").trim() || Array.isArray(meta.images) && meta.images.length > 0)
     ).sort((a, b) => Number(b.dirtySince ?? 0) - Number(a.dirtySince ?? 0)).map(toExternalEditingTarget);
   }
   function resolvePromptTargetRefs(preferredElement) {
@@ -28931,9 +30429,12 @@ function createLifecycleService(deps) {
   function handleTransactionError(error) {
     console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`, error);
   }
-  function dismissVisibleElementAgentTaskStates() {
+  function dismissVisibleElementAgentTaskStates(target = "all") {
     const tasks = services.agentBridge.getVisibleTaskStates();
     for (const task of tasks) {
+      if (target === "completed" && task.status !== "completed") {
+        continue;
+      }
       try {
         const element = locateElement(task.locator);
         if (!element?.isConnected) {
@@ -28961,7 +30462,7 @@ function createLifecycleService(deps) {
   function hasPrototypeComments() {
     const document2 = services.persistence.getPersistedPrototypeCommentsDocument?.() ?? null;
     return Boolean(
-      document2 && (document2.comments.length > 0 || document2.images.length > 0 || Object.keys(document2.tasks).length > 0)
+      document2 && (document2.comments.length > 0 || document2.images.length > 0)
     );
   }
   function getTweakProtocol() {
@@ -29290,12 +30791,24 @@ function createLifecycleService(deps) {
       passive: true
     };
     window.addEventListener("keydown", handler, hotkeyOptions);
-    window.addEventListener("focusin", markParentSelectTextEntryControlUntouched, inputStateOptions);
+    window.addEventListener(
+      "focusin",
+      markParentSelectTextEntryControlUntouched,
+      inputStateOptions
+    );
     window.addEventListener("input", markParentSelectTextEntryControlTouched, inputStateOptions);
     state2.parentSelectHotkeyCleanup = () => {
       window.removeEventListener("keydown", handler, hotkeyOptions);
-      window.removeEventListener("focusin", markParentSelectTextEntryControlUntouched, inputStateOptions);
-      window.removeEventListener("input", markParentSelectTextEntryControlTouched, inputStateOptions);
+      window.removeEventListener(
+        "focusin",
+        markParentSelectTextEntryControlUntouched,
+        inputStateOptions
+      );
+      window.removeEventListener(
+        "input",
+        markParentSelectTextEntryControlTouched,
+        inputStateOptions
+      );
     };
   }
   function installUiResizeClamp() {
@@ -29370,12 +30883,16 @@ function createLifecycleService(deps) {
         state2.hoveredElement = null;
         state2.selectionAnchor = null;
         state2.pendingMarkerAnchors.clear();
-        void Promise.resolve(services.persistence.restoreCachedChanges()).then(() => {
+        void Promise.resolve(services.persistence.restoreCachedChanges()).then((deletedElementKeys) => {
+          services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
           services.changes.renderChangeMarkers();
           state2.propertyPanel?.refresh();
           onStatusChange?.();
         }).catch((error) => {
-          console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`, error);
+          console.warn(
+            `${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`,
+            error
+          );
           services.changes.renderChangeMarkers();
         });
       });
@@ -29468,7 +30985,8 @@ function createLifecycleService(deps) {
         memorySampleIntervalMs: 1e3
       });
       installPerfHotkey();
-      const isTextComment = options.interactionProfile === "text-comment";
+      const interactionProfile = resolveActiveInteractionProfile();
+      const isTextComment = interactionProfile === "text-comment";
       if (isTextComment) {
         const textCommentTarget = document.createElement("div");
         textCommentTarget.setAttribute(TEXT_COMMENT_TARGET_ATTR, "true");
@@ -29508,17 +31026,16 @@ function createLifecycleService(deps) {
         onChange: services.interaction.handleTransactionChange,
         onApplyError: handleTransactionError
       });
-      void Promise.resolve(services.persistence.restoreCachedChanges()).then(() => {
+      void Promise.resolve(services.persistence.restoreCachedChanges()).then((deletedElementKeys) => {
+        services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
         services.agentBridge.rehydratePersistedAgentState();
         ensureMarkersVisible();
-        services.persistence.persistFromTransactions();
         state2.propertyPanel?.refresh();
         onStatusChange?.();
       }).catch((error) => {
         console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`, error);
         services.agentBridge.rehydratePersistedAgentState();
         ensureMarkersVisible();
-        services.persistence.persistFromTransactions();
       });
       state2.handlesController = createHandlesController({
         container: elements.overlayRoot,
@@ -29595,7 +31112,9 @@ function createLifecycleService(deps) {
             if (!comment) return;
             state2.activeTextComment = comment;
             const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
-            state2.canvasOverlay?.setTextHighlightRects(usedNativeHighlight ? null : comment.clientRects);
+            state2.canvasOverlay?.setTextHighlightRects(
+              usedNativeHighlight ? null : comment.clientRects
+            );
             state2.canvasOverlay?.render();
             const rect = comment.boundingRect;
             const clientX = rect.left + rect.width / 2;
@@ -29668,11 +31187,9 @@ function createLifecycleService(deps) {
             services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state2.uiSettings,
-          interactionProfile: options.interactionProfile,
-          onUiSettingsChange: (settings) => {
-            state2.uiSettings = settings;
-            services.persistence.setUiSettings(settings);
-          },
+          interactionProfile,
+          documentCommentModeAvailable: options.interactionProfile !== "text-comment",
+          onUiSettingsChange: handleUiSettingsChange,
           onLocateElement: (element) => {
             const target = services.agentBridge.resolveSelectableElement(element) ?? element;
             if (!target?.isConnected) return;
@@ -29784,9 +31301,13 @@ function createLifecycleService(deps) {
           onRequestClose: services.interaction.clearSelection,
           onRequestFullExit: options.ui.onRequestFullExit,
           onClearEdits: async (clearOptions) => {
-            await services.localActions.handleClearEdits(clearOptions);
-            services.agentBridge.invalidateCurrentConversation?.();
-            dismissVisibleElementAgentTaskStates();
+            const clearedTarget = await services.localActions.handleClearEdits(clearOptions);
+            if (!clearedTarget) return null;
+            if (clearedTarget === "all") {
+              services.agentBridge.invalidateCurrentConversation?.();
+            }
+            dismissVisibleElementAgentTaskStates(clearedTarget);
+            return clearedTarget;
           },
           hasPrototypeComments,
           onClearCurrentElementEdits: async (element) => {
@@ -29809,6 +31330,8 @@ function createLifecycleService(deps) {
           aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          htmlFileSaveEnabled: options.ui.htmlFileSaveEnabled,
+          getAcpUiConnected: options.ui.getAcpUiConnected,
           onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
@@ -29817,6 +31340,27 @@ function createLifecycleService(deps) {
           commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
           onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
           onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          onCommentarySkillSettingsLoad: options.ui.onCommentarySkillSettingsLoad ? async () => {
+            const settings = await options.ui.onCommentarySkillSettingsLoad?.();
+            if (!settings) {
+              return {
+                selectedSkillIds: options.ui.commentarySelectedSkillIds,
+                skillOptions: options.ui.commentarySkillOptions
+              };
+            }
+            options.ui.commentarySelectedSkillIds = settings.selectedSkillIds;
+            options.ui.commentarySkillOptions = settings.skillOptions;
+            options.ui.commentarySkillSettingsConfigured = true;
+            return settings;
+          } : void 0,
+          onCommentarySkillSettingsChange: options.ui.onCommentarySkillSettingsChange ? async (settings) => {
+            const saved = await options.ui.onCommentarySkillSettingsChange?.(settings);
+            const nextSettings = saved ?? settings;
+            options.ui.commentarySelectedSkillIds = nextSettings.selectedSkillIds;
+            options.ui.commentarySkillOptions = nextSettings.skillOptions;
+            options.ui.commentarySkillSettingsConfigured = true;
+            return nextSettings;
+          } : void 0,
           getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
           getAgentBridgeConnected: () => services.agentBridge.isConnected(),
           getCanAbortAgentPrompt: (element) => {
@@ -30108,7 +31652,10 @@ function createLifecycleService(deps) {
         console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Downgraded to panel-only mode`);
         return;
       } catch (error) {
-        console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`, error);
+        console.error(
+          `${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`,
+          error
+        );
       }
     }
     state2.active = false;
@@ -30144,6 +31691,7 @@ function createLifecycleService(deps) {
         ...services.persistence.readUiSettings(),
         darkMode: options.ui.initialDarkMode
       };
+      const interactionProfile = resolveActiveInteractionProfile();
       if (options.ui.propertyPanel) {
         state2.tokensService = createDesignTokensService();
         const propertyPanelOptions = {
@@ -30165,11 +31713,9 @@ function createLifecycleService(deps) {
             services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state2.uiSettings,
-          interactionProfile: options.interactionProfile,
-          onUiSettingsChange: (settings) => {
-            state2.uiSettings = settings;
-            services.persistence.setUiSettings(settings);
-          },
+          interactionProfile,
+          documentCommentModeAvailable: options.interactionProfile !== "text-comment",
+          onUiSettingsChange: handleUiSettingsChange,
           onLocateElement: () => {
           },
           onCommentShortcutDialogOpenChange: (open) => {
@@ -30207,6 +31753,8 @@ function createLifecycleService(deps) {
           aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          htmlFileSaveEnabled: options.ui.htmlFileSaveEnabled,
+          getAcpUiConnected: options.ui.getAcpUiConnected,
           onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
@@ -30215,6 +31763,8 @@ function createLifecycleService(deps) {
           commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
           onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
           onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          onCommentarySkillSettingsLoad: options.ui.onCommentarySkillSettingsLoad,
+          onCommentarySkillSettingsChange: options.ui.onCommentarySkillSettingsChange,
           getAgentBridgeAvailable: () => false,
           getAgentBridgeConnected: () => false,
           getCanAbortAgentPrompt: () => false,
@@ -30404,15 +31954,24 @@ function createLocalActionsService(options) {
   async function handleClearEdits(config = {}) {
     const tm = options.state.transactionManager;
     const clearsPrototype = config.scope === "prototype";
+    let target = config.target ?? "all";
     if (!config.skipConfirm) {
-      const confirmed = await options.feedback.confirm({
-        title: clearsPrototype ? "\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u5168\u90E8\u6279\u6CE8" : "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
-        content: clearsPrototype ? "\u786E\u5B9A\u8981\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u6240\u6709\u9875\u9762\u7684\u6279\u6CE8\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4EE3\u7801\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002" : "\u786E\u5B9A\u8981\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
-        confirmText: "\u6E05\u7A7A",
-        cancelText: "\u53D6\u6D88",
+      const result = await options.feedback.confirm({
+        title: clearsPrototype ? "\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u6279\u6CE8" : "\u6E05\u7A7A\u5168\u90E8\u7F16\u8F91",
+        content: clearsPrototype ? "\u8BF7\u9009\u62E9\u6E05\u7A7A\u5F53\u524D\u539F\u578B\u6240\u6709\u9875\u9762\u7684\u5DF2\u5B8C\u6210\u6279\u6CE8\uFF0C\u6216\u6E05\u7A7A\u5168\u90E8\u6279\u6CE8\u3002\u5DF2\u4FDD\u5B58\u7684\u4EE3\u7801\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002" : "\u786E\u5B9A\u8981\u6E05\u7A7A\u6240\u6709\u5F85\u4FEE\u6539\u5185\u5BB9\u5417\uFF1F\u5DF2\u4FDD\u5B58\u7684\u4FEE\u6539\u4E0D\u53D7\u5F71\u54CD\u3002",
+        confirmText: clearsPrototype ? "\u6E05\u7A7A\u5DF2\u5B8C\u6210\u6279\u6CE8" : "\u6E05\u7A7A",
+        ...clearsPrototype ? { secondaryConfirmText: "\u6E05\u7A7A\u6240\u6709\u6279\u6CE8" } : { cancelText: "\u53D6\u6D88" },
         confirmTone: "primary"
       });
-      if (!confirmed) return;
+      if (!result) return null;
+      target = result === "secondary" ? "all" : clearsPrototype ? "completed" : "all";
+    }
+    if (target === "completed") {
+      await options.persistence.clearStorage(config.scope, target);
+      await options.persistence.restoreCachedChanges();
+      options.state.propertyPanel?.refresh();
+      options.onStatusChange?.();
+      return target;
     }
     if (tm) {
       while (tm.canUndo()) {
@@ -30422,9 +31981,10 @@ function createLocalActionsService(options) {
     }
     await options.changes.revertAllRecordedTweaks();
     options.changes.clearAllEditMeta();
-    options.persistence.clearStorage(config.scope);
+    await options.persistence.clearStorage(config.scope, target);
     options.state.propertyPanel?.refresh();
     options.onStatusChange?.();
+    return target;
   }
   async function handleClearElementEdits(element) {
     if (!element || !element.isConnected) return false;
@@ -30501,11 +32061,44 @@ var COMMENT_SHORTCUT_SETTINGS_KEY_PREFIX = "web-editor-v2-comment-shortcuts:";
 var UI_SETTINGS_KEY = "web-editor-v2-ui-settings";
 var AGENT_CONVERSATION_KEY_PREFIX = "web-editor-v2-agent-conversation:";
 var AGENT_TASKS_KEY_PREFIX = "web-editor-v2-agent-tasks:";
-var SCOPED_COMMENT_TASK_KEY_PREFIX = "page-scope:";
+var adapterWriteChainByStorageScope = /* @__PURE__ */ new Map();
+function trackAdapterWriteTail(storageScope, current) {
+  adapterWriteChainByStorageScope.set(storageScope, current);
+  const removeSettledTail = () => {
+    if (adapterWriteChainByStorageScope.get(storageScope) === current) {
+      adapterWriteChainByStorageScope.delete(storageScope);
+    }
+  };
+  void current.then(removeSettledTail, removeSettledTail);
+  return current;
+}
+function enqueueAdapterWrite(scope, write) {
+  const storageScope = String(scope.storageScope ?? "").trim();
+  if (!storageScope) return Promise.resolve().then(write);
+  const previous = adapterWriteChainByStorageScope.get(storageScope);
+  if (!previous) {
+    try {
+      const result = write();
+      if (!result || typeof result.then !== "function") return Promise.resolve();
+      return trackAdapterWriteTail(storageScope, Promise.resolve(result));
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  return trackAdapterWriteTail(
+    storageScope,
+    previous.catch(() => void 0).then(write)
+  );
+}
 function stripLocatorDebugSource(locator) {
   if (!locator.debugSource) return locator;
   const { debugSource: _debugSource, ...rest } = locator;
   return rest;
+}
+function isDeletedRecord(value) {
+  if (!value || typeof value !== "object") return false;
+  const deletedAt = Number(value.deletedAt);
+  return Number.isFinite(deletedAt) && deletedAt > 0;
 }
 function normalizeAnnotationPanelCacheIdentity(locator) {
   const identity = resolveAnnotationTargetIdentity({
@@ -30530,15 +32123,17 @@ function cloneTweakValues(values) {
 function createPersistenceService(options) {
   const { state: state2, changes } = options;
   const getResourceContext = options.getResourceContext ?? (() => null);
+  const getHostPersistenceScope = options.getPersistenceScope ?? null;
   const persistenceAdapter = options.persistenceAdapter ?? null;
-  const interactionProfile = options.interactionProfile ?? "design";
+  const commentPersistenceMode = options.commentPersistenceMode ?? "local";
+  const getInteractionProfile = options.getInteractionProfile ?? (() => options.interactionProfile ?? "design");
   let cacheWriteTimer = null;
   let cacheRestoreInProgress = false;
   let currentAdapterDocument = null;
   let lastAdapterDocument = null;
   let preserveMissingCurrentScopeRecordsOnNextWrite = false;
-  const commentTaskStateByElementKey = /* @__PURE__ */ new Map();
-  const clearedCurrentPageRecordKeys = /* @__PURE__ */ new Set();
+  const commentStateByElementKey = /* @__PURE__ */ new Map();
+  const clearedRecordIdentities = /* @__PURE__ */ new Set();
   function readResourceMetaString2(key) {
     try {
       const resource = getResourceContext();
@@ -30588,6 +32183,15 @@ function createPersistenceService(options) {
     return readResourceMetaString2("filePath") || readResourceMetaString2("currentFilePath") || readResourceMetaString2("docPath");
   }
   function resolvePersistenceScope() {
+    if (getHostPersistenceScope) {
+      try {
+        const scope = getHostPersistenceScope();
+        if (scope && String(scope.targetPath ?? "").trim() && String(scope.storageScope ?? "").trim() && String(scope.prototypeId ?? "").trim() && String(scope.filePath ?? "").trim()) {
+          return scope;
+        }
+      } catch {
+      }
+    }
     const targetPath = resolveTargetPath();
     if (!targetPath || !targetPath.startsWith("prototypes/")) {
       return null;
@@ -30696,13 +32300,13 @@ function createPersistenceService(options) {
     } catch {
     }
   }
-  function normalizeDocumentTaskState(status) {
+  function normalizeCommentStatus(status) {
     if (status === "pending" || status === "created") return "editing";
     if (status === "completed") return "completed";
     if (status === "error") return "error";
     return "idle";
   }
-  function isPrototypeEditCommentTaskStatus(value) {
+  function isPrototypeEditCommentStatus(value) {
     return value === "idle" || value === "editing" || value === "completed" || value === "error";
   }
   function normalizeNullableString(value) {
@@ -30711,6 +32315,11 @@ function createPersistenceService(options) {
   }
   function normalizePageScope(value) {
     return typeof value === "string" ? value.trim() : "";
+  }
+  function buildScopedElementIdentity(pageScope, elementKey) {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey) return "";
+    return `${normalizePageScope(pageScope)}\0${normalizedElementKey}`;
   }
   function readDomPageScope() {
     if (typeof document === "undefined") return "";
@@ -30825,11 +32434,11 @@ function createPersistenceService(options) {
   }
   function isExplicitlyClearedCurrentPageRecord(elementKey, pageScope) {
     const normalizedElementKey = normalizeElementRecordKey(elementKey);
-    if (!normalizedElementKey || !clearedCurrentPageRecordKeys.has(normalizedElementKey)) {
-      return false;
-    }
-    const normalizedPageScope = normalizePageScope(pageScope);
-    return !normalizedPageScope || normalizedPageScope === resolveCurrentPageScope();
+    if (!normalizedElementKey) return false;
+    const normalizedPageScope = normalizePageScope(pageScope) || resolveCurrentPageScope();
+    return clearedRecordIdentities.has(
+      buildScopedElementIdentity(normalizedPageScope, normalizedElementKey)
+    );
   }
   function stableJson(value) {
     if (Array.isArray(value)) {
@@ -30858,73 +32467,46 @@ function createPersistenceService(options) {
       skillIds: Array.isArray(record.skillIds) ? record.skillIds : null
     });
   }
-  function buildCommentTaskDocumentKey(elementKey, pageScope) {
-    return pageScope ? `${SCOPED_COMMENT_TASK_KEY_PREFIX}${encodeURIComponent(pageScope)}:${encodeURIComponent(elementKey)}` : elementKey;
+  function normalizeCommentState(value) {
+    const updatedAt = Number(value.updatedAt ?? 0);
+    return {
+      state: isPrototypeEditCommentStatus(value.state) ? value.state : "idle",
+      provider: normalizeNullableString(value.provider),
+      requestId: normalizeNullableString(value.requestId),
+      sessionId: normalizeNullableString(value.sessionId),
+      updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : null,
+      message: normalizeNullableString(value.message)
+    };
   }
-  function resolveCommentTaskElementKey(documentKey, task) {
-    if (!normalizePageScope(task.pageScope) || !documentKey.startsWith(SCOPED_COMMENT_TASK_KEY_PREFIX)) {
-      return documentKey;
-    }
-    const encoded = documentKey.slice(SCOPED_COMMENT_TASK_KEY_PREFIX.length);
-    const separatorIndex = encoded.lastIndexOf(":");
-    if (separatorIndex < 0) return documentKey;
-    try {
-      return decodeURIComponent(encoded.slice(separatorIndex + 1)).trim() || documentKey;
-    } catch {
-      return documentKey;
-    }
-  }
-  function normalizeAdapterTasks(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return {};
-    }
-    const tasks = {};
-    for (const [rawElementKey, rawTask] of Object.entries(value)) {
-      const elementKey = String(rawElementKey ?? "").trim();
-      if (!elementKey || !rawTask || typeof rawTask !== "object" || Array.isArray(rawTask)) {
-        continue;
-      }
-      const task = rawTask;
-      const updatedAt = Number(task.updatedAt ?? 0);
-      tasks[elementKey] = {
-        ...normalizePageScope(task.pageScope) ? { pageScope: normalizePageScope(task.pageScope) } : {},
-        state: isPrototypeEditCommentTaskStatus(task.state) ? task.state : "idle",
-        provider: normalizeNullableString(task.provider),
-        requestId: normalizeNullableString(task.requestId),
-        sessionId: normalizeNullableString(task.sessionId),
-        updatedAt: Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : null,
-        message: normalizeNullableString(task.message)
-      };
-    }
-    return tasks;
-  }
-  function buildDocumentTasks() {
-    const tasks = {};
-    for (const [elementKey, task] of commentTaskStateByElementKey.entries()) {
-      const scopedTask = withCurrentPageScope({ ...task });
-      if (isExplicitlyClearedCurrentPageRecord(elementKey, scopedTask.pageScope)) continue;
-      if (scopedTask.state === "completed") continue;
-      tasks[buildCommentTaskDocumentKey(elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
-    }
-    const allTasks = [
+  function buildCurrentCommentStates() {
+    const commentStates = new Map(commentStateByElementKey);
+    const runtimeTasks = [
       ...state2.agentTaskByElementKey.values(),
       ...state2.externalEditingTaskByElementKey.values()
     ];
-    for (const task of allTasks) {
+    for (const task of runtimeTasks) {
       if (!task?.elementKey) continue;
-      if (task.origin === "external-editing" && task.status === "completed") continue;
-      const scopedTask = withCurrentPageScope({
-        state: normalizeDocumentTaskState(task.status),
+      commentStates.set(task.elementKey, {
+        state: normalizeCommentStatus(task.status),
         provider: task.provider,
         requestId: task.requestId,
         sessionId: task.sessionId,
         updatedAt: task.updatedAt,
         message: task.message
       });
-      if (isExplicitlyClearedCurrentPageRecord(task.elementKey, scopedTask.pageScope)) continue;
-      tasks[buildCommentTaskDocumentKey(task.elementKey, normalizePageScope(scopedTask.pageScope))] = scopedTask;
     }
-    return tasks;
+    return commentStates;
+  }
+  function applyCurrentCommentStates(comments) {
+    const currentStates = buildCurrentCommentStates();
+    return comments.map((comment) => {
+      const elementKey = normalizeElementRecordKey(comment.elementKey);
+      const currentState = elementKey && isCurrentPageScopedRecord(comment) ? currentStates.get(elementKey) : null;
+      return {
+        ...comment,
+        ...currentState ?? normalizeCommentState(comment)
+      };
+    });
   }
   function buildDocumentImages() {
     return Array.from(state2.editMetaByKey.values()).flatMap(
@@ -30944,6 +32526,7 @@ function createPersistenceService(options) {
     const { note, ...rest } = entry;
     return {
       ...rest,
+      state: isPrototypeEditCommentStatus(entry.state) ? entry.state : "idle",
       ...note ? { comment: note } : {}
     };
   }
@@ -30954,20 +32537,20 @@ function createPersistenceService(options) {
       ...comment ? { note: comment } : {}
     };
   }
-  function buildAdapterDocument(entries, reason = "changes", clearScope = "page") {
+  function buildAdapterDocument(entries, reason = "changes", clearScope = "page", clearTarget = "all") {
     const scope = resolvePersistenceScope();
     if (!scope) return null;
-    if (reason === "clear" && clearScope === "prototype") {
+    const documentKind = scope.documentKind === "document" ? "document-edit-comments" : "prototype-edit-comments";
+    if (reason === "clear" && clearScope === "prototype" && clearTarget === "all") {
       return {
-        schemaVersion: 1,
-        kind: "prototype-edit-comments",
+        schemaVersion: 2,
+        kind: documentKind,
         resource: {
           id: scope.prototypeId,
           targetPath: scope.targetPath,
-          filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`
+          filePath: scope.filePath || `src/${scope.targetPath}/.spec/prototype-comments.json`
         },
         comments: [],
-        tasks: {},
         images: []
       };
     }
@@ -30976,12 +32559,6 @@ function createPersistenceService(options) {
       (entry) => withCurrentPageScope(cacheEntryToCommentEntry(entry))
     );
     const currentImages = buildDocumentImages();
-    const currentTasks = buildDocumentTasks();
-    const currentTaskElementKeys = new Set([
-      ...Array.from(commentTaskStateByElementKey.entries()).filter(([, task]) => task.state !== "completed").map(([elementKey]) => elementKey),
-      ...Array.from(state2.agentTaskByElementKey.values()).filter((task) => !(task.origin === "external-editing" && task.status === "completed")).map((task) => task.elementKey),
-      ...Array.from(state2.externalEditingTaskByElementKey.values()).filter((task) => !(task.origin === "external-editing" && task.status === "completed")).map((task) => task.elementKey)
-    ].map((elementKey) => String(elementKey ?? "").trim()).filter(Boolean));
     const currentImageKeys = new Set(
       currentImages.map((image) => String(image.elementKey ?? "").trim()).filter(Boolean)
     );
@@ -30991,8 +32568,8 @@ function createPersistenceService(options) {
     const currentCommentContentSignatures = new Set(
       currentComments.map((entry) => resolveCommentContentSignature(entry)).filter(Boolean)
     );
-    const shouldDropMissingCurrentScopeRecords = reason === "clear";
-    const shouldPreserveMissingCurrentScopeRecords = preserveMissingCurrentScopeRecordsOnNextWrite && reason !== "clear";
+    const shouldDropMissingCurrentScopeRecords = reason === "clear" && clearTarget === "all";
+    const shouldPreserveMissingCurrentScopeRecords = preserveMissingCurrentScopeRecordsOnNextWrite && reason !== "clear" || reason === "clear" && clearTarget === "completed";
     const preservedComments = (lastAdapterDocument?.comments ?? []).filter((entry) => {
       const entryScope = normalizePageScope(entry.pageScope);
       const entryKey = resolveCommentRecordKey(entry);
@@ -31034,67 +32611,90 @@ function createPersistenceService(options) {
       }
       return !imageElementKey || !currentImageKeys.has(imageElementKey);
     });
-    const preservedTasks = Object.fromEntries(
-      Object.entries(lastAdapterDocument?.tasks ?? {}).filter(([elementKey, task]) => {
-        const taskScope = normalizePageScope(task.pageScope);
-        const taskElementKey = resolveCommentTaskElementKey(elementKey, task);
-        if (isExplicitlyClearedCurrentPageRecord(taskElementKey, taskScope)) return false;
-        if (taskScope) return taskScope !== currentPageScope;
-        if (shouldDropMissingCurrentScopeRecords) return false;
-        return !currentTaskElementKeys.has(elementKey);
-      })
-    );
-    return {
-      schemaVersion: 1,
-      kind: "prototype-edit-comments",
+    const document2 = {
+      schemaVersion: 2,
+      kind: documentKind,
       resource: {
         id: scope.prototypeId,
         targetPath: scope.targetPath,
-        filePath: `src/${scope.targetPath}/.spec/prototype-comments.json`
+        filePath: scope.filePath || `src/${scope.targetPath}/.spec/prototype-comments.json`
       },
-      comments: [...preservedComments, ...currentComments],
-      tasks: {
-        ...preservedTasks,
-        ...currentTasks
-      },
+      comments: applyCurrentCommentStates([...preservedComments, ...currentComments]),
       images: [...preservedImages, ...currentImages]
+    };
+    if (reason !== "clear" || clearTarget !== "completed") {
+      return document2;
+    }
+    const removedCommentIdentities = new Set(
+      document2.comments.filter(
+        (comment) => comment.state === "completed" && (clearScope === "prototype" || isCurrentPageScopedRecord(comment))
+      ).map((comment) => buildScopedElementIdentity(comment.pageScope, comment.elementKey)).filter(Boolean)
+    );
+    return {
+      ...document2,
+      comments: document2.comments.filter(
+        (comment) => !removedCommentIdentities.has(
+          buildScopedElementIdentity(comment.pageScope, comment.elementKey)
+        )
+      ),
+      images: document2.images.filter(
+        (image) => !removedCommentIdentities.has(
+          buildScopedElementIdentity(image.pageScope, image.elementKey)
+        )
+      )
     };
   }
   function normalizeAdapterDocument(value) {
     if (!value || typeof value !== "object") return null;
     const record = value;
-    if (record.schemaVersion !== 1 || record.kind !== "prototype-edit-comments") return null;
+    const expectedKind = resolvePersistenceScope()?.documentKind === "document" ? "document-edit-comments" : "prototype-edit-comments";
+    if (record.schemaVersion !== 2 || record.kind !== expectedKind) return null;
     if (!Array.isArray(record.comments)) return null;
+    const comments = record.comments;
+    const deletedCommentIdentities = new Set(
+      comments.filter(isDeletedRecord).map((entry) => buildScopedElementIdentity(entry.pageScope, entry.elementKey)).filter(Boolean)
+    );
+    const images = Array.isArray(record.images) ? record.images : [];
     return {
-      schemaVersion: 1,
-      kind: "prototype-edit-comments",
+      schemaVersion: 2,
+      kind: expectedKind,
       resource: {
         id: String(record.resource?.id ?? "").trim(),
         targetPath: String(record.resource?.targetPath ?? "").trim(),
         filePath: String(record.resource?.filePath ?? "").trim()
       },
-      comments: record.comments,
-      tasks: normalizeAdapterTasks(record.tasks),
-      images: Array.isArray(record.images) ? record.images : []
+      comments: comments.filter((entry) => !isDeletedRecord(entry)).map((entry) => ({ ...entry, ...normalizeCommentState(entry) })),
+      images: images.filter((image) => {
+        if (isDeletedRecord(image)) return false;
+        return !deletedCommentIdentities.has(
+          buildScopedElementIdentity(image.pageScope, image.elementKey)
+        );
+      })
     };
   }
-  function mergeAdapterTaskStates(document2) {
-    for (const [documentKey, task] of Object.entries(document2.tasks ?? {})) {
-      const normalizedElementKey = String(resolveCommentTaskElementKey(documentKey, task) ?? "").trim();
+  function mergeAdapterCommentStates(document2) {
+    for (const comment of document2.comments) {
+      const normalizedElementKey = normalizeElementRecordKey(comment.elementKey);
       if (!normalizedElementKey) continue;
-      if (!isCurrentPageScopedRecord(task)) continue;
-      commentTaskStateByElementKey.set(normalizedElementKey, { ...task });
+      if (!isCurrentPageScopedRecord(comment)) continue;
+      commentStateByElementKey.set(normalizedElementKey, normalizeCommentState(comment));
     }
   }
-  function writeAdapterDocument(entries, reason, clearScope = "page") {
+  async function persistAdapterDocument(entries, reason, clearScope = "page", clearTarget = "all") {
     if (!persistenceAdapter?.write) return;
     const scope = resolvePersistenceScope();
     if (!scope) return;
-    const document2 = buildAdapterDocument(entries, reason, clearScope);
+    const document2 = buildAdapterDocument(entries, reason, clearScope, clearTarget);
     if (!document2) return;
     lastAdapterDocument = document2;
     preserveMissingCurrentScopeRecordsOnNextWrite = false;
-    void Promise.resolve(persistenceAdapter.write(scope, document2, reason)).catch((error) => {
+    await enqueueAdapterWrite(
+      scope,
+      () => persistenceAdapter.write(scope, document2, reason)
+    );
+  }
+  function writeAdapterDocument(entries, reason, clearScope = "page", clearTarget = "all") {
+    void persistAdapterDocument(entries, reason, clearScope, clearTarget).catch((error) => {
       console.warn("[Commentary] Failed to persist prototype comments:", error);
     });
   }
@@ -31105,7 +32705,7 @@ function createPersistenceService(options) {
     state2.processedEditTimestampsByKey.clear();
     state2.selectionAnchor = null;
     state2.selectedElement = null;
-    commentTaskStateByElementKey.clear();
+    commentStateByElementKey.clear();
   }
   function removeStorageKey(key) {
     if (typeof window === "undefined") return;
@@ -31289,31 +32889,53 @@ function createPersistenceService(options) {
     }
     writeStorageJson(resolveAgentTasksKey(normalizedScopeKey), sanitized);
   }
+  function discardAgentTaskStates(scopeKeys, elementKeys) {
+    const deletedKeys = new Set(
+      elementKeys.map((key) => String(key ?? "").trim()).filter(Boolean)
+    );
+    if (deletedKeys.size === 0) return;
+    for (const scopeKey of scopeKeys) {
+      const remaining = readAgentTaskStates(scopeKey).filter(
+        (task) => !deletedKeys.has(String(task.elementKey ?? "").trim())
+      );
+      writeAgentTaskStates(scopeKey, remaining);
+    }
+  }
   function recordCommentTaskState(elementKey, stateValue, taskRef = null) {
     const normalizedElementKey = normalizeElementRecordKey(elementKey);
     if (!normalizedElementKey) return;
-    if (stateValue === "completed") {
-      clearCommentRecord(normalizedElementKey);
-      persistTaskDocument();
+    const provider = typeof taskRef?.provider === "string" && taskRef.provider.trim() ? taskRef.provider.trim() : null;
+    const requestId = typeof taskRef?.requestId === "string" && taskRef.requestId.trim() ? taskRef.requestId.trim() : null;
+    const sessionId = typeof taskRef?.sessionId === "string" && taskRef.sessionId.trim() ? taskRef.sessionId.trim() : null;
+    const existingTask = commentStateByElementKey.get(normalizedElementKey);
+    if (existingTask?.state === stateValue && existingTask.provider === provider && existingTask.requestId === requestId && existingTask.sessionId === sessionId) {
       return;
     }
-    clearedCurrentPageRecordKeys.delete(normalizedElementKey);
-    commentTaskStateByElementKey.set(normalizedElementKey, {
-      ...resolveCurrentPageScope() ? { pageScope: resolveCurrentPageScope() } : {},
+    clearedRecordIdentities.delete(
+      buildScopedElementIdentity(resolveCurrentPageScope(), normalizedElementKey)
+    );
+    commentStateByElementKey.set(normalizedElementKey, {
       state: stateValue,
-      provider: typeof taskRef?.provider === "string" && taskRef.provider.trim() ? taskRef.provider.trim() : null,
-      requestId: typeof taskRef?.requestId === "string" && taskRef.requestId.trim() ? taskRef.requestId.trim() : null,
-      sessionId: typeof taskRef?.sessionId === "string" && taskRef.sessionId.trim() ? taskRef.sessionId.trim() : null,
+      provider,
+      requestId,
+      sessionId,
       updatedAt: Date.now(),
-      message: stateValue === "error" ? "AI \u4FEE\u6539\u5931\u8D25" : stateValue === "editing" ? "AI \u7F16\u8F91\u4E2D" : ""
+      message: stateValue === "completed" ? "\u4FEE\u6539\u5B8C\u6210" : stateValue === "error" ? "AI \u4FEE\u6539\u5931\u8D25" : stateValue === "editing" ? "AI \u7F16\u8F91\u4E2D" : "\u5F85\u5904\u7406"
     });
-    persistTaskDocument();
+    persistCommentStateDocument();
+  }
+  function getCommentTaskState(elementKey) {
+    const normalizedElementKey = normalizeElementRecordKey(elementKey);
+    if (!normalizedElementKey) return null;
+    return commentStateByElementKey.get(normalizedElementKey)?.state ?? null;
   }
   function clearCommentRecord(elementKey) {
     const normalizedElementKey = normalizeElementRecordKey(elementKey);
     if (!normalizedElementKey) return;
-    clearedCurrentPageRecordKeys.add(normalizedElementKey);
-    commentTaskStateByElementKey.delete(normalizedElementKey);
+    clearedRecordIdentities.add(
+      buildScopedElementIdentity(resolveCurrentPageScope(), normalizedElementKey)
+    );
+    commentStateByElementKey.delete(normalizedElementKey);
   }
   function pruneExpiredAgentTaskStates(scopeKey) {
     const normalizedScopeKey = String(scopeKey ?? "").trim();
@@ -31321,7 +32943,9 @@ function createPersistenceService(options) {
     writeAgentTaskStates(normalizedScopeKey, readAgentTaskStates(normalizedScopeKey));
   }
   function writeCache(entries, reason = "changes", clearScope = "page") {
-    writeLocalCache(entries);
+    if (commentPersistenceMode !== "adapter-only") {
+      writeLocalCache(entries);
+    }
     writeAdapterDocument(entries, reason, clearScope);
   }
   function buildCacheEntriesFromTransactions() {
@@ -31466,9 +33090,9 @@ function createPersistenceService(options) {
     if (cacheRestoreInProgress) return;
     writeCache(buildCacheEntriesFromTransactions());
   }
-  function persistTaskDocument() {
+  function persistCommentStateDocument() {
     if (cacheRestoreInProgress) return;
-    writeAdapterDocument(buildCacheEntriesFromTransactions(), "tasks");
+    writeAdapterDocument(buildCacheEntriesFromTransactions(), "state");
   }
   function getPersistedPrototypeCommentsDocument() {
     return buildAdapterDocument(buildCacheEntriesFromTransactions(), "changes") ?? lastAdapterDocument;
@@ -31500,7 +33124,7 @@ function createPersistenceService(options) {
         continue;
       }
       const entryElementKey = String(entry.elementKey ?? "").trim();
-      const isLegacyTextCommentCacheEntry = interactionProfile === "text-comment" && !entryElementKey && Boolean(entry.note) && Boolean(entry.marker) && !entry.textChange && !entry.styleChanges;
+      const isLegacyTextCommentCacheEntry = getInteractionProfile() === "text-comment" && !entryElementKey && Boolean(entry.note) && Boolean(entry.marker) && !entry.textChange && !entry.styleChanges;
       if (isLegacyTextCommentCacheEntry) {
         continue;
       }
@@ -31590,33 +33214,104 @@ function createPersistenceService(options) {
     }
   }
   async function readAdapterDocument() {
-    if (!persistenceAdapter?.read) return null;
+    if (!persistenceAdapter?.read) {
+      return { document: null, deletedElementKeys: [], observedTombstones: [] };
+    }
     const scope = resolvePersistenceScope();
-    if (!scope) return null;
+    if (!scope) return { document: null, deletedElementKeys: [], observedTombstones: [] };
     try {
-      const document2 = await Promise.resolve(persistenceAdapter.read(scope));
-      return normalizeAdapterDocument(document2);
+      const rawDocument = await Promise.resolve(persistenceAdapter.read(scope));
+      const rawRecord = rawDocument;
+      const rawComments = Array.isArray(rawRecord?.comments) ? rawRecord.comments : [];
+      const rawImages = Array.isArray(rawRecord?.images) ? rawRecord.images : [];
+      const observedCommentTombstones = rawComments.flatMap((entry) => {
+        const elementKey = normalizeElementRecordKey(entry.elementKey);
+        const deletedAt = Number(entry.deletedAt ?? 0);
+        if (!elementKey || !isDeletedRecord(entry)) return [];
+        return [{
+          kind: "comment",
+          pageScope: normalizePageScope(entry.pageScope),
+          elementKey,
+          deletedAt
+        }];
+      });
+      const observedImageTombstones = rawImages.flatMap((image) => {
+        const id = String(image.id ?? "").trim();
+        const elementKey = normalizeElementRecordKey(image.elementKey);
+        if (!id || !elementKey || !isDeletedRecord(image)) return [];
+        return [{
+          kind: "image",
+          id,
+          pageScope: normalizePageScope(image.pageScope),
+          elementKey,
+          deletedAt: Number(image.deletedAt)
+        }];
+      });
+      const observedTombstones = [
+        ...observedCommentTombstones,
+        ...observedImageTombstones
+      ];
+      const deletedElementKeys = Array.from(new Set(
+        observedTombstones.filter((tombstone) => tombstone.kind !== "image" && isCurrentPageScopedRecord(tombstone)).map((tombstone) => tombstone.elementKey)
+      ));
+      return {
+        document: normalizeAdapterDocument(rawDocument),
+        deletedElementKeys,
+        observedTombstones
+      };
     } catch (error) {
       console.warn("[Commentary] Failed to read prototype comments:", error);
-      return null;
+      return { document: null, deletedElementKeys: [], observedTombstones: [] };
     }
   }
   async function restoreCachedChanges() {
-    if (typeof window === "undefined") return;
-    const adapterDocument = await readAdapterDocument();
+    if (typeof window === "undefined") return [];
+    const adapterResult = await readAdapterDocument();
+    let adapterDocument = adapterResult.document;
+    const deletedElementKeys = new Set(adapterResult.deletedElementKeys);
     if (adapterDocument) {
       lastAdapterDocument = adapterDocument;
     }
+    if (adapterResult.observedTombstones.length > 0 && adapterDocument && persistenceAdapter?.write) {
+      const scope = resolvePersistenceScope();
+      if (scope) {
+        try {
+          const documentToCompact = adapterDocument;
+          await enqueueAdapterWrite(
+            scope,
+            () => persistenceAdapter.write(scope, documentToCompact, "restore", {
+              observedTombstones: adapterResult.observedTombstones
+            })
+          );
+          const refreshedResult = await readAdapterDocument();
+          if (refreshedResult.document) {
+            adapterDocument = refreshedResult.document;
+            lastAdapterDocument = adapterDocument;
+            refreshedResult.deletedElementKeys.forEach((elementKey) => {
+              deletedElementKeys.add(elementKey);
+            });
+          }
+        } catch (error) {
+          console.warn("[Commentary] Failed to compact restored prototype comments:", error);
+        }
+      }
+    }
+    const resetCurrentPageRuntimeState = () => {
+      clearCurrentPageRuntimeState();
+      if (adapterDocument) {
+        mergeAdapterCommentStates(adapterDocument);
+      }
+    };
     const payload = adapterDocument ? {
       version: CACHE_VERSION,
       path: adapterDocument.resource.targetPath || resolveStorageScope() || "",
       updatedAt: Date.now(),
       showMarkers: state2.changeMarkersVisible,
       entries: adapterDocument.comments.filter((entry) => isCurrentPageScopedRecord(entry)).map(commentEntryToCacheEntry)
-    } : readCache();
+    } : commentPersistenceMode === "adapter-only" ? null : readCache();
     if (!payload) {
-      clearCurrentPageRuntimeState();
-      return;
+      resetCurrentPageRuntimeState();
+      return Array.from(deletedElementKeys);
     }
     const scopedEntries = payload.entries.filter((entry) => isCurrentPageScopedRecord(entry));
     const annotationSourceNodeIds = collectAnnotationSourceNodeIdsFromWindow();
@@ -31625,32 +33320,31 @@ function createPersistenceService(options) {
       if (!annotationPanelIdentity) return true;
       return annotationSourceNodeIds.has(annotationPanelIdentity.elementKey.replace(/^annotation-panel:/, ""));
     }) : scopedEntries;
-    if (restorableEntries.length !== scopedEntries.length) {
+    if (restorableEntries.length !== scopedEntries.length && commentPersistenceMode !== "adapter-only") {
       writeLocalCache(restorableEntries, payload.updatedAt);
     }
     if (scopedEntries.length === 0) {
-      clearCurrentPageRuntimeState();
+      resetCurrentPageRuntimeState();
       if (adapterDocument) {
-        writeLocalCache([], payload.updatedAt);
+        if (commentPersistenceMode !== "adapter-only") {
+          writeLocalCache([], payload.updatedAt);
+        }
       }
-      return;
+      return Array.from(deletedElementKeys);
     }
     if (restorableEntries.length === 0) {
-      clearCurrentPageRuntimeState();
-      return;
+      resetCurrentPageRuntimeState();
+      return Array.from(deletedElementKeys);
     }
     cacheRestoreInProgress = true;
     currentAdapterDocument = adapterDocument;
     try {
-      clearCurrentPageRuntimeState();
+      resetCurrentPageRuntimeState();
       if (typeof payload.showMarkers === "boolean") {
         state2.changeMarkersVisible = payload.showMarkers;
         setMarkerVisibility(payload.showMarkers);
       } else {
         state2.changeMarkersVisible = readMarkerVisibility();
-      }
-      if (adapterDocument) {
-        mergeAdapterTaskStates(adapterDocument);
       }
       applyCachedEntries(restorableEntries);
     } finally {
@@ -31661,10 +33355,13 @@ function createPersistenceService(options) {
     changes.syncEditMetaWithTransactions();
     if (adapterDocument) {
       preserveMissingCurrentScopeRecordsOnNextWrite = true;
-      writeLocalCache(buildCacheEntriesFromTransactions());
-      return;
+      if (commentPersistenceMode !== "adapter-only") {
+        writeLocalCache(buildCacheEntriesFromTransactions());
+      }
+      return Array.from(deletedElementKeys);
     }
     persistFromTransactions();
+    return Array.from(deletedElementKeys);
   }
   function clearCachedChanges(kind) {
     const entries = buildCacheEntriesFromTransactions();
@@ -31698,8 +33395,17 @@ function createPersistenceService(options) {
     }
     writeCache(nextEntries);
   }
-  function clearStorage(scope = "page") {
-    writeCache([], "clear", scope);
+  async function clearStorage(scope = "page", target = "all") {
+    const entries = buildCacheEntriesFromTransactions();
+    const currentStates = buildCurrentCommentStates();
+    const retainedEntries = target === "completed" ? entries.filter((entry) => {
+      const elementKey = normalizeElementRecordKey(entry.elementKey) || locatorKey(entry.locator);
+      return (currentStates.get(elementKey)?.state ?? entry.state) !== "completed";
+    }) : [];
+    if (commentPersistenceMode !== "adapter-only") {
+      writeLocalCache(retainedEntries);
+    }
+    await persistAdapterDocument(retainedEntries, "clear", scope, target);
   }
   return {
     readMarkerVisibility,
@@ -31712,12 +33418,14 @@ function createPersistenceService(options) {
     writeAgentConversationState,
     clearAgentConversationState,
     readAgentTaskStates,
+    discardAgentTaskStates,
     writeAgentTaskStates(scopeKey, tasks) {
       writeAgentTaskStates(scopeKey, tasks);
-      persistTaskDocument();
+      persistCommentStateDocument();
     },
     pruneExpiredAgentTaskStates,
     recordCommentTaskState,
+    getCommentTaskState,
     clearCommentRecord,
     scheduleWrite,
     persistFromTransactions,
@@ -31735,10 +33443,10 @@ var ANNOTATION_TEXT_MAX_LENGTH = 280;
 function normalizeNote(value) {
   return String(value ?? "").replace(/\r\n/g, "\n").trim();
 }
-function buildPromptNoteWithSkills(note, payload) {
+function buildPromptNoteWithSkills(note, payload, skillOptions = []) {
   return mergePromptCardSkillsIntoPromptNote(
     normalizeNote(note),
-    deserializePromptCardSkillSelection(payload)
+    deserializePromptCardSkillSelection(payload, void 0, skillOptions)
   );
 }
 function normalizeInlineText(value) {
@@ -31775,7 +33483,9 @@ function inferPromptImageAssetPath(image, index) {
   return `prototype-comment-assets/${id}.${extension}`;
 }
 function collectPromptImageAssetPaths(images) {
-  return dedupeStrings((images ?? []).map((image, index) => inferPromptImageAssetPath(image, index)));
+  return dedupeStrings(
+    (images ?? []).map((image, index) => inferPromptImageAssetPath(image, index))
+  );
 }
 function collectPersistedImageAssetPathsForComment(images, comment) {
   const elementKey = normalizePathValue2(comment.elementKey);
@@ -31786,11 +33496,16 @@ function collectPersistedImageAssetPathsForComment(images, comment) {
       if (normalizePathValue2(image.elementKey) !== elementKey) return false;
       const imagePageScope = normalizePathValue2(image.pageScope);
       return !pageScope || !imagePageScope || imagePageScope === pageScope;
-    }).map((image, index) => normalizePathValue2(image.assetPath) || inferPromptImageAssetPath({
-      id: normalizePathValue2(image.id),
-      name: normalizePathValue2(image.name),
-      mimeType: normalizePathValue2(image.mimeType)
-    }, index))
+    }).map(
+      (image, index) => normalizePathValue2(image.assetPath) || inferPromptImageAssetPath(
+        {
+          id: normalizePathValue2(image.id),
+          name: normalizePathValue2(image.name),
+          mimeType: normalizePathValue2(image.mimeType)
+        },
+        index
+      )
+    )
   );
 }
 function readElementAttr(element, attr) {
@@ -31955,10 +33670,7 @@ function stripLocatorDebugSource2(locator) {
 }
 function resolvePromptContext(promptContext, projectPath) {
   return {
-    workspacePaths: dedupeStrings([
-      projectPath ?? "",
-      ...promptContext?.workspacePaths ?? []
-    ]),
+    workspacePaths: dedupeStrings([projectPath ?? "", ...promptContext?.workspacePaths ?? []]),
     relatedFiles: dedupeStrings(promptContext?.relatedFiles ?? []),
     extraContext: dedupeStrings(promptContext?.extraContext ?? [])
   };
@@ -31975,6 +33687,7 @@ function createEditorSummariesService(options) {
   const promptContext = resolvePromptContext(options.promptContext, options.projectPath);
   const getResourceContext = options.getResourceContext ?? (() => null);
   const readPersistedPrototypeCommentsDocument = options.getPersistedPrototypeCommentsDocument ?? (() => null);
+  const buildPromptNote = (note, payload) => buildPromptNoteWithSkills(note, payload, options.getCommentarySkillOptions?.() ?? []);
   function resolvePromptPageUrl() {
     if (typeof window === "undefined") return "";
     try {
@@ -32015,8 +33728,32 @@ function createEditorSummariesService(options) {
   function getUndoStack() {
     return state2.transactionManager?.getUndoStack() ?? [];
   }
+  function collectCurrentPageCompletedElementKeys() {
+    const document2 = resolvePersistedPrototypeCommentsDocument();
+    const currentPageScope = normalizePathValue2(resolveCurrentPageScope());
+    const completedElementKeys = /* @__PURE__ */ new Set();
+    for (const comment of document2?.comments ?? []) {
+      if (comment.state !== "completed") continue;
+      const commentPageScope = normalizePathValue2(comment.pageScope);
+      if (commentPageScope && commentPageScope !== currentPageScope) continue;
+      const elementKey = normalizePathValue2(comment.elementKey) || locatorKey(comment.locator);
+      if (elementKey) {
+        completedElementKeys.add(elementKey);
+      }
+    }
+    return completedElementKeys;
+  }
+  function isCompletedCurrentPageComment(elementKey) {
+    return collectCurrentPageCompletedElementKeys().has(String(elementKey ?? "").trim());
+  }
   function getActiveTransactions() {
-    return filterUnprocessedTransactions(state2, getUndoStack());
+    const completedElementKeys = collectCurrentPageCompletedElementKeys();
+    return filterUnprocessedTransactions(state2, getUndoStack()).filter((transaction) => {
+      const elementKey = String(
+        transaction.elementKey ?? locatorKey(transaction.targetLocator)
+      ).trim();
+      return !completedElementKeys.has(elementKey);
+    });
   }
   function resolveElementKey(element) {
     if (!element || !element.isConnected) return "";
@@ -32122,7 +33859,9 @@ function createEditorSummariesService(options) {
     return out;
   }
   function collectMoveSummaries(transactions) {
-    return collectMoveSummariesWithKeys(transactions).map(({ elementKey: _elementKey, ...summary }) => summary);
+    return collectMoveSummariesWithKeys(transactions).map(
+      ({ elementKey: _elementKey, ...summary }) => summary
+    );
   }
   function collectTextChanges() {
     const tm = state2.transactionManager;
@@ -32150,12 +33889,14 @@ function createEditorSummariesService(options) {
       const before = normalizeInlineText(textChange.before);
       const after = normalizeInlineText(textChange.after);
       if (before === after) return [];
-      return [{
-        elementKey: summary.elementKey,
-        locator: summary.netEffect.locator,
-        before,
-        after
-      }];
+      return [
+        {
+          elementKey: summary.elementKey,
+          locator: summary.netEffect.locator,
+          before,
+          after
+        }
+      ];
     });
   }
   function collectStyleCss() {
@@ -32180,11 +33921,11 @@ ${lines.join("\n")}
     };
   }
   function collectNoteOnlyMetas(summarizedKeys) {
-    return Array.from(state2.editMetaByKey.values()).map((meta) => ({
+    return Array.from(state2.editMetaByKey.values()).filter((meta) => !isCompletedCurrentPageComment(meta.elementKey)).map((meta) => ({
       elementKey: String(meta.elementKey),
       label: meta.label,
       locator: meta.locator,
-      note: buildPromptNoteWithSkills(meta.note, meta),
+      note: buildPromptNote(meta.note, meta),
       skillIds: meta.skillIds?.slice(),
       actions: buildMetaActionLines(meta),
       imageAssetPaths: collectPromptImageAssetPaths(meta.images),
@@ -32194,11 +33935,11 @@ ${lines.join("\n")}
     ).sort((a, b) => b.dirtySince - a.dirtySince || a.label.localeCompare(b.label));
   }
   function collectSaveRunCommentOnlyMetas(summarizedKeys) {
-    return Array.from(state2.editMetaByKey.values()).map((meta) => ({
+    return Array.from(state2.editMetaByKey.values()).filter((meta) => !isCompletedCurrentPageComment(meta.elementKey)).map((meta) => ({
       elementKey: String(meta.elementKey),
       label: meta.label,
       locator: meta.locator,
-      note: buildPromptNoteWithSkills(meta.note, meta),
+      note: buildPromptNote(meta.note, meta),
       skillIds: meta.skillIds?.slice(),
       actions: buildMetaActionLines(meta),
       imageCount: Array.isArray(meta.images) ? meta.images.length : 0,
@@ -32242,6 +33983,31 @@ ${lines.join("\n")}
   function appendGlobalConstraints(lines) {
     lines.push("\u7EA6\u675F: \u5143\u7D20\u63CF\u8FF0\u4EC5\u7528\u4E8E\u5B9A\u4F4D\uFF0C\u53EA\u6539\u52A8\u660E\u786E\u6307\u51FA\u7684\u5185\u5BB9\uFF0C\u5176\u4F59\u4FDD\u6301\u4E0D\u52A8\u3002");
   }
+  function resolveCommentaryCommentsFilePath() {
+    try {
+      const scopeFilePath = normalizePathValue2(options.getPersistenceScope?.()?.filePath);
+      return /^\.axhub\/chrome\/pages\/[^/]+\/comments\.json$/u.test(scopeFilePath) ? scopeFilePath : "";
+    } catch {
+      return "";
+    }
+  }
+  function appendCommentaryCompletionInstructions(lines, elementKeys) {
+    const filePath = resolveCommentaryCommentsFilePath();
+    const normalizedElementKeys = dedupeStrings(elementKeys);
+    if (!filePath || normalizedElementKeys.length === 0) return;
+    lines.push("");
+    lines.push("\u6279\u6CE8\u72B6\u6001\u6536\u5C3E\uFF08\u5FC5\u987B\u6700\u540E\u6267\u884C\uFF09:");
+    lines.push(`- \u5B8C\u6210\u5E76\u9A8C\u8BC1\u4E0A\u8FF0\u4EE3\u7801\u4FEE\u6539\u540E\uFF0C\u518D\u8BFB\u53D6\u5E76\u66F4\u65B0\u6279\u6CE8\u6587\u4EF6: ${filePath}`);
+    lines.push(
+      `- \u4EC5\u5904\u7406 comments \u4E2D elementKey \u4E3A ${normalizedElementKeys.map((elementKey) => JSON.stringify(elementKey)).join(", ")} \u5BF9\u5E94\u7684\u5F53\u524D pageScope \u6279\u6CE8\uFF1B\u5C06\u5BF9\u5E94\u6279\u6CE8\u7684 state \u8BBE\u4E3A completed\uFF0C\u5E76\u66F4\u65B0\u6279\u6CE8\u4E0E\u9876\u5C42 updatedAt\u3002\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u65F6\u4E0D\u8981\u731C\u6D4B\u6216\u6539\u5199\u5176\u4ED6\u6279\u6CE8\u3002`
+    );
+    lines.push(
+      "- \u4FDD\u7559 comments \u548C assets \u7684\u5168\u90E8\u8BB0\u5F55\uFF0C\u4E0D\u8BBE\u7F6E deletedAt\uFF0C\u4E0D\u5220\u9664\u6570\u7EC4\u9879\u6216\u672C\u5730\u6587\u4EF6\u3002"
+    );
+    lines.push(
+      "- \u4E0A\u8FF0\u6279\u6CE8\u6587\u4EF6\u5FC5\u987B\u662F\u672C\u6B21\u4EFB\u52A1\u6700\u540E\u4E00\u6B21\u6587\u4EF6\u5199\u5165\uFF1B\u5199\u5B8C\u540E\u4E0D\u8981\u518D\u4FEE\u6539\u4EFB\u4F55\u6587\u4EF6\u3002\u56DE\u590D\u4E2D\u8BF4\u660E\u4EFB\u52A1\u5DF2\u5B8C\u6210\uFF0C\u662F\u5426\u6E05\u9664\u7559\u7ED9\u7528\u6237\u540E\u7EED\u786E\u8BA4\u3002"
+    );
+  }
   function resolveAnnotationPromptContext(locator) {
     const nodeId = resolveAnnotationNodeIdFromLocator(locator) || (() => {
       const element = tryLocateElement(locator);
@@ -32279,7 +34045,9 @@ ${lines.join("\n")}
         lines.push(`    - ${control}`);
       }
     }
-    lines.push("  - \u5B9A\u4F4D\u8BF4\u660E: \u5F53\u524D\u9009\u4E2D\u7684\u662F\u6807\u6CE8\u9762\u677F\uFF1B\u8BF7\u6839\u636E\u8FD9\u4E2A\u6807\u6CE8\u8282\u70B9\u7684 locator \u5B9A\u4F4D\u771F\u5B9E\u539F\u578B\u5143\u7D20\uFF0C\u4E0D\u8981\u628A\u6807\u6CE8\u9762\u677F\u672C\u8EAB\u5F53\u4F5C\u4FEE\u6539\u5BF9\u8C61\u3002");
+    lines.push(
+      "  - \u5B9A\u4F4D\u8BF4\u660E: \u5F53\u524D\u9009\u4E2D\u7684\u662F\u6807\u6CE8\u9762\u677F\uFF1B\u8BF7\u6839\u636E\u8FD9\u4E2A\u6807\u6CE8\u8282\u70B9\u7684 locator \u5B9A\u4F4D\u771F\u5B9E\u539F\u578B\u5143\u7D20\uFF0C\u4E0D\u8981\u628A\u6807\u6CE8\u9762\u677F\u672C\u8EAB\u5F53\u4F5C\u4FEE\u6539\u5BF9\u8C61\u3002"
+    );
   }
   function appendChangeItem(lines, params) {
     const annotationContext = resolveAnnotationPromptContext(params.locator);
@@ -32361,7 +34129,9 @@ ${lines.join("\n")}
         const before = String((styleChanges.before ?? {})[prop] ?? "").trim();
         const after = String((styleChanges.after ?? {})[prop] ?? "").trim();
         if (before === after) continue;
-        actionLines.push(`\u6837\u5F0F ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`);
+        actionLines.push(
+          `\u6837\u5F0F ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`
+        );
       }
     }
     return actionLines;
@@ -32401,7 +34171,9 @@ ${lines.join("\n")}
         const before = String((styleChanges.before ?? {})[prop] ?? "").trim();
         const after = String((styleChanges.after ?? {})[prop] ?? "").trim();
         if (before === after) continue;
-        actionLines.push(`\u6837\u5F0F ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`);
+        actionLines.push(
+          `\u6837\u5F0F ${prop}: "${formatStyleValue(before)}" -> "${formatStyleValue(after)}"`
+        );
       }
     }
     return actionLines;
@@ -32410,12 +34182,12 @@ ${lines.join("\n")}
     const document2 = resolvePersistedPrototypeCommentsDocument();
     if (!document2) return [];
     const images = Array.isArray(document2.images) ? document2.images : [];
-    return document2.comments.map((comment) => ({
+    return document2.comments.filter((comment) => comment.state !== "completed").map((comment) => ({
       elementKey: String(comment.elementKey ?? "").trim(),
       label: String(comment.label ?? "").trim() || String(comment.elementKey ?? "").trim() || "element",
       locator: comment.locator,
       pageScope: String(comment.pageScope ?? "").trim(),
-      note: buildPromptNoteWithSkills(comment.comment ?? "", comment),
+      note: buildPromptNote(comment.comment ?? "", comment),
       skillIds: comment.skillIds?.slice(),
       actions: buildPersistedCommentActionLines(comment),
       imageAssetPaths: collectPersistedImageAssetPathsForComment(images, comment)
@@ -32427,7 +34199,9 @@ ${lines.join("\n")}
     const normalizedPageScope = normalizePathValue2(meta.pageScope);
     const normalizedCurrentPageScope = normalizePathValue2(currentPageScope);
     if (!normalizedPageScope) return true;
-    return Boolean(normalizedCurrentPageScope && normalizedPageScope === normalizedCurrentPageScope);
+    return Boolean(
+      normalizedCurrentPageScope && normalizedPageScope === normalizedCurrentPageScope
+    );
   }
   function buildDefaultCopyPrompt() {
     const undoStack = getActiveTransactions();
@@ -32486,7 +34260,7 @@ ${lines.join("\n")}
     }
     for (const summary of summaries) {
       const meta = state2.editMetaByKey.get(summary.elementKey);
-      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
+      const note = buildPromptNote(meta?.note ?? "", meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
       const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
       appendChangeItem(lines, {
@@ -32550,11 +34324,13 @@ ${lines.join("\n")}
     return lines.join("\n");
   }
   function collectModifiedElementSummaries() {
-    return Array.from(state2.editMetaByKey.values()).filter((meta) => meta.dirtySince !== null).map((meta) => ({
+    return Array.from(state2.editMetaByKey.values()).filter(
+      (meta) => meta.dirtySince !== null && !isCompletedCurrentPageComment(meta.elementKey)
+    ).map((meta) => ({
       elementKey: meta.elementKey,
       locator: stripLocatorDebugSource2(meta.locator),
       label: meta.label,
-      note: buildPromptNoteWithSkills(meta.note, meta),
+      note: buildPromptNote(meta.note, meta),
       skillIds: meta.skillIds?.slice(),
       imageCount: meta.images.length,
       changeKinds: meta.changeKinds.slice()
@@ -32599,14 +34375,17 @@ ${lines.join("\n")}
   function buildSaveRunPromptFromParts(params) {
     const { summaries, commentOnlyMetas, moveSummaries } = params;
     const mode = params.mode ?? "initial";
-    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0) return "";
+    if (summaries.length === 0 && commentOnlyMetas.length === 0 && moveSummaries.length === 0)
+      return "";
     const currentFilePath = resolveCurrentFilePath();
     const includeDebugFileHint = !hasExplicitHostFilePath();
     const lines = [];
     if (mode === "append") {
       lines.push("\u7EE7\u7EED\u4FEE\u6539\u3002\u4E0D\u8981\u63D0\u95EE\uFF0C\u76F4\u63A5\u6267\u884C\u3002");
     } else {
-      lines.push("\u8BF7\u76F4\u63A5\u6267\u884C\u4EE5\u4E0B\u4EE3\u7801\u4FEE\u6539\u3002\u8981\u6C42\uFF1A\u5C3D\u5FEB\u5904\u7406\uFF0C\u7B80\u6D01\u56DE\u590D\uFF08\u53EA\u5217\u6539\u4E86\u4EC0\u4E48\u6587\u4EF6\u548C\u7ED3\u679C\uFF09\uFF0C\u4E0D\u8981\u548C\u7528\u6237\u4EA4\u4E92\u63D0\u95EE\uFF0C\u4E0D\u4F7F\u7528\u975E\u5FC5\u8981\u7684\u6280\u80FD\u548C MCP\u3002\u5B8C\u6210\u540E\u56DE\u590D\u5B8C\u6210\u5373\u53EF\uFF0C\u963B\u585E\u65F6\u7B80\u77ED\u8BF4\u660E\u3002");
+      lines.push(
+        "\u8BF7\u76F4\u63A5\u6267\u884C\u4EE5\u4E0B\u4EE3\u7801\u4FEE\u6539\u3002\u8981\u6C42\uFF1A\u5C3D\u5FEB\u5904\u7406\uFF0C\u7B80\u6D01\u56DE\u590D\uFF08\u53EA\u5217\u6539\u4E86\u4EC0\u4E48\u6587\u4EF6\u548C\u7ED3\u679C\uFF09\uFF0C\u4E0D\u8981\u548C\u7528\u6237\u4EA4\u4E92\u63D0\u95EE\uFF0C\u4E0D\u4F7F\u7528\u975E\u5FC5\u8981\u7684\u6280\u80FD\u548C MCP\u3002\u5B8C\u6210\u540E\u56DE\u590D\u5B8C\u6210\u5373\u53EF\uFF0C\u963B\u585E\u65F6\u7B80\u77ED\u8BF4\u660E\u3002"
+      );
     }
     lines.push("\u6536\u5230\u6D88\u606F\u540E\uFF0C\u6309\u4EE5\u4E0B\u683C\u5F0F\u7ACB\u5373\u56DE\u590D\uFF1A\u6211\u5F00\u59CB\u4FEE\u6539 xxx \u8282\u70B9");
     lines.push("");
@@ -32625,7 +34404,7 @@ ${lines.join("\n")}
     let itemIndex = 1;
     for (const summary of summaries) {
       const meta = state2.editMetaByKey.get(summary.elementKey);
-      const note = buildPromptNoteWithSkills(meta?.note ?? "", meta);
+      const note = buildPromptNote(meta?.note ?? "", meta);
       const actions = [...buildMetaActionLines(meta), ...buildSummaryActionLines(summary)];
       const imageAssetPaths = collectPromptImageAssetPaths(meta?.images);
       appendChangeItem(lines, {
@@ -32676,12 +34455,16 @@ ${lines.join("\n")}
         itemIndex += 1;
       }
     }
+    appendCommentaryCompletionInstructions(lines, params.completionElementKeys);
     return lines.join("\n");
   }
   function buildSaveRunPrompt() {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
-    const moveSummaries = collectMoveSummaries(undoStack);
+    const moveSummariesWithKeys = collectMoveSummariesWithKeys(undoStack);
+    const moveSummaries = moveSummariesWithKeys.map(
+      ({ elementKey: _elementKey, ...summary }) => summary
+    );
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
@@ -32689,13 +34472,21 @@ ${lines.join("\n")}
       mode: "initial",
       summaries,
       commentOnlyMetas,
-      moveSummaries
+      moveSummaries,
+      completionElementKeys: [
+        ...summaries.map((summary) => String(summary.elementKey)),
+        ...commentOnlyMetas.map((meta) => meta.elementKey),
+        ...moveSummariesWithKeys.map((summary) => summary.elementKey)
+      ]
     });
   }
   function buildAppendSaveRunPrompt() {
     const undoStack = getActiveTransactions();
     const summaries = aggregateTransactionsByElement(undoStack);
-    const moveSummaries = collectMoveSummaries(undoStack);
+    const moveSummariesWithKeys = collectMoveSummariesWithKeys(undoStack);
+    const moveSummaries = moveSummariesWithKeys.map(
+      ({ elementKey: _elementKey, ...summary }) => summary
+    );
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     );
@@ -32703,7 +34494,12 @@ ${lines.join("\n")}
       mode: "append",
       summaries,
       commentOnlyMetas,
-      moveSummaries
+      moveSummaries,
+      completionElementKeys: [
+        ...summaries.map((summary) => String(summary.elementKey)),
+        ...commentOnlyMetas.map((meta) => meta.elementKey),
+        ...moveSummariesWithKeys.map((summary) => summary.elementKey)
+      ]
     });
   }
   function buildSaveRunPromptForElement(element) {
@@ -32714,7 +34510,9 @@ ${lines.join("\n")}
     const normalizedElementKey = String(elementKey || "").trim();
     if (!normalizedElementKey) return "";
     const undoStack = getActiveTransactions();
-    const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === normalizedElementKey);
+    const summaries = aggregateTransactionsByElement(undoStack).filter(
+      (summary) => String(summary.elementKey) === normalizedElementKey
+    );
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     ).filter((meta) => meta.elementKey === normalizedElementKey);
@@ -32723,14 +34521,17 @@ ${lines.join("\n")}
       mode: "initial",
       summaries,
       commentOnlyMetas,
-      moveSummaries
+      moveSummaries,
+      completionElementKeys: [normalizedElementKey]
     });
   }
   function buildAppendSaveRunPromptForElement(element) {
     const elementKey = resolveElementKey(element);
     if (!elementKey) return "";
     const undoStack = getActiveTransactions();
-    const summaries = aggregateTransactionsByElement(undoStack).filter((summary) => String(summary.elementKey) === elementKey);
+    const summaries = aggregateTransactionsByElement(undoStack).filter(
+      (summary) => String(summary.elementKey) === elementKey
+    );
     const commentOnlyMetas = collectSaveRunCommentOnlyMetas(
       new Set(summaries.map((summary) => String(summary.elementKey)))
     ).filter((meta) => meta.elementKey === elementKey);
@@ -32739,7 +34540,8 @@ ${lines.join("\n")}
       mode: "append",
       summaries,
       commentOnlyMetas,
-      moveSummaries
+      moveSummaries,
+      completionElementKeys: [elementKey]
     });
   }
   function getCopyPromptBlockReason() {
@@ -32800,6 +34602,7 @@ ${lines.join("\n")}
     formatElementLabelFromLocator,
     collectTextChanges,
     collectTargetedTextChanges,
+    collectModifiedElementSummaries,
     collectStyleCss,
     collectStyleChanges,
     collectMoveSummaries,
@@ -32895,8 +34698,10 @@ function createCommentary(options = {}) {
     promptContext: resolvedOptions.promptContext,
     projectPath: resolvedProjectPath,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistenceScope: resolvedOptions.host.getPersistenceScope,
     getPersistedPrototypeCommentsDocument: () => persistence?.getPersistedPrototypeCommentsDocument() ?? null,
-    buildCopyPromptOverride: resolvedOptions.host.buildCopyPrompt
+    buildCopyPromptOverride: resolvedOptions.host.buildCopyPrompt,
+    getCommentarySkillOptions: () => resolvedOptions.ui.commentarySkillOptions
   });
   const feedback = createFeedbackService({
     getUiRoot: () => state2.shadowHost?.getElements()?.uiRoot ?? null
@@ -32928,14 +34733,7 @@ function createCommentary(options = {}) {
     };
   }
   function getModifiedElements() {
-    return Array.from(state2.editMetaByKey.values()).filter((meta) => meta.dirtySince !== null).sort((a, b) => Number(a.dirtySince ?? 0) - Number(b.dirtySince ?? 0)).map((meta) => ({
-      elementKey: meta.elementKey,
-      locator: meta.locator,
-      label: meta.label,
-      note: meta.note,
-      imageCount: meta.images.length,
-      changeKinds: meta.changeKinds.slice()
-    }));
+    return summaries.collectModifiedElementSummaries();
   }
   function getTextChanges() {
     return summaries.collectTextChanges();
@@ -32972,6 +34770,7 @@ function createCommentary(options = {}) {
       selectedElement: buildSelectedElementSummary(),
       modifiedElements: getModifiedElements(),
       textChanges: getTextChanges(),
+      targetedTextChanges: getTargetedTextChanges(),
       styleChanges: getStyleChanges()
     };
   }
@@ -33361,12 +35160,15 @@ function createCommentary(options = {}) {
         normalizedTaskRef?.requestId && existingTask.requestId === normalizedTaskRef.requestId
       );
     };
-    const forceCompleteEditsByTarget = (target) => {
+    const forceCompleteStateByTarget = (target) => {
       let applied = false;
       for (const cleanupTarget of collectTerminalCleanupTargets(target)) {
         if (!canForceCompleteWithoutTask(cleanupTarget.elementKey)) continue;
-        changes.markElementEditsHandledByKey(cleanupTarget);
-        persistence?.clearCommentRecord?.(cleanupTarget.elementKey);
+        persistence?.recordCommentTaskState?.(
+          cleanupTarget.elementKey,
+          "completed",
+          normalizedTaskRef
+        );
         applied = true;
       }
       if (applied) {
@@ -33394,11 +35196,8 @@ function createCommentary(options = {}) {
           nextState,
           taskRef
         );
-        if (task && nextState === "completed") {
-          forceCompleteEditsByTarget(target);
-        }
         if (!task) {
-          if (forceCompleteEditsByTarget(target)) {
+          if (forceCompleteStateByTarget(target)) {
             notifyStatusChange();
             return {
               elementKey: target.elementKey,
@@ -33448,11 +35247,7 @@ function createCommentary(options = {}) {
         locator: targetRef.locator,
         label: String(targetRef.label || "").trim() || elementKey
       };
-      changes.getOrCreateEditMeta(
-        metaTarget.elementKey,
-        metaTarget.locator,
-        metaTarget.label
-      );
+      changes.getOrCreateEditMeta(metaTarget.elementKey, metaTarget.locator, metaTarget.label);
     }
     if (!agentBridge?.setExternalEditingState || !agentBridge.clearExternalEditingState) {
       throw new Error("NOT_IMPLEMENTED: External editing state control is unavailable");
@@ -33466,11 +35261,8 @@ function createCommentary(options = {}) {
       let task = null;
       if (target && agentBridge.setExternalEditingTerminalStateByElementKey) {
         task = agentBridge.setExternalEditingTerminalStateByElementKey(target, nextState, taskRef);
-        if (task && nextState === "completed") {
-          forceCompleteEditsByTarget(target);
-        }
         if (!task) {
-          if (forceCompleteEditsByTarget(target)) {
+          if (forceCompleteStateByTarget(target)) {
             notifyStatusChange();
             return {
               elementKey,
@@ -33534,6 +35326,7 @@ function createCommentary(options = {}) {
     state: state2,
     scheduleCacheWrite: () => persistence?.scheduleWrite(),
     persistMarkerVisibility: (visible) => persistence?.setMarkerVisibility(visible),
+    getCommentTaskState: (elementKey) => persistence?.getCommentTaskState?.(elementKey) ?? null,
     onSelectMarkedElement: (element, anchor) => {
       if (!element.isConnected) return;
       state2.eventController?.setMode("selecting");
@@ -33560,8 +35353,10 @@ function createCommentary(options = {}) {
     state: state2,
     changes,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistenceScope: resolvedOptions.host.getPersistenceScope,
     persistenceAdapter: resolvedOptions.host.persistenceAdapter,
-    interactionProfile: resolvedOptions.interactionProfile
+    interactionProfile: resolvedOptions.interactionProfile,
+    getInteractionProfile: () => resolvedOptions.interactionProfile === "text-comment" || state2.uiSettings.documentCommentMode ? "text-comment" : "design"
   });
   let flushPendingCommentContextSync = null;
   agentBridge = createAgentBridgeService({
@@ -33713,11 +35508,12 @@ function createCommentary(options = {}) {
     notifyStatusChange();
     return cleared;
   }
-  async function clearAllEdits() {
+  async function clearAllEdits(options2 = {}) {
     if (destroyed) return;
-    await localActions.handleClearEdits({ skipConfirm: true });
+    const clearedTarget = await localActions.handleClearEdits({ ...options2, skipConfirm: true });
+    if (!clearedTarget) return;
     for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
-      if (task.status !== "completed" && task.status !== "error") {
+      if (task.status !== "completed" && (clearedTarget === "completed" || task.status !== "error")) {
         continue;
       }
       const element = resolveElementByKey(task.elementKey);
@@ -33725,6 +35521,17 @@ function createCommentary(options = {}) {
         agentBridge?.dismissElementTaskState(element);
       }
     }
+    notifyStatusChange();
+  }
+  async function refreshPersistedComments(externallyDeletedElementKeys = []) {
+    if (destroyed || !persistence) return;
+    const persistedDeletedElementKeys = await persistence.restoreCachedChanges();
+    agentBridge?.discardDeletedElementStates?.([
+      ...externallyDeletedElementKeys,
+      ...persistedDeletedElementKeys
+    ]);
+    changes.renderChangeMarkers();
+    state2.propertyPanel?.refresh();
     notifyStatusChange();
   }
   async function revertElement(elementKey) {
@@ -33777,6 +35584,7 @@ function createCommentary(options = {}) {
     acknowledgeSavedStyleChanges,
     clearElementEdits,
     clearAllEdits,
+    refreshPersistedComments,
     getHostToolbarState,
     subscribeHostToolbarState,
     runHostToolbarAction,

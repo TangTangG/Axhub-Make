@@ -196,6 +196,30 @@ describe('useIndexPageSidebarPropsBuilder', () => {
     expect(setViewMode).toHaveBeenCalledWith('demo');
   });
 
+  it('lands on the matching new-item start page when switching sidebar sections', () => {
+    const handleCreatePrototypeStartDraft = vi.fn();
+    const handleCreateResourceStartDraft = vi.fn();
+    const handleCreateThemeStartDraft = vi.fn();
+    const setSidebarTab = vi.fn();
+    const props = useIndexPageSidebarPropsBuilder(createBuilderParams({
+      deps: {
+        setSidebarTab,
+        handleCreatePrototypeStartDraft,
+        handleCreateResourceStartDraft,
+        handleCreateThemeStartDraft,
+      },
+    }));
+
+    props.actions.onSidebarTabChange('prototype');
+    props.actions.onSidebarTabChange('document');
+    props.actions.onSidebarTabChange('assets');
+
+    expect(handleCreatePrototypeStartDraft).toHaveBeenCalledTimes(1);
+    expect(handleCreateResourceStartDraft).toHaveBeenCalledTimes(1);
+    expect(handleCreateThemeStartDraft).toHaveBeenCalledTimes(1);
+    expect(setSidebarTab).not.toHaveBeenCalled();
+  });
+
   it('routes prototype page child clicks through parent selection and page id state', async () => {
     const handleMenuClick = vi.fn();
     const setSelectedPrototypePageId = vi.fn();

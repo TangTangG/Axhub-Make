@@ -112,6 +112,7 @@ import {
     type CanvasProjectResourceTrees,
 } from '../../domains/shared/CanvasGenerationComposer';
 import { apiService } from '../../services/index.api';
+import { requireProjectScope, withProjectScope } from '../../services/projectScope';
 import type { ItemData, PromptClientPreference } from '../../types';
 import type { ThemeResourceItem } from '../../domains/resources/resource.types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
@@ -178,7 +179,7 @@ interface AxhubExcalidrawCaptureApi {
 interface ExcalidrawCanvasProps {
     canvasName: string;
     canvasFilePath?: string;
-    activeProjectId?: string | null;
+    activeProjectId: string;
     isDarkMode: boolean;
     onCanvasAPIReady?: (api: ExcalidrawAPI) => void;
     collapsed?: boolean;
@@ -303,14 +304,9 @@ function resolveResourceCanvasApiPath(canvasName: string, canvasFilePath?: strin
     return '';
 }
 
-function buildCanvasApiUrl(canvasName: string, projectId?: string | null, canvasFilePath?: string): string {
+function buildCanvasApiUrl(canvasName: string, projectId: string, canvasFilePath?: string): string {
     const resourceCanvasPath = resolveResourceCanvasApiPath(canvasName, canvasFilePath);
-    const url = new URL(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}`, window.location.origin);
-    const normalizedProjectId = projectId?.trim();
-    if (normalizedProjectId) {
-        url.searchParams.set('projectId', normalizedProjectId);
-    }
-    return `${url.pathname}${url.search}`;
+    return withProjectScope(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}`, requireProjectScope(projectId));
 }
 
 function getCanvasBridgeCanvasName(canvasName: string, canvasFilePath?: string): string {
@@ -433,11 +429,11 @@ function findEmbedItem(detail: any, entries: any, docs: any[]): any {
     }) ?? null;
 }
 
-async function openEmbedItemInEditor(detail: any) {
+async function openEmbedItemInEditor(detail: any, projectId: string) {
     const [entriesResult, docsResult, configResult] = await Promise.all([
-        fetch('/api/entries.json').then((response) => (response.ok ? response.json() : null)).catch(() => null),
-        fetch('/api/docs').then((response) => (response.ok ? response.json() : [])).catch(() => []),
-        fetch('/api/config').then((response) => (response.ok ? response.json() : null)).catch(() => null),
+        fetch(withProjectScope('/api/entries.json', requireProjectScope(projectId))).then((response) => (response.ok ? response.json() : null)).catch(() => null),
+        fetch(withProjectScope('/api/docs', requireProjectScope(projectId))).then((response) => (response.ok ? response.json() : [])).catch(() => []),
+        fetch(withProjectScope('/api/config', requireProjectScope(projectId))).then((response) => (response.ok ? response.json() : null)).catch(() => null),
     ]);
     const matchedItem = findEmbedItem(detail, entriesResult, docsResult);
     const filePath = getExplicitLocalPath(matchedItem);
@@ -448,6 +444,7 @@ async function openEmbedItemInEditor(detail: any) {
     await copyEmbedHelperText(matchedItem, detail, filePath);
     await apiService.openIDE({
         ide: resolveVisibleIDEPreference(configResult?.automation?.defaultIDE, configResult?.ideAvailability),
+        projectId: requireProjectScope(projectId).projectId,
         targetPath: filePath,
     });
 }
@@ -1230,12 +1227,14 @@ function getCanvasResourceGridPosition(
 
 async function insertCanvasResourceSelections({
     excalidrawAPI,
+    projectId,
     selections,
     canvasPrototypeId,
     viewportRect,
     scheduleExplicitCanvasSave,
 }: {
     excalidrawAPI: ExcalidrawAPI;
+    projectId: string;
     selections: CanvasProjectResourceItemSelection[];
     canvasPrototypeId?: string | null;
     viewportRect?: EmbedViewportRect | null;
@@ -1257,6 +1256,7 @@ async function insertCanvasResourceSelections({
             createEmbeddableFromDrop(
                 excalidrawAPI,
                 payload,
+                projectId,
                 x,
                 y,
                 canvasPrototypeId,
@@ -1291,10 +1291,11 @@ function resolveEmbedLinkKind(element: any): LinkEmbedKind {
     return 'preview';
 }
 
-function resolveEmbeddablePreviewUrl(element: any): string {
+function resolveEmbeddablePreviewUrl(element: any, fallbackProjectId: string): string {
     const previewUrl = resolveString(element?.customData?.previewUrl) || resolveString(element?.link);
     const sourceResourceType = resolveString(element?.customData?.sourceResourceType);
     return resolveCanvasEmbedPreviewUrl({
+        projectId: resolveString(element?.customData?.projectId) || fallbackProjectId,
         previewUrl,
         resourceType: sourceResourceType || resolveEmbeddableResourceType(element),
         runtimeOrigin: (window as any).__RUNTIME_ORIGIN__,
@@ -1302,8 +1303,8 @@ function resolveEmbeddablePreviewUrl(element: any): string {
     });
 }
 
-function resolveEmbeddableOpenUrl(element: any): string {
-    const previewUrl = resolveEmbeddablePreviewUrl(element);
+function resolveEmbeddableOpenUrl(element: any, projectId: string): string {
+    const previewUrl = resolveEmbeddablePreviewUrl(element, projectId);
     const sourceResourceType = resolveString(element?.customData?.sourceResourceType);
     if ((resolveEmbeddableResourceType(element) === 'prototype' || sourceResourceType === 'prototype') && previewUrl) {
         return previewUrl;
@@ -1374,6 +1375,7 @@ export function createEmbeddableFromDrop(
         embedViewMode?: 'link' | 'preview';
         previewKind?: CanvasDropPreviewKind;
     },
+    projectId: string,
     canvasX: number,
     canvasY: number,
     canvasPrototypeId?: string | null,
@@ -1397,6 +1399,7 @@ export function createEmbeddableFromDrop(
     const isTheme = sourceResourceType === 'theme';
     const resourceType = payload.resourceType || 'preview';
     const previewUrl = resolveCanvasEmbedPreviewUrl({
+        projectId,
         previewUrl: payload.previewUrl,
         resourceType: sourceResourceType || resourceType,
         runtimeOrigin: (window as any).__RUNTIME_ORIGIN__,
@@ -1415,6 +1418,7 @@ export function createEmbeddableFromDrop(
         ? fitEmbedSizeToViewport(getDefaultEmbedSize({ ...payload, embedViewMode: 'preview' }), viewportRect, zoom)
         : { width: embedSize.width, height: embedSize.height };
     const commonCustomData = {
+        projectId,
         title: payload.displayName,
         previewUrl: previewUrl || payload.previewUrl || '',
         openUrl: link,
@@ -1656,6 +1660,7 @@ export default function ExcalidrawCanvas({
     const isSavingRef = useRef(false);
     const queuedServerSaveRef = useRef<{ elements: readonly any[]; appState: any } | null>(null);
     const currentNameRef = useRef(canvasName);
+    const activeProjectIdRef = useRef(activeProjectId);
     const hasLoadedRef = useRef(false);
     const lastSavedContentRef = useRef('');
     const pendingLocalContentRef = useRef<{ elements: readonly any[]; appState: any } | null>(null);
@@ -1708,14 +1713,18 @@ export default function ExcalidrawCanvas({
     // View state saver — persists zoom/scroll to localStorage with its own debounce
     const viewStateSaverRef = useRef(createViewStateSaver(() => currentNameRef.current));
 
+    useEffect(() => {
+        activeProjectIdRef.current = activeProjectId;
+    }, [activeProjectId]);
+
     // Purge expired view states on first mount
     useEffect(() => { purgeExpiredViewStates(); }, []);
 
     useEffect(() => {
         const targetPath = resolveCanvasGenerationTaskTargetPath(canvasName, canvasFilePath);
-        void getAiImageTaskStore().configure({ targetPath });
-        void getPrototypeGenerationTaskStore().configure({ targetPath });
-    }, [canvasName, canvasFilePath]);
+        void getAiImageTaskStore().configure({ projectId: activeProjectId, targetPath });
+        void getPrototypeGenerationTaskStore().configure({ projectId: activeProjectId, targetPath });
+    }, [activeProjectId, canvasName, canvasFilePath]);
 
     const handleCanvasBackgroundChange = useCallback((nextColor: string) => {
         setCanvasBackgroundDraft(nextColor);
@@ -2556,6 +2565,7 @@ export default function ExcalidrawCanvas({
         });
         void insertCanvasResourceSelections({
             excalidrawAPI,
+            projectId: activeProjectId,
             selections,
             canvasPrototypeId: getPrototypeIdFromCanvasName(currentNameRef.current),
             viewportRect: canvasContainerRef.current?.getBoundingClientRect(),
@@ -2564,7 +2574,7 @@ export default function ExcalidrawCanvas({
             console.warn('[Axhub Canvas] 添加项目资源到画布失败:', error);
             toast.error('添加资源到画布失败');
         });
-    }, [excalidrawAPI, projectResourceItems, projectResourceTrees, scheduleExplicitCanvasSave]);
+    }, [activeProjectId, excalidrawAPI, projectResourceItems, projectResourceTrees, scheduleExplicitCanvasSave]);
 
     const executeCanvasBridgeCommand = useCallback(async (command: CanvasCommandName, payload: any = {}) => {
         if (!excalidrawAPI) {
@@ -2814,6 +2824,7 @@ export default function ExcalidrawCanvas({
             }
             const appState = excalidrawAPI.getAppState();
             const update = applyGenerationArtifactsToCanvasElements({
+                projectId: activeProjectId,
                 elements: excalidrawAPI.getSceneElements(),
                 appState,
                 artifacts,
@@ -2839,6 +2850,7 @@ export default function ExcalidrawCanvas({
         return result;
     }, [
         excalidrawAPI,
+        activeProjectId,
         onSubmitCanvasAssistantPrompt,
         scheduleExplicitCanvasSave,
     ]);
@@ -3272,13 +3284,13 @@ export default function ExcalidrawCanvas({
         const handleEmbedOpenInEditor = (event: Event) => {
             const detail = (event as CustomEvent).detail;
             if (!detail?.link) return;
-            void openEmbedItemInEditor(detail).catch((err) => {
+            void openEmbedItemInEditor(detail, activeProjectId).catch((err) => {
                 console.warn('[Axhub Canvas] 打开嵌入资源失败:', err);
             });
         };
         window.addEventListener('axhub:embedOpenInEditor', handleEmbedOpenInEditor);
         return () => window.removeEventListener('axhub:embedOpenInEditor', handleEmbedOpenInEditor);
-    }, []);
+    }, [activeProjectId]);
 
     // ── Fit active live preview into the current canvas viewport ──
     useEffect(() => {
@@ -3326,7 +3338,7 @@ export default function ExcalidrawCanvas({
         const embedType = customData?.type;
         const width = element.width || 400;
         const height = element.height || 300;
-        const previewUrl = resolveEmbeddablePreviewUrl(element);
+        const previewUrl = resolveEmbeddablePreviewUrl(element, activeProjectIdRef.current);
         const embedViewMode = customData?.embedViewMode || 'link';
         const contentScale = normalizeEmbedContentScale(customData?.embedContentScale);
 
@@ -3402,7 +3414,7 @@ export default function ExcalidrawCanvas({
     }, []); // ← empty deps: reference never changes
 
     const handleLinkOpen = useCallback((element: any, event: CustomEvent) => {
-        const openUrl = resolveEmbeddableOpenUrl(element);
+        const openUrl = resolveEmbeddableOpenUrl(element, activeProjectIdRef.current);
         if (!openUrl) return;
         event.preventDefault();
         window.open(openUrl, '_blank', 'noopener,noreferrer');
@@ -3476,6 +3488,7 @@ export default function ExcalidrawCanvas({
                 let persistedScreenshot: Awaited<ReturnType<typeof persistPrototypeScreenshot>> = null;
                 try {
                     persistedScreenshot = await persistPrototypeScreenshot({
+                        projectId: activeProjectId,
                         previewUrl: targetPreviewUrl,
                         canvasFilePath: canvasFilePath || currentNameRef.current,
                         canvasName: currentNameRef.current,
@@ -3560,7 +3573,7 @@ export default function ExcalidrawCanvas({
 
         window.addEventListener('axhub:embedScreenshotReady', handler);
         return () => window.removeEventListener('axhub:embedScreenshotReady', handler);
-    }, [excalidrawAPI, saveLocally, scheduleServerSave, saveToServer]);
+    }, [activeProjectId, canvasFilePath, excalidrawAPI, saveLocally, scheduleServerSave, saveToServer]);
 
     if (loading) {
         return (
@@ -3687,6 +3700,7 @@ export default function ExcalidrawCanvas({
                         onStopAnnotationTask={handleStopCanvasDirectRunOverlayTask}
                     />
                     <CanvasAiGenerationTool
+                        projectId={activeProjectId}
                         excalidrawAPI={excalidrawAPI}
                         canvasFilePath={canvasFilePath || canvasName}
                         assistantProjectPath={assistantProjectPath}

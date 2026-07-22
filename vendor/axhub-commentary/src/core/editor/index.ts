@@ -1,5 +1,6 @@
 import type {
   CommentaryApi,
+  CommentaryClearEditsOptions,
   CommentaryDebugState,
   CommentaryEditedSnapshot,
   CommentaryHostToolbarAction,
@@ -97,9 +98,11 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     promptContext: resolvedOptions.promptContext,
     projectPath: resolvedProjectPath,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistenceScope: resolvedOptions.host.getPersistenceScope,
     getPersistedPrototypeCommentsDocument: () =>
       persistence?.getPersistedPrototypeCommentsDocument() ?? null,
     buildCopyPromptOverride: resolvedOptions.host.buildCopyPrompt,
+    getCommentarySkillOptions: () => resolvedOptions.ui.commentarySkillOptions,
   });
   const feedback = createFeedbackService({
     getUiRoot: () => state.shadowHost?.getElements()?.uiRoot ?? null,
@@ -138,17 +141,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   }
 
   function getModifiedElements(): CommentaryModifiedElementSummary[] {
-    return Array.from(state.editMetaByKey.values())
-      .filter((meta) => meta.dirtySince !== null)
-      .sort((a, b) => Number(a.dirtySince ?? 0) - Number(b.dirtySince ?? 0))
-      .map((meta) => ({
-        elementKey: meta.elementKey,
-        locator: meta.locator,
-        label: meta.label,
-        note: meta.note,
-        imageCount: meta.images.length,
-        changeKinds: meta.changeKinds.slice(),
-      }));
+    return summaries.collectModifiedElementSummaries();
   }
 
   function getTextChanges(): CommentaryTextChange[] {
@@ -194,6 +187,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       selectedElement: buildSelectedElementSummary(),
       modifiedElements: getModifiedElements(),
       textChanges: getTextChanges(),
+      targetedTextChanges: getTargetedTextChanges(),
       styleChanges: getStyleChanges(),
     };
   }
@@ -322,9 +316,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     return state.propertyPanel?.getHostToolbarState?.() ?? getFallbackHostToolbarState();
   }
 
-  function subscribeHostToolbarState(
-    listener: CommentaryHostToolbarStateListener,
-  ): () => void {
+  function subscribeHostToolbarState(listener: CommentaryHostToolbarStateListener): () => void {
     if (state.propertyPanel?.subscribeHostToolbarState) {
       return state.propertyPanel.subscribeHostToolbarState(listener);
     }
@@ -332,9 +324,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     return () => undefined;
   }
 
-  async function runHostToolbarAction(
-    action: CommentaryHostToolbarAction,
-  ): Promise<boolean> {
+  async function runHostToolbarAction(action: CommentaryHostToolbarAction): Promise<boolean> {
     if (destroyed) return false;
     return state.propertyPanel?.runHostToolbarAction?.(action) ?? false;
   }
@@ -361,12 +351,9 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
         typeof value.requestId === 'string' && value.requestId.trim()
           ? value.requestId.trim()
           : null,
-      error:
-        typeof value.error === 'string' && value.error.trim() ? value.error.trim() : null,
-      code:
-        typeof value.code === 'string' && value.code.trim() ? value.code.trim() : null,
-      output:
-        typeof value.output === 'string' && value.output.trim() ? value.output.trim() : null,
+      error: typeof value.error === 'string' && value.error.trim() ? value.error.trim() : null,
+      code: typeof value.code === 'string' && value.code.trim() ? value.code.trim() : null,
+      output: typeof value.output === 'string' && value.output.trim() ? value.output.trim() : null,
       ...(value.chunk !== undefined ? { chunk: value.chunk } : {}),
       ...(value.details !== undefined ? { details: value.details } : {}),
     };
@@ -442,7 +429,8 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       null;
     const locator = meta?.locator ?? task?.locator ?? targetRef?.locator ?? null;
     if (!locator) return null;
-    const label = meta?.label ?? task?.label ?? (String(targetRef?.label ?? '').trim() || normalizedElementKey);
+    const label =
+      meta?.label ?? task?.label ?? (String(targetRef?.label ?? '').trim() || normalizedElementKey);
     const annotationTarget = resolveAnnotationTargetIdentity({
       elementKey: normalizedElementKey,
       locator,
@@ -522,11 +510,13 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     const liveTarget = resolveLiveExternalEditingTarget(target);
     addTarget(liveTarget);
 
-    const liveElement = liveTarget ? locateElementForTarget(liveTarget) : locateElementForTarget(target);
+    const liveElement = liveTarget
+      ? locateElementForTarget(liveTarget)
+      : locateElementForTarget(target);
     const annotationNodeId =
-      annotationTarget?.nodeId
-      || (liveElement ? resolveAnnotationElementIdentity(liveElement)?.nodeId : '')
-      || resolveAnnotationNodeIdFromLocator(target.locator);
+      annotationTarget?.nodeId ||
+      (liveElement ? resolveAnnotationElementIdentity(liveElement)?.nodeId : '') ||
+      resolveAnnotationNodeIdFromLocator(target.locator);
     if (liveElement?.isConnected) {
       for (const meta of state.editMetaByKey.values()) {
         if (!meta.locator) continue;
@@ -712,16 +702,18 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       const existingTask = agentBridge?.getTaskStateByElementKey?.(targetElementKey) ?? null;
       if (!existingTask) return true;
       return Boolean(
-        normalizedTaskRef?.requestId
-        && existingTask.requestId === normalizedTaskRef.requestId,
+        normalizedTaskRef?.requestId && existingTask.requestId === normalizedTaskRef.requestId,
       );
     };
-    const forceCompleteEditsByTarget = (target: ExternalEditingElementTarget): boolean => {
+    const forceCompleteStateByTarget = (target: ExternalEditingElementTarget): boolean => {
       let applied = false;
       for (const cleanupTarget of collectTerminalCleanupTargets(target)) {
         if (!canForceCompleteWithoutTask(cleanupTarget.elementKey)) continue;
-        changes.markElementEditsHandledByKey(cleanupTarget);
-        persistence?.clearCommentRecord?.(cleanupTarget.elementKey);
+        persistence?.recordCommentTaskState?.(
+          cleanupTarget.elementKey,
+          'completed',
+          normalizedTaskRef,
+        );
         applied = true;
       }
       if (applied) {
@@ -744,20 +736,17 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
         };
       }
       if (
-        (nextState === 'completed' || nextState === 'error')
-        && target
-        && agentBridge?.setExternalEditingTerminalStateByElementKey
+        (nextState === 'completed' || nextState === 'error') &&
+        target &&
+        agentBridge?.setExternalEditingTerminalStateByElementKey
       ) {
         const task = agentBridge.setExternalEditingTerminalStateByElementKey(
           target,
           nextState,
           taskRef,
         );
-        if (task && nextState === 'completed') {
-          forceCompleteEditsByTarget(target);
-        }
         if (!task) {
-          if (forceCompleteEditsByTarget(target)) {
+          if (forceCompleteStateByTarget(target)) {
             notifyStatusChange();
             return {
               elementKey: target.elementKey,
@@ -807,11 +796,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
         locator: targetRef.locator,
         label: String(targetRef.label || '').trim() || elementKey,
       };
-      changes.getOrCreateEditMeta(
-        metaTarget.elementKey,
-        metaTarget.locator,
-        metaTarget.label,
-      );
+      changes.getOrCreateEditMeta(metaTarget.elementKey, metaTarget.locator, metaTarget.label);
     }
 
     if (!agentBridge?.setExternalEditingState || !agentBridge.clearExternalEditingState) {
@@ -827,11 +812,8 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       let task: ElementAgentTaskState | null = null;
       if (target && agentBridge.setExternalEditingTerminalStateByElementKey) {
         task = agentBridge.setExternalEditingTerminalStateByElementKey(target, nextState, taskRef);
-        if (task && nextState === 'completed') {
-          forceCompleteEditsByTarget(target);
-        }
         if (!task) {
-          if (forceCompleteEditsByTarget(target)) {
+          if (forceCompleteStateByTarget(target)) {
             notifyStatusChange();
             return {
               elementKey,
@@ -860,7 +842,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
           };
         }
       } else {
-        // Fallback: treat completed as idle (clear), treat error as idle (clear)
+        // Fallback implementations can only clear the live task; the persisted status is kept below.
         const applied = agentBridge.clearExternalEditingState(targetElement, taskRef);
         if (!applied) {
           notifyStatusChange();
@@ -899,6 +881,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     state,
     scheduleCacheWrite: () => persistence?.scheduleWrite(),
     persistMarkerVisibility: (visible) => persistence?.setMarkerVisibility(visible),
+    getCommentTaskState: (elementKey) => persistence?.getCommentTaskState?.(elementKey) ?? null,
     onSelectMarkedElement: (element, anchor) => {
       if (!element.isConnected) return;
       state.eventController?.setMode('selecting');
@@ -927,8 +910,13 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     state,
     changes,
     getResourceContext: resolvedOptions.host.getResourceContext,
+    getPersistenceScope: resolvedOptions.host.getPersistenceScope,
     persistenceAdapter: resolvedOptions.host.persistenceAdapter,
     interactionProfile: resolvedOptions.interactionProfile,
+    getInteractionProfile: () =>
+      resolvedOptions.interactionProfile === 'text-comment' || state.uiSettings.documentCommentMode
+        ? 'text-comment'
+        : 'design',
   });
 
   let flushPendingCommentContextSync: (() => void) | null = null;
@@ -1105,11 +1093,15 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     return cleared;
   }
 
-  async function clearAllEdits(): Promise<void> {
+  async function clearAllEdits(options: CommentaryClearEditsOptions = {}): Promise<void> {
     if (destroyed) return;
-    await localActions.handleClearEdits({ skipConfirm: true });
+    const clearedTarget = await localActions.handleClearEdits({ ...options, skipConfirm: true });
+    if (!clearedTarget) return;
     for (const task of agentBridge?.getVisibleTaskStates() ?? []) {
-      if (task.status !== 'completed' && task.status !== 'error') {
+      if (
+        task.status !== 'completed' &&
+        (clearedTarget === 'completed' || task.status !== 'error')
+      ) {
         continue;
       }
       const element = resolveElementByKey(task.elementKey);
@@ -1117,6 +1109,20 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
         agentBridge?.dismissElementTaskState(element);
       }
     }
+    notifyStatusChange();
+  }
+
+  async function refreshPersistedComments(
+    externallyDeletedElementKeys: readonly WebEditorElementKey[] = [],
+  ): Promise<void> {
+    if (destroyed || !persistence) return;
+    const persistedDeletedElementKeys = await persistence.restoreCachedChanges();
+    agentBridge?.discardDeletedElementStates?.([
+      ...externallyDeletedElementKeys,
+      ...persistedDeletedElementKeys,
+    ]);
+    changes.renderChangeMarkers();
+    state.propertyPanel?.refresh();
     notifyStatusChange();
   }
 
@@ -1172,6 +1178,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     acknowledgeSavedStyleChanges,
     clearElementEdits,
     clearAllEdits,
+    refreshPersistedComments,
     getHostToolbarState,
     subscribeHostToolbarState,
     runHostToolbarAction,

@@ -1,4 +1,7 @@
+import { withProjectScope } from '../../../services/projectScope';
+
 export interface PersistPrototypeScreenshotParams {
+    projectId: string;
     previewUrl: string;
     dataUrl: string;
     canvasFilePath?: string | null;
@@ -128,6 +131,7 @@ export function resolveResourceCanvasPath(canvasFilePath?: string | null, canvas
 }
 
 export function deriveResourceCanvasScreenshotUrl(
+    projectId: string,
     canvasFilePath?: string | null,
     fileName = 'screenshot.png',
     canvasName?: string | null,
@@ -140,7 +144,10 @@ export function deriveResourceCanvasScreenshotUrl(
     const assetPath = `${canvasBase}.assets/${safeFileBase}.png`;
     try {
         return new URL(
-            `/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/${encodeCanvasApiPath(assetPath)}`,
+            withProjectScope(
+                `/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/${encodeCanvasApiPath(assetPath)}`,
+                { projectId },
+            ),
             window.location.origin,
         ).toString();
     } catch {
@@ -163,7 +170,10 @@ export async function persistPrototypeScreenshot(
     const elementId = pageScreenshotFileName ? undefined : params.elementId;
     const pageId = pageScreenshotFileName ? normalizePrototypePageId(params.pageId) : undefined;
 
-    const response = await fetch(`/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/screenshot`, {
+    const response = await fetch(withProjectScope(
+        `/api/canvas/resources/${encodeCanvasApiPath(resourceCanvasPath)}/screenshot`,
+        { projectId: params.projectId },
+    ), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -187,7 +197,10 @@ export async function persistPrototypeScreenshot(
     let resolvedScreenshotUrl = screenshotUrl;
     if (screenshotUrl.startsWith('/')) {
         try {
-            resolvedScreenshotUrl = new URL(screenshotUrl, window.location.origin).toString();
+            resolvedScreenshotUrl = new URL(
+                withProjectScope(screenshotUrl, { projectId: params.projectId }),
+                window.location.origin,
+            ).toString();
         } catch {
             resolvedScreenshotUrl = screenshotUrl;
         }

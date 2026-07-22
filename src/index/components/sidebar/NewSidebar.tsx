@@ -107,6 +107,9 @@ export default function NewSidebar(rawProps: NewSidebarProps) {
     } = resolveNewSidebarProps(rawProps);
 
     const handleSidebarTabChange = (tab: SidebarTab) => {
+        if (tab === sidebarTab) {
+            return;
+        }
         onSidebarTabChange(tab);
         if (tab === 'prototype') {
             handleTabChange('prototypes');

@@ -79,6 +79,7 @@ import { buildAssistantContextItemsFromResource } from '../../domains/assistant/
 import { getClipboardImageFiles } from '../../domains/shared/clipboardImages';
 import { createSidebarTreeItemLookup, resolveSidebarTreeItem } from '../../utils/sidebarTree';
 import { sidebarApi } from '../../services/sidebar.api';
+import { requireProjectScope, withProjectScope } from '../../services/projectScope';
 import { apiService } from '../../services/api';
 import { buildItemUrl, buildLANItemUrl } from '../../utils/url';
 import { makeClientTemplateMirrorDownloadUrl, makeClientTemplatePrimaryDownloadUrl } from '../../../common/makeClientTemplate';
@@ -1842,16 +1843,14 @@ export default function ContentPanel({
         try {
             const targetFolder = String(options?.targetFolder || '').trim();
             const formData = new FormData();
-            if (activeProjectId) {
-                formData.append('projectId', activeProjectId);
-            }
+            formData.append('projectId', requireProjectScope(activeProjectId).projectId);
             if (targetFolder) {
                 formData.append('targetFolder', targetFolder);
             }
             for (const file of Array.from(files)) {
                 formData.append('file', file, file.name);
             }
-            const response = await fetch('/api/docs/upload', {
+            const response = await fetch(withProjectScope('/api/docs/upload', requireProjectScope(activeProjectId)), {
                 method: 'POST',
                 body: formData,
             });
@@ -2446,7 +2445,12 @@ export default function ContentPanel({
             return;
         }
         try {
-            await sidebarApi.openResourceInSystem(normalizedPath, dataTab === 'themes' ? 'themes' : 'docs', kind);
+            await sidebarApi.openResourceInSystem(
+                normalizedPath,
+                requireProjectScope(activeProjectId),
+                dataTab === 'themes' ? 'themes' : 'docs',
+                kind,
+            );
             toast.success('已打开所在目录');
         } catch (error: any) {
             toast.error(error?.message || '打开本地文件系统失败');

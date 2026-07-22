@@ -498,15 +498,14 @@ describe('createWebEditorV2Controller', () => {
           json: async () => ({
             exists: true,
             document: {
-              schemaVersion: 1,
+              schemaVersion: 2,
               kind: 'prototype-edit-comments',
               resource: {
                 id: 'home',
                 targetPath: 'prototypes/home',
-                filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+                filePath: '.axhub/make/comments/58e608f3612448e797ba90e2b2c5ae14189f971fd468bfcbddf7cfd2bb95882e.json',
               },
               comments: [],
-              tasks: {},
               images: [],
             },
           }),
@@ -519,7 +518,9 @@ describe('createWebEditorV2Controller', () => {
     }) as typeof fetch;
     vi.stubGlobal('fetch', fetchMock);
 
-    const adapter = createPrototypeCommentsPersistenceAdapter();
+    const adapter = createPrototypeCommentsPersistenceAdapter({
+      getProjectId: () => 'project-a',
+    });
     const scope = {
       targetPath: 'prototypes/home',
       storageScope: 'prototypes/home',
@@ -534,18 +535,23 @@ describe('createWebEditorV2Controller', () => {
         targetPath: 'prototypes/home',
       },
     });
+    const observedTombstones = [{
+      kind: 'comment' as const,
+      pageScope: 'page-a',
+      elementKey: 'hero',
+      deletedAt: 1784624000000,
+    }];
     await expect(adapter.write(scope, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
         targetPath: 'prototypes/home',
-        filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+        filePath: '.axhub/make/comments/58e608f3612448e797ba90e2b2c5ae14189f971fd468bfcbddf7cfd2bb95882e.json',
       },
       comments: [],
-      tasks: {},
       images: [],
-    }, 'changes')).resolves.toBeUndefined();
+    }, 'restore', { observedTombstones })).resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -554,7 +560,7 @@ describe('createWebEditorV2Controller', () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      '/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1',
+      '/api/prototype-comments?targetPath=prototypes%2Fhome&hydrateImages=1&projectId=project-a',
       { method: 'GET' },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -564,11 +570,58 @@ describe('createWebEditorV2Controller', () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      '/api/prototype-comments?targetPath=prototypes%2Fhome',
+      '/api/prototype-comments?targetPath=prototypes%2Fhome&projectId=project-a',
       expect.objectContaining({
         method: 'PUT',
       }),
     );
+    const putInit = fetchMock.mock.calls[3]?.[1];
+    expect(JSON.parse(String(putInit?.body))).toEqual({
+      document: expect.objectContaining({
+        kind: 'prototype-edit-comments',
+      }),
+      reason: 'restore',
+      observedTombstones,
+    });
+  });
+
+  it('surfaces rejected prototype comment writes to the persistence runtime', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/__axhub/make-server/status') {
+        return {
+          ok: false,
+          json: async () => ({}),
+        };
+      }
+      if (String(input).startsWith('/api/prototype-comments?') && init?.method === 'PUT') {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({}),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+      };
+    }) as typeof fetch;
+    vi.stubGlobal('fetch', fetchMock);
+    const adapter = createPrototypeCommentsPersistenceAdapter();
+
+    await expect(adapter.write({
+      targetPath: 'prototypes/home',
+      storageScope: 'prototypes/home',
+      prototypeId: 'home',
+      filePath: 'src/prototypes/home/index.tsx',
+      resource: null,
+    }, {
+      schemaVersion: 2,
+      kind: 'prototype-edit-comments',
+      resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
+      comments: [],
+      images: [],
+    }, 'restore')).rejects.toThrow('Failed to write prototype comments: 409');
   });
 
   it('sends prototype comment persistence requests to the Make server origin when the preview runs on another port', async () => {
@@ -589,15 +642,14 @@ describe('createWebEditorV2Controller', () => {
           json: async () => ({
             exists: true,
             document: {
-              schemaVersion: 1,
+              schemaVersion: 2,
               kind: 'prototype-edit-comments',
               resource: {
                 id: 'home',
                 targetPath: 'prototypes/home',
-                filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+                filePath: '.axhub/make/comments/58e608f3612448e797ba90e2b2c5ae14189f971fd468bfcbddf7cfd2bb95882e.json',
               },
               comments: [],
-              tasks: {},
               images: [],
             },
           }),
@@ -624,15 +676,14 @@ describe('createWebEditorV2Controller', () => {
 
     await adapter.read(scope);
     await adapter.write(scope, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
         targetPath: 'prototypes/home',
-        filePath: 'src/prototypes/home/.spec/prototype-comments.json',
+        filePath: '.axhub/make/comments/58e608f3612448e797ba90e2b2c5ae14189f971fd468bfcbddf7cfd2bb95882e.json',
       },
       comments: [],
-      tasks: {},
       images: [],
     }, 'changes');
 
@@ -2863,7 +2914,7 @@ describe('createWebEditorV2Controller', () => {
       ui: {
         skillInstallSource: [
           '.agents/skills/explore-options/SKILL.md',
-          '.claude\\skills\\prototype-comments\\SKILL.md',
+          '.claude\\skills\\handle-comments\\SKILL.md',
         ].join('\n'),
       },
     });
@@ -2882,7 +2933,7 @@ describe('createWebEditorV2Controller', () => {
           showCopyPromptAction: true,
           skillInstallSource: [
             '.agents/skills/explore-options/SKILL.md',
-            '.claude/skills/prototype-comments/SKILL.md',
+            '.claude/skills/handle-comments/SKILL.md',
           ].join('\n'),
         },
       }),

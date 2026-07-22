@@ -29,6 +29,32 @@ function readPackageJson() {
 }
 
 describe('CanvasGenerationComposer source', () => {
+  it('supports rendering prompt actions that fill without submitting the display composer', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayPropsSegment = source.slice(
+      source.indexOf('export interface CanvasGenerationDisplayComposerProps'),
+      source.indexOf('interface CanvasGenerationRuntimeComposerProps'),
+    );
+    const displayComponentSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerContent('),
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+    );
+    const promptSelectionSegment = source.slice(
+      source.indexOf('const selectDisplayPrompt = useCallback((prompt: string) => {'),
+      source.indexOf('const handleInputChange = useCallback', source.indexOf('const selectDisplayPrompt = useCallback((prompt: string) => {')),
+    );
+
+    expect(displayPropsSegment).toContain('renderPromptCards?: CanvasGenerationDisplayPromptCardsRenderer;');
+    expect(source).toContain('export function applyCanvasGenerationDisplayPrompt({');
+    expect(displayComponentSegment).toContain('const selectDisplayPrompt = useCallback((prompt: string) => {');
+    expect(displayComponentSegment).toContain('applyCanvasGenerationDisplayPrompt({');
+    expect(displayComponentSegment).toContain('disabled: controlsDisabled,');
+    expect(displayComponentSegment).toContain('persist: persistDisplayDraft,');
+    expect(displayComponentSegment).toContain('renderPromptCards?.({ disabled: controlsDisabled, selectPrompt: selectDisplayPrompt })');
+    expect(promptSelectionSegment).not.toContain('submitDisplayText');
+    expect(promptSelectionSegment).not.toContain('clearAttachments');
+  });
+
   it('orders placeholder prompt actions after ACP model selectors and generation settings', () => {
     const source = readCanvasGenerationComposerSource();
     const displayComponentSegment = source.slice(
@@ -84,16 +110,17 @@ describe('CanvasGenerationComposer source', () => {
 
     expect(displayPropsSegment).toContain('onOptimizePrompt?: (request: CanvasPromptOptimizationRequest) => Promise<string>;');
     expect(source).toContain('export interface CanvasPromptOptimizationRequest');
-    expect(source).toContain('function CanvasPromptOptimizeButton');
+    expect(source).toContain('function CanvasComposerSendButtonWithCopyMenu');
     expect(source).toContain('Loader2');
     expect(displayComponentSegment).toContain('const [optimizingPrompt, setOptimizingPrompt] = useState(false);');
     expect(displayComponentSegment).toContain('const controlsDisabled = disabled || optimizingPrompt;');
+    expect(displayComponentSegment).toContain('const hasDisplayPromptText = displayText.trim().length > 0;');
     expect(displayComponentSegment).toContain('aria-live="polite"');
     expect(displayComponentSegment).toContain('正在优化提示词');
     expect(displayComponentSegment).toContain('inputRef.current.value = optimizedPrompt;');
     expect(displayComponentSegment).toContain('persistDisplayDraft(optimizedPrompt);');
-    expect(displayComponentSegment).toContain('disabled={controlsDisabled}');
-    expect(displayComponentSegment).toContain('<CanvasPromptOptimizeButton');
+    expect(displayComponentSegment).toContain('disabled={controlsDisabled || !hasDisplayPromptText}');
+    expect(displayComponentSegment).toContain('<CanvasComposerSendButtonWithCopyMenu');
     expect(displayRuntimeSegment).toContain('contextBundle: acpContext.getContextBundle()');
     expect(displayRuntimeSegment).not.toContain('contextBundle: acpContext.consumeContextBundle(),');
     expect(displayRuntimeSegment).toContain('onOptimizePrompt?.({');
@@ -101,6 +128,41 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayRuntimeSegment).toContain('model: acpContext.model');
     expect(displayRuntimeSegment).toContain('mode: acpContext.modeId');
     expect(displayRuntimeSegment).toContain('thought: acpContext.thoughtLevel');
+  });
+
+  it('shows copy prompt from the original send button hover menu', () => {
+    const source = readCanvasGenerationComposerSource();
+    const displayPropsSegment = source.slice(
+      source.indexOf('export interface CanvasGenerationDisplayComposerProps'),
+      source.indexOf('interface CanvasGenerationRuntimeComposerProps'),
+    );
+    const displayComponentSegment = source.slice(
+      source.indexOf('function CanvasGenerationDisplayComposerContent('),
+      source.indexOf('function CanvasGenerationDisplayComposerWithoutAcp'),
+    );
+    const sendButtonSegment = source.slice(
+      source.indexOf('function CanvasComposerSendButtonWithCopyMenu'),
+      source.indexOf('function CanvasComposerAddAttachmentButton'),
+    );
+
+    expect(displayPropsSegment).toContain('onCopyPrompt?: (request: CanvasPromptCopyRequest) => Promise<string> | string;');
+    expect(source).toContain('export interface CanvasPromptCopyRequest');
+    expect(source).toContain('function CanvasPromptOptimizeButton');
+    expect(source).toContain('复制提示词');
+    expect(source).toContain('function CanvasComposerSendButtonWithCopyMenu');
+    expect(sendButtonSegment).toContain('TooltipProvider delayDuration={1000}');
+    expect(sendButtonSegment).toContain('onMouseEnter={scheduleOpen}');
+    expect(sendButtonSegment).toContain('发送');
+    expect(sendButtonSegment).toContain('Ctrl / ⌘ + C');
+    expect(sendButtonSegment).not.toContain('title="发送"');
+    expect(displayComponentSegment).toContain('if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === \'c\') {');
+    expect(displayComponentSegment).toContain('const handleCopyPrompt = useCallback(async () => {');
+    expect(displayComponentSegment).toContain('const copiedPrompt = await onCopyPrompt({');
+    expect(displayComponentSegment).toContain('prompt: text,');
+    expect(displayComponentSegment).toContain('await navigator.clipboard.writeText(promptText);');
+    expect(displayComponentSegment).toContain("toast.success('提示词已复制到剪贴板');");
+    expect(displayComponentSegment).toContain('<CanvasComposerSendButtonWithCopyMenu');
+    expect(displayComponentSegment).toContain('<CanvasPromptOptimizeButton');
   });
 
   it('keeps prompt optimization clickable so ACP setup failures can open AI settings', () => {
@@ -209,11 +271,11 @@ describe('CanvasGenerationComposer source', () => {
     expect(source).toContain("import { ACP_CAPABILITY_REFRESH_EVENT, AcpUiProvider, acpApiClient, configureAcpUiRuntime, hydrateAcpCapabilityCacheFromDefaults, useAcpUiRuntimeContext } from '@axhub/acp/runtime';");
     expect(source).toContain("import { apiService } from '../../services/index.api';");
     expect(source).toContain('function useCanvasAcpRuntimeBridge');
-    expect(source).toContain('apiService.getAssistantRuntime({ autoStart })');
+    expect(source).toContain('apiService.getAssistantRuntime({ autoStart, projectId })');
     expect(source).toContain('configureAcpUiRuntime({ apiBaseUrl: runtime.apiBaseUrl });');
     expect(source).toContain('window.dispatchEvent(new CustomEvent(ACP_CAPABILITY_REFRESH_EVENT');
     expect(source).toContain('workspacePath: workspacePath ?? null');
-    expect(source).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });');
+    expect(source).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, projectId, workspacePath });');
     expect(source).toContain('onEnsureAcpRuntime={canvasAcpRuntime.ensureRuntime}');
   });
 
@@ -284,10 +346,11 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('<CanvasComposerAttachmentMenu');
     expect(displayComponentSegment).toContain('onProjectResourceClick={() => setProjectResourceDialogOpen(true)}');
     expect(displayComponentSegment).not.toContain('<CanvasProjectResourceButton');
-    expect(displayComponentSegment).toContain('aui-composer-send');
+    expect(source).toContain('aui-composer-send');
     expect(displayComponentSegment).toContain('min-h-[112px]');
     expect(displayComponentSegment).toContain('rounded-2xl border border-border bg-background p-3 shadow-sm');
-    expect(displayComponentSegment).toContain('bg-slate-100 text-slate-700');
+    expect(source).toContain('bg-slate-100 text-slate-400 opacity-60');
+    expect(source).toContain('bg-slate-900 text-white hover:bg-slate-800');
     expect(displayComponentSegment).toContain('onPaste={handleDisplayPaste}');
     expect(displayComponentSegment).toContain('getClipboardImageFiles(event.nativeEvent)');
     expect(displayComponentSegment).toContain('aui.composer().addAttachment(file)');
@@ -363,7 +426,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayPropsSegment).toContain('preferredPromptClient?: PromptClientPreference;');
     expect(displayPropsSegment).toContain('showSelectors?: boolean;');
     expect(displayPropsSegment).toContain('workspacePath?: string | null;');
-    expect(displayAcpSegment).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, workspacePath });');
+    expect(displayAcpSegment).toContain('const canvasAcpRuntime = useCanvasAcpRuntimeBridge({ enabled: showSelectors, projectId, workspacePath });');
     expect(displayAcpSegment).toContain('const acpSelectorDefaults = useMemo(() => resolveCanvasAcpSelectorDefaults(preferredPromptClient), [preferredPromptClient]);');
     expect(displayAcpSegment).toContain('const acpRuntimeKey = useMemo(() => [');
     expect(displayAcpSegment).toContain('acpSelectorDefaults.defaultProvider,');
@@ -371,7 +434,7 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayAcpSegment).toContain('workspacePath ?? \'global\',');
     expect(displayAcpSegment).toContain('key={acpRuntimeKey}');
     expect(displayAcpSegment).toContain('defaultProvider={acpSelectorDefaults.defaultProvider}');
-    expect(displayAcpSegment).toContain('defaultModel={acpSelectorDefaults.defaultModel}');
+    expect(displayAcpSegment).not.toContain('defaultModel=');
     expect(displayAcpSegment).toContain('providerOptions={acpSelectorDefaults.providerOptions}');
     expect(displayAcpSegment).toContain('showProviderSettings={false}');
     expect(displayAcpSegment).toContain('<AssistantRuntimeProvider runtime={runtime}>');
@@ -399,7 +462,7 @@ describe('CanvasGenerationComposer source', () => {
     for (const segment of [displayAcpSegment, runtimeAcpSegment]) {
       expect(segment).toContain('const acpRuntimeKey = useMemo(() => [');
       expect(segment).toContain('acpSelectorDefaults.defaultProvider,');
-      expect(segment).toContain('acpSelectorDefaults.defaultModel ?? \'default-model\',');
+      expect(segment).not.toContain('acpSelectorDefaults.defaultModel');
       expect(segment).toContain('acpSelectorDefaults.providerOptions.join(\',\'),');
       expect(segment).toContain('workspacePath ?? \'global\',');
       expect(segment).toContain('key={acpRuntimeKey}');
@@ -603,6 +666,26 @@ describe('CanvasGenerationComposer source', () => {
     expect(selectorSegment).not.toContain('ProviderSettingsMenuItem');
     expect(selectorSegment).not.toContain('data-acp-provider-settings-trigger');
     expect(selectorSegment).not.toContain('设置');
+    expect(selectorSegment).toContain("typeof snapshot?.capabilities.model?.currentValue === 'string'");
+    expect(selectorSegment).toContain("typeof snapshot?.capabilities.mode?.currentValue === 'string'");
+    expect(selectorSegment).toContain("typeof snapshot?.capabilities.thought_level?.currentValue === 'string'");
+    expect(source).not.toContain('defaultModel: string | null;');
+    expect(source).not.toContain('getAcpProviderOption(defaultProvider)?.defaultAnnotationModel');
+    expect(source).not.toContain('defaultModel={acpSelectorDefaults.defaultModel}');
+  });
+
+  it('positions the desktop ACP config submenu against the viewport', () => {
+    const source = readCanvasGenerationComposerSource();
+    const selectorSegment = source.slice(
+      source.indexOf('const CANVAS_ACP_PROVIDER_LABELS'),
+      source.indexOf('function CanvasAcpModelSelectorFallback'),
+    );
+
+    expect(selectorSegment).toContain('desktopAnchorRef={rootMenuRef}');
+    expect(selectorSegment).toContain("window.addEventListener('resize', updateDesktopLayout)");
+    expect(selectorSegment).toContain('submenuElement.scrollHeight');
+    expect(selectorSegment).toContain("position: 'fixed'");
+    expect(selectorSegment).toContain("visibility: desktopLayout ? 'visible' : 'hidden'");
   });
 
   it('adds ordinary clipboard images as composer attachments without requiring Excalidraw reference paste', () => {
@@ -828,8 +911,9 @@ describe('CanvasGenerationComposer source', () => {
     expect(displayComponentSegment).toContain('resolveCanvasGenerationComposerDraftRestoreText({');
     expect(displayComponentSegment).toContain('draftStorageKeyChanged');
     expect(displayComponentSegment).toContain('inputRef.current.value = restoreText;');
-    expect(displayComponentSegment).toContain('persistDisplayDraft(event.currentTarget.value);');
-    expect(displayComponentSegment).not.toContain('persistDisplayDraft(nextText);');
+    expect(displayComponentSegment).toContain('const nextText = event.currentTarget.value;');
+    expect(displayComponentSegment).toContain('setDisplayText(nextText);');
+    expect(displayComponentSegment).toContain('persistDisplayDraft(nextText);');
     expect(source).toContain('type CanvasGenerationDisplaySubmitResult = boolean | void;');
     expect(displayComponentSegment).toContain('const attachmentSelection = await resolveComposerAttachmentSubmitSelection(displayReferenceAttachments);');
     expect(displayComponentSegment).toContain('const submitResult = await onSubmitText?.(text, {');

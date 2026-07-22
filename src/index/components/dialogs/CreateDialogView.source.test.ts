@@ -63,7 +63,7 @@ describe('CreateDialogView online template library source', () => {
 
     it('treats ok false template library payloads as failed loads', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/fetch\('\/api\/template-library'\)[\s\S]*?setTemplateLibrary\(\{/);
+        const effectMatch = source.match(/fetch\(withProjectScope\('\/api\/template-library', requireProjectScope\(activeProjectId\)\)\)[\s\S]*?setTemplateLibrary\(\{/);
 
         expect(effectMatch).not.toBeNull();
         expect(effectMatch?.[0] || '').toContain('result?.ok === false');
@@ -72,7 +72,7 @@ describe('CreateDialogView online template library source', () => {
 
     it('does not cancel the online template library request when marking it as loading', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/useEffect\(\(\) => \{[\s\S]*?fetch\('\/api\/template-library'\)[\s\S]*?\}, \[([^\]]+)\]\);/);
+        const effectMatch = source.match(/useEffect\(\(\) => \{[\s\S]*?fetch\(withProjectScope\('\/api\/template-library', requireProjectScope\(activeProjectId\)\)\)[\s\S]*?\}, \[([^\]]+)\]\);/);
 
         expect(effectMatch).not.toBeNull();
         const dependencies = effectMatch?.[1] || '';
@@ -88,19 +88,20 @@ describe('CreateDialogView online template library source', () => {
         expect(source).toContain('initialTab?: CreateDialogTab;');
         expect(source).toContain("import type { CreateDialogTab, PrototypeUploadType } from '../../types/index-page.types';");
         expect(source).toContain("setActiveKey(initialTab === 'upload' && canUploadPrototype ? 'upload' : 'onlineImport')");
-        expect(source).toContain("fetch('/api/template-library')");
+        expect(source).toContain("fetch(withProjectScope('/api/template-library', requireProjectScope(activeProjectId)))");
         expect(source).not.toContain('readPlaceholderTemplateLibraryCache');
     });
 
     it('passes the target placeholder prototype into upload and direct template import requests', () => {
         const source = readDialogSource();
 
-        expect(source).toContain('activeProjectId?: string | null;');
-        expect(source).toContain("formData.append('projectId', activeProjectId)");
+        expect(source).toContain('activeProjectId: string;');
+        expect(source).toContain("formData.append('projectId', requireProjectScope(activeProjectId).projectId)");
         expect(source).toContain('targetPrototypeName?: string;');
         expect(source).toContain('initialUploadType?: PrototypeUploadType;');
         expect(source).toContain("setUploadType(initialUploadType || 'make')");
         expect(source).toContain("formData.append('targetPrototypeName', targetPrototypeName)");
+        expect(source).toContain("fetch(withProjectScope('/api/template-library/import', requireProjectScope(activeProjectId)), {");
         expect(source).toContain('body: JSON.stringify({ templateId: template.id, targetPrototypeName })');
     });
 

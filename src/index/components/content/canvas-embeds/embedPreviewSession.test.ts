@@ -209,6 +209,7 @@ describe('embed preview session guards', () => {
 
     it('resolves relative prototype and theme preview URLs through the admin same-origin runtime proxy', () => {
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: '/prototypes/home',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51720',
@@ -216,6 +217,7 @@ describe('embed preview session guards', () => {
         })).toBe('http://localhost:53817/prototypes/home');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: '/themes/brand',
             resourceType: 'theme',
             runtimeOrigin: 'http://localhost:51720/',
@@ -223,6 +225,7 @@ describe('embed preview session guards', () => {
         })).toBe('http://localhost:53817/themes/brand');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'http://localhost:51720/prototypes/home?variant=dark',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51720/',
@@ -230,6 +233,7 @@ describe('embed preview session guards', () => {
         })).toBe('http://localhost:53817/prototypes/home?variant=dark');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'http://localhost:51721/prototypes/home?variant=dark',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51722/',
@@ -237,6 +241,7 @@ describe('embed preview session guards', () => {
         })).toBe('http://localhost:53817/prototypes/home?variant=dark');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'http://localhost:51721/themes/brand',
             resourceType: 'theme',
             runtimeOrigin: 'http://localhost:51722/',
@@ -244,15 +249,17 @@ describe('embed preview session guards', () => {
         })).toBe('http://localhost:53817/themes/brand');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: '/api/markdown-file?path=README.md',
             resourceType: 'doc',
             runtimeOrigin: 'http://localhost:51720',
             currentOrigin: 'http://localhost:53817',
-        })).toBe('/api/markdown-file?path=README.md');
+        })).toBe('/api/markdown-file?path=README.md&projectId=client-project');
     });
 
     it('keeps generic preview resource links as arbitrary URLs instead of prototype or theme runtime routes', () => {
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'https://example.com/assets/report.html?view=full',
             resourceType: 'preview',
             runtimeOrigin: 'http://localhost:51720',
@@ -260,6 +267,7 @@ describe('embed preview session guards', () => {
         })).toBe('https://example.com/assets/report.html?view=full');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: '/resources/report.html',
             resourceType: 'preview',
             runtimeOrigin: 'http://localhost:51720',
@@ -269,18 +277,20 @@ describe('embed preview session guards', () => {
 
     it('resolves local markdown file preview URLs through the markdown file API', () => {
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51720',
             currentOrigin: 'http://localhost:53817',
-        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md');
+        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md&projectId=client-project');
 
         expect(resolveCanvasEmbedPreviewUrl({
+            projectId: 'client-project',
             previewUrl: 'http://localhost:53817/src/prototypes/erp-home/.spec/2026-06-10-supply-chain-home.md',
             resourceType: 'prototype',
             runtimeOrigin: 'http://localhost:51720',
             currentOrigin: 'http://localhost:53817',
-        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md');
+        })).toBe('/api/markdown-file?path=src%2Fprototypes%2Ferp-home%2F.spec%2F2026-06-10-supply-chain-home.md&projectId=client-project');
     });
 
     it('auto captures prototype web previews only before their first screenshot attempt', () => {

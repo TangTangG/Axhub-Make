@@ -32,8 +32,10 @@ interface AxhubServerInfo {
 
 const PREVIEW_TYPES = new Set<ResourceType>(['prototypes', 'themes']);
 const PREVIEW_LOADER_FILE = '__axhub-preview-loader.js';
+const PREVIEW_LOADER_MARKER = 'data-axhub-preview-loader';
 const DEFAULT_ADMIN_ORIGIN = 'http://localhost:53817';
 const REACT_REFRESH_PREAMBLE_MARKER = 'data-axhub-react-refresh-preamble';
+const MANAGEMENT_RUNTIME_MARKER = 'data-axhub-management-runtime';
 const LAN_ACCESS_COOKIE = 'axhub_lan_auth';
 const LAN_ACCESS_TOKEN_PARAM = 'axhubAccessToken';
 const LAN_ACCESS_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
@@ -392,66 +394,85 @@ function hasGitVersionPreviewRequest(route: { type: ResourceType }, requestUrl: 
     && Boolean(normalizeGitVersionId(getSearchParamFromRequestUrl(requestUrl, 'gitVersion')));
 }
 
-export function createQuickEditRuntimeScriptTag(serverOrigin: string | null | undefined): string {
-  const origin = String(serverOrigin || '').trim().replace(/\/+$/u, '');
+function normalizeManagementRuntimeOrigin(serverOrigin: string | null | undefined): string {
+  return String(serverOrigin || '').trim().replace(/\/+$/u, '');
+}
+
+function serializeInlineScriptString(value: string): string {
+  return JSON.stringify(value).replace(/</gu, '\\u003c');
+}
+
+export function createManagementRuntimeLoaderSource(serverOrigin: string | null | undefined): string {
+  const origin = normalizeManagementRuntimeOrigin(serverOrigin);
   if (!origin) {
     return '';
   }
-  return `<script data-axhub-quick-edit-runtime src="${origin}/runtime/quick-edit.js"></script>`;
-}
 
-export function createDevTemplateBootstrapScriptTag(serverOrigin: string | null | undefined): string {
-  const origin = String(serverOrigin || '').trim().replace(/\/+$/u, '');
-  if (!origin) {
-    return '';
+  const bootstrapUrl = serializeInlineScriptString(`${origin}/assets/dev-template-bootstrap.js`);
+  const quickEditUrl = serializeInlineScriptString(`${origin}/runtime/quick-edit.js`);
+
+  return `window.__AXHUB_MANAGEMENT_RUNTIME_BOOTSTRAP__ ||= (async () => {
+  const reportError = (stage, error) => {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('[Axhub] Management runtime bootstrap failed:', stage, error);
+    window.parent?.postMessage({
+      type: 'axhub.quickEdit.error',
+      stage,
+      message: 'Management runtime bootstrap failed: ' + detail,
+      error: detail,
+    }, '*');
+  };
+
+  try {
+    await import(${bootstrapUrl});
+  } catch (error) {
+    reportError('bootstrap-import', error);
+    return;
   }
-  return `<script type="module" data-axhub-dev-template-bootstrap src="${origin}/assets/dev-template-bootstrap.js"></script>`;
+
+  const editors = window.DevTemplateBootstrap?.editors;
+  if (!editors || typeof editors.enable !== 'function') {
+    reportError('bootstrap-api', new Error('DevTemplateBootstrap.editors.enable is unavailable'));
+    return;
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.setAttribute('data-axhub-quick-edit-runtime', '');
+      script.src = ${quickEditUrl};
+      script.onload = () => resolve(undefined);
+      script.onerror = () => reject(new Error('Failed to load quick-edit runtime'));
+      (document.head || document.documentElement).appendChild(script);
+    });
+  } catch (error) {
+    reportError('quick-edit-load', error);
+  }
+})();`;
 }
 
-export function injectDevTemplateBootstrapScript(html: string, serverOrigin: string | null | undefined): string {
-  if (!serverOrigin || html.includes('data-axhub-dev-template-bootstrap')) {
+export function createManagementRuntimeScriptTag(serverOrigin: string | null | undefined): string {
+  const source = createManagementRuntimeLoaderSource(serverOrigin);
+  return source ? `<script type="module" ${MANAGEMENT_RUNTIME_MARKER}>\n${source}\n</script>` : '';
+}
+
+export function injectManagementRuntimeScript(html: string, serverOrigin: string | null | undefined): string {
+  if (
+    !serverOrigin
+    || html.includes(MANAGEMENT_RUNTIME_MARKER)
+    || !html.includes(PREVIEW_LOADER_MARKER)
+  ) {
     return html;
   }
-  const tag = createDevTemplateBootstrapScriptTag(serverOrigin);
+  const tag = createManagementRuntimeScriptTag(serverOrigin);
   if (!tag) {
     return html;
   }
-  const previewLoaderModuleScriptPattern = /(\s*<script\b[^>]*type=["']module["'][^>]*>\s*)\{\{PREVIEW_LOADER\}\}/u;
-  if (previewLoaderModuleScriptPattern.test(html)) {
-    return html.replace(previewLoaderModuleScriptPattern, (match, scriptStart: string) => {
-      const leadingWhitespace = scriptStart.match(/^\s*/u)?.[0] ?? '\n';
-      return `${leadingWhitespace}${tag}${scriptStart.slice(leadingWhitespace.length)}{{PREVIEW_LOADER}}`;
-    });
-  }
-  if (html.includes('{{PREVIEW_LOADER}}')) {
-    return html.replace('{{PREVIEW_LOADER}}', `${tag}\n{{PREVIEW_LOADER}}`);
-  }
-  return html.includes('</body>')
-    ? html.replace('</body>', `  ${tag}\n</body>`)
-    : `${html}\n${tag}`;
-}
-
-export function injectQuickEditRuntimeScript(html: string, serverOrigin: string | null | undefined): string {
-  if (!serverOrigin || html.includes('data-axhub-quick-edit-runtime')) {
-    return html;
-  }
-  const tag = createQuickEditRuntimeScriptTag(serverOrigin);
-  if (!tag) {
-    return html;
-  }
-  const previewLoaderModuleScriptPattern = /(\s*<script\b[^>]*type=["']module["'][^>]*>\s*)\{\{PREVIEW_LOADER\}\}/u;
-  if (previewLoaderModuleScriptPattern.test(html)) {
-    return html.replace(previewLoaderModuleScriptPattern, (match, scriptStart: string) => {
-      const leadingWhitespace = scriptStart.match(/^\s*/u)?.[0] ?? '\n';
-      return `${leadingWhitespace}${tag}${scriptStart.slice(leadingWhitespace.length)}{{PREVIEW_LOADER}}`;
-    });
-  }
-  if (html.includes('{{PREVIEW_LOADER}}')) {
-    return html.replace('{{PREVIEW_LOADER}}', `${tag}\n{{PREVIEW_LOADER}}`);
-  }
-  return html.includes('</body>')
-    ? html.replace('</body>', `  ${tag}\n</body>`)
-    : `${html}\n${tag}`;
+  const finalPreviewLoaderScriptPattern = /(\s*)(<script\b[^>]*\bdata-axhub-preview-loader\b[^>]*>)/u;
+  return html.replace(
+    finalPreviewLoaderScriptPattern,
+    (_match, leadingWhitespace: string, scriptStart: string) => `${leadingWhitespace}${tag}${leadingWhitespace}${scriptStart}`,
+  );
 }
 
 export function injectReactRefreshPreambleScript(html: string): string {
@@ -692,7 +713,7 @@ function createPreviewLoaderScriptTag(
   requestUrl: string,
 ): string {
   const src = appendPreviewLoaderSearchParams(createPreviewLoaderPath(type, name), requestUrl);
-  return `<script type="module" src="${src}"></script>`;
+  return `<script type="module" ${PREVIEW_LOADER_MARKER} src="${src}"></script>`;
 }
 
 function replacePreviewLoaderPlaceholder(
@@ -1277,8 +1298,6 @@ export function clientPreviewPlugin(): Plugin {
               `  <link rel="stylesheet" href="${previewSource.styleHref}">\n</head>`,
             );
           }
-          html = injectQuickEditRuntimeScript(html, serverOrigin);
-          html = injectDevTemplateBootstrapScript(html, serverOrigin);
           html = replacePreviewLoaderPlaceholder(html, route.type, route.name, req.url);
 
           res.statusCode = 200;
@@ -1287,7 +1306,8 @@ export function clientPreviewPlugin(): Plugin {
             createPreviewTransformUrl(route.type, route.name),
             html,
           );
-          res.end(injectReactRefreshPreambleScript(transformedHtml));
+          const htmlWithManagementRuntime = injectManagementRuntimeScript(transformedHtml, serverOrigin);
+          res.end(injectReactRefreshPreambleScript(htmlWithManagementRuntime));
         } catch (error) {
           next(error);
         }

@@ -12,6 +12,7 @@ import {
   cleanupProjectApiTestRoots,
   createTempRoot,
   registerProject,
+  setActiveProject,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -145,11 +146,15 @@ async function startRegisteredTestServer(projectRoot: string, acp: AcpRunTestSer
   try {
     const projectId = String(JSON.parse(fs.readFileSync(path.join(projectRoot, '.axhub', 'make', 'project.json'), 'utf8'))?.project?.id || path.basename(projectRoot));
     await registerProject(server.origin, projectRoot, projectId, projectId);
-    return server;
+    return { ...server, projectId };
   } catch (error) {
     await server.close();
     throw error;
   }
+}
+
+function projectAiRunsUrl(server: { origin: string; projectId: string }): string {
+  return `${server.origin}/api/ai/runs?projectId=${encodeURIComponent(server.projectId)}`;
 }
 
 async function collectRunEvents(response: Response): Promise<Array<{ event: string; data: any }>> {
@@ -184,6 +189,103 @@ afterEach(async () => {
 });
 
 describe('AI runs API', () => {
+  it('rejects a missing projectId before invoking ACP', async () => {
+    const projectRoot = createTempRoot('axhub-ai-runs-project-required-');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'ai-runs-project-required', name: 'AI Runs Project Required' },
+    });
+    const acp = await startAcpRunTestServer();
+    const server = await startRegisteredTestServer(projectRoot, acp);
+
+    try {
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scene: 'direct',
+          prompt: '不应执行',
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        code: 'PROJECT_ID_REQUIRED',
+        error: 'Project-scoped API requires projectId',
+      });
+      expect(acp.requests).toHaveLength(0);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('runs and persists against the explicit project while another project is active', async () => {
+    const projectARoot = createTempRoot('axhub-ai-runs-scope-a-');
+    const projectBRoot = createTempRoot('axhub-ai-runs-scope-b-');
+    for (const [root, id] of [[projectARoot, 'ai-runs-scope-a'], [projectBRoot, 'ai-runs-scope-b']] as const) {
+      writeProjectMetadata(root, {
+        project: { id, name: id },
+        resourceWriteTargets: {
+          prototypes: { type: 'project-relative-path', path: 'src/prototypes' },
+        },
+      });
+    }
+    const acp = await startAcpRunTestServer({
+      streamEvents: [
+        {
+          type: 'diff',
+          toolCallId: 'tool-call-project-b',
+          path: 'src/resources/project-b.md',
+          oldText: '',
+          newText: 'project b',
+          patch: '@@ -0,0 +1 @@',
+        },
+        { type: 'finish', finishReason: 'stop' },
+      ],
+    });
+    const server = await startTestServer(projectARoot, createTempRoot('axhub-ai-runs-scope-registry-'), {
+      serverConfig: {
+        assistant: {
+          webBaseUrl: acp.origin,
+          apiBaseUrl: `${acp.origin}/api`,
+        },
+      },
+    });
+
+    try {
+      await registerProject(server.origin, projectARoot, 'ai-runs-scope-a');
+      await registerProject(server.origin, projectBRoot, 'ai-runs-scope-b');
+      await setActiveProject(server.origin, 'ai-runs-scope-a');
+
+      const response = await fetch(`${server.origin}/api/ai/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'ai-runs-scope-b',
+          scene: 'document',
+          prompt: '写入 B 项目',
+          targetPath: 'prototypes/home',
+          taskId: 'task-project-b',
+          conversationId: 'conversation-project-b',
+          canvasId: 'canvas-project-b',
+        }),
+      });
+      await collectRunEvents(response);
+
+      expect(response.status).toBe(200);
+      expect(acp.requests[0].body.workspacePath).toBe(projectBRoot);
+      expect(fs.existsSync(path.join(projectBRoot, 'src/prototypes/home/.spec/generation-artifacts.json'))).toBe(true);
+      expect(fs.existsSync(path.join(projectBRoot, 'src/prototypes/home/.spec/generation-tasks.json'))).toBe(true);
+      expect(fs.existsSync(path.join(projectARoot, 'src/prototypes/home/.spec/generation-artifacts.json'))).toBe(false);
+      expect(fs.existsSync(path.join(projectARoot, 'src/prototypes/home/.spec/generation-tasks.json'))).toBe(false);
+      expect(await fetch(`${server.origin}/api/projects/active`).then((value) => value.json())).toMatchObject({
+        id: 'ai-runs-scope-a',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('blocks prototype Agent runs until the target prototype has a main spec', async () => {
     const projectRoot = createTempRoot('axhub-ai-runs-prototype-spec-required-');
     writeProjectMetadata(projectRoot, {
@@ -206,7 +308,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -250,7 +352,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -295,7 +397,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -334,7 +436,7 @@ describe('AI runs API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -500,7 +602,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -560,7 +662,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -611,7 +713,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -702,7 +804,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -750,7 +852,7 @@ describe('AI runs API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -796,7 +898,7 @@ describe('AI runs API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -838,7 +940,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -881,7 +983,7 @@ describe('AI runs API', () => {
     const conversationStorePath = path.join(projectRoot, 'src', 'prototypes', 'home', '.spec', 'acp', 'conversations.json');
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -921,7 +1023,7 @@ describe('AI runs API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -949,10 +1051,13 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
+      const withProjectId = (pathname: string) => (
+        `${server.origin}${pathname}?projectId=${encodeURIComponent(server.projectId)}`
+      );
       const [promptExecute, sessionRun, imageGenerate] = await Promise.all([
-        fetch(`${server.origin}/api/prompt/execute`, { method: 'POST', body: '{}' }),
-        fetch(`${server.origin}/api/prototype-generation/session-run`, { method: 'POST', body: '{}' }),
-        fetch(`${server.origin}/api/ai-image/generate`, { method: 'POST', body: '{}' }),
+        fetch(withProjectId('/api/prompt/execute'), { method: 'POST', body: '{}' }),
+        fetch(withProjectId('/api/prototype-generation/session-run'), { method: 'POST', body: '{}' }),
+        fetch(withProjectId('/api/ai-image/generate'), { method: 'POST', body: '{}' }),
       ]);
 
       expect(promptExecute.status).toBe(404);
@@ -978,7 +1083,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1044,7 +1149,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1120,7 +1225,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1161,7 +1266,7 @@ describe('AI runs API', () => {
       ]);
       expect(fs.existsSync(path.join(projectRoot, 'src/prototypes/home/.spec/ai-image-history.json'))).toBe(false);
 
-      const historyResponse = await fetch(`${server.origin}/api/ai/artifact-history?targetPath=prototypes/home`);
+      const historyResponse = await fetch(`${server.origin}/api/ai/artifact-history?targetPath=prototypes/home&projectId=${server.projectId}`);
       const historyBody = await historyResponse.json();
       expect(historyResponse.status).toBe(200);
       expect(historyBody.artifacts).toHaveLength(1);
@@ -1198,7 +1303,10 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const target = 'targetPath=prototypes/home';
+      const target = new URLSearchParams({
+        targetPath: 'prototypes/home',
+        projectId: server.projectId,
+      }).toString();
       const [firstArtifact, secondArtifact] = await Promise.all([
         fetch(`${server.origin}/api/ai/artifact-history?${target}`, {
           method: 'POST',
@@ -1337,7 +1445,7 @@ describe('AI runs API', () => {
     });
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1362,7 +1470,7 @@ describe('AI runs API', () => {
           assetRef: expect.objectContaining({
             assetPath: expect.stringMatching(/^generation-assets\/images\/history-[a-f0-9]{12}\.png$/u),
             mimeType: 'image/png',
-            url: expect.stringContaining('/api/ai/artifact-history/assets?'),
+            url: expect.stringMatching(/\/api\/ai\/artifact-history\/assets\?.*projectId=ai-runs-image-artifact-history/u),
           }),
         }),
       ]);
@@ -1397,7 +1505,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1449,7 +1557,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1495,7 +1603,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1556,7 +1664,7 @@ describe('AI runs API', () => {
     const server = await startRegisteredTestServer(projectRoot, acp);
 
     try {
-      const response = await fetch(`${server.origin}/api/ai/runs`, {
+      const response = await fetch(projectAiRunsUrl(server), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

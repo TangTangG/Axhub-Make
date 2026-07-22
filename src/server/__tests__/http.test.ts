@@ -26,6 +26,7 @@ import { handleCodeReviewApi } from '../managementApi.codeReview.ts';
 import { handleEntriesCompatibilityApi } from '../managementApi.entries.ts';
 import { handleLegacyWebSocketApi } from '../managementApi.legacyWebSocket.ts';
 import { handleWorkspaceApi } from '../managementApi.workspace.ts';
+import { scopeProjectApiUrl } from './projects-api.helpers.ts';
 
 const tempRoots: string[] = [];
 
@@ -314,7 +315,7 @@ describe('make-server HTTP server', () => {
       expect(updatedResources.resources.prototypes[0]).toMatchObject({ id: 'settings' });
       expect(updatedResources.resources.components).toBeUndefined();
 
-      const entries = await fetch(`${server.origin}/api/entries.json`).then((response) => response.json());
+      const entries = await fetch(scopeProjectApiUrl(secondProjectRoot, `${server.origin}/api/entries.json`)).then((response) => response.json());
       expect(entries.components).toEqual([]);
 	      expect(entries.prototypes).toEqual([
 	        expect.objectContaining({
@@ -610,16 +611,16 @@ describe('make-server HTTP server', () => {
     try {
       const requests = [
         '/api/version',
-        '/api/config/bootstrap',
-        '/api/assistant/runtime?autoStart=false',
-        '/api/cloud-publishing/latest',
+        '/api/config/bootstrap?projectId=missing-metadata',
+        '/api/assistant/runtime?autoStart=false&projectId=missing-metadata',
+        '/api/cloud-publishing/latest?projectId=missing-metadata',
         '/api/projects/missing-metadata/resources',
-        '/api/entries.json',
-        '/api/workspace/project',
-        '/api/workspace/navigation?tab=prototypes',
-        '/api/docs',
-        '/api/themes',
-        '/api/workspace/resources/order?type=themes',
+        '/api/entries.json?projectId=missing-metadata',
+        '/api/workspace/project?projectId=missing-metadata',
+        '/api/workspace/navigation?tab=prototypes&projectId=missing-metadata',
+        '/api/docs?projectId=missing-metadata',
+        '/api/themes?projectId=missing-metadata',
+        '/api/workspace/resources/order?type=themes&projectId=missing-metadata',
       ];
       const responses = await Promise.all(requests.map(async (requestPath) => {
         const response = await fetch(`${server.origin}${requestPath}`);
@@ -633,6 +634,7 @@ describe('make-server HTTP server', () => {
       expect(responses.map(({ requestPath, status }) => ({ requestPath, status }))).toEqual(
         requests.map((requestPath) => ({ requestPath, status: 200 })),
       );
+
       expect(responses.find((item) => item.requestPath === '/api/projects/missing-metadata/resources')?.body)
         .toMatchObject({
           unavailable: true,
@@ -643,18 +645,76 @@ describe('make-server HTTP server', () => {
             themes: [],
           },
         });
-      expect(responses.find((item) => item.requestPath === '/api/entries.json')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/entries.json?projectId=missing-metadata')?.body)
         .toEqual({ components: [], prototypes: [] });
-      expect(responses.find((item) => item.requestPath === '/api/workspace/project')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/workspace/project?projectId=missing-metadata')?.body)
         .toEqual({ title: 'Missing Metadata' });
-      expect(responses.find((item) => item.requestPath === '/api/workspace/navigation?tab=prototypes')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/workspace/navigation?tab=prototypes&projectId=missing-metadata')?.body)
         .toMatchObject({ tab: 'prototypes', tree: [] });
-      expect(responses.find((item) => item.requestPath === '/api/docs')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/docs?projectId=missing-metadata')?.body)
         .toEqual([]);
-      expect(responses.find((item) => item.requestPath === '/api/themes')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/themes?projectId=missing-metadata')?.body)
         .toEqual([]);
-      expect(responses.find((item) => item.requestPath === '/api/workspace/resources/order?type=themes')?.body)
+      expect(responses.find((item) => item.requestPath === '/api/workspace/resources/order?type=themes&projectId=missing-metadata')?.body)
         .toMatchObject({ type: 'themes', order: [] });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('requires explicit project IDs for startup fallback APIs when active project metadata is missing', async () => {
+    const projectRoot = createProjectRoot();
+    fs.rmSync(getMakeClientMarkerPath(projectRoot), { force: true });
+    fs.rmSync(path.join(projectRoot, 'package.json'), { force: true });
+    const registryPath = createRegistryPath();
+    writeJson(registryPath, {
+      schemaVersion: 1,
+      activeProjectId: 'missing-metadata',
+      projects: [
+        {
+          id: 'missing-metadata',
+          name: 'Missing Metadata',
+          root: projectRoot,
+          metadataPath: getProjectMetadataPath(projectRoot),
+          createdAt: '2026-05-01T00:00:00.000Z',
+          updatedAt: '2026-05-01T00:00:00.000Z',
+        },
+      ],
+    });
+    fs.rmSync(getProjectMetadataPath(projectRoot), { force: true });
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath,
+    });
+
+    try {
+      const requests = [
+        '/api/config/bootstrap',
+        '/api/assistant/runtime?autoStart=false',
+        '/api/cloud-publishing/latest',
+        '/api/entries.json',
+        '/api/workspace/project',
+        '/api/workspace/navigation?tab=prototypes',
+        '/api/docs',
+        '/api/themes',
+        '/api/workspace/resources/order?type=themes',
+      ];
+      const responses = await Promise.all(requests.map((requestPath) => (
+        fetch(`${server.origin}${requestPath}`)
+      )));
+
+      for (const response of responses) {
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({
+          ok: false,
+          code: 'PROJECT_ID_REQUIRED',
+          error: 'Project-scoped API requires projectId',
+        });
+      }
     } finally {
       await server.close();
     }
@@ -805,9 +865,9 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const preview = await fetch(`${server.origin}/docs/spec`).then((response) => response.text());
+      const preview = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/docs/spec`)).then((response) => response.text());
       expect(preview).toContain('<title>Docs: Project Spec</title>');
-      expect(preview).toContain('/api/markdown-file?path=');
+      expect(preview).toContain('/api/markdown-file?projectId=docs-client&path=');
       expect(preview).toContain('false');
       expect(preview).not.toContain('/@vite/client');
       expect(preview).not.toContain('@vitejs/plugin-react/preamble');
@@ -816,7 +876,7 @@ describe('make-server HTTP server', () => {
       expect(legacyPreview.status).toBe(302);
       expect(legacyPreview.headers.get('location')).toBe('/docs/spec');
 
-      const markdown = await fetch(`${server.origin}/docs/spec.md`).then((response) => response.text());
+      const markdown = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/docs/spec.md`)).then((response) => response.text());
       expect(markdown).toBe('# Project Spec\n\n## Intro\n');
     } finally {
       await server.close();
@@ -832,7 +892,7 @@ describe('make-server HTTP server', () => {
       '<html><head><title>{{TITLE}}</title></head><body><script type="module" src="/assets/spec-template-bootstrap.js"></script></body></html>',
       'utf8',
     );
-    const transformHtml = vi.fn(async (url: string, htmlPath: string) => {
+    const transformHtml = vi.fn(async (url: string, htmlPath: string, _injectScript?: string) => {
       const html = fs.readFileSync(htmlPath, 'utf8');
       return html
         .replace('{{TITLE}}', `transformed:${url}`)
@@ -866,8 +926,9 @@ describe('make-server HTTP server', () => {
       expect(transformHtml).toHaveBeenCalledWith(
         '/spec-template.html',
         path.join(adminRoot, 'spec-template.html'),
-        expect.stringContaining('window.__PROJECT_ROOT__'),
+        expect.stringContaining('window.__AXHUB_MAKE_API_ORIGIN__'),
       );
+      expect(transformHtml.mock.calls[0]?.[2]).not.toContain('window.__PROJECT_ROOT__');
       expect(html).toContain('<title>transformed:/spec-template.html</title>');
       expect(html).toContain('@vitejs/plugin-react/preamble');
     } finally {
@@ -931,7 +992,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const configUpdate = await fetch(`${first.origin}/api/config`, {
+      const configUpdate = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/config`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ server: { host: 'localhost', allowLAN: false }, projectInfo: { name: 'Demo' } }),
@@ -941,10 +1002,10 @@ describe('make-server HTTP server', () => {
         server: { host: 'localhost' },
       });
 
-      const entries = await fetch(`${first.origin}/api/entries.json`).then((response) => response.json());
+      const entries = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/entries.json`)).then((response) => response.json());
       expect(entries).toEqual({ components: [], prototypes: [] });
 
-      const review = await fetch(`${first.origin}/api/code-review`, {
+      const review = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/code-review`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'components/ref-button' }),
@@ -954,7 +1015,7 @@ describe('make-server HTTP server', () => {
         mode: 'default',
       });
 
-      const axurePreview = await fetch(`${first.origin}/api/axure-api-preview`, {
+      const axurePreview = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/axure-api-preview`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'components/ref-button' }),
@@ -989,7 +1050,7 @@ describe('make-server HTTP server', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'metadata-only' }),
       });
-      const metadataOnlyReview = await fetch(`${first.origin}/api/code-review`, {
+      const metadataOnlyReview = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/code-review`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: 'prototypes/remote-home' }),
@@ -1003,7 +1064,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const exportMake = await fetch(`${first.origin}/api/export-make?path=${encodeURIComponent('prototypes/home')}`)
+      const exportMake = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/export-make?path=${encodeURIComponent('prototypes/home')}`))
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(exportMake).toMatchObject({
         status: 424,
@@ -1013,7 +1074,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const exportHtml = await fetch(`${first.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`)
+      const exportHtml = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/export-html?path=${encodeURIComponent('prototypes/home')}`))
         .then(async (response) => ({ status: response.status, body: await response.json() }));
       expect(exportHtml).toMatchObject({
         status: 424,
@@ -1023,7 +1084,7 @@ describe('make-server HTTP server', () => {
         },
       });
 
-      const media = await fetch(`${first.origin}/api/media`).then((response) => response.json());
+      const media = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/media`)).then((response) => response.json());
       expect(media).toEqual(expect.arrayContaining([
         expect.objectContaining({
           name: 'icons',
@@ -1037,7 +1098,7 @@ describe('make-server HTTP server', () => {
         }),
       ]));
 
-      const createFolderResponse = await fetch(`${first.origin}/api/media/folder`, {
+      const createFolderResponse = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/media/folder`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: 'photos', parentPath: 'icons' }),
@@ -1045,11 +1106,11 @@ describe('make-server HTTP server', () => {
       expect(createFolderResponse.status).toBe(200);
       expect(fs.existsSync(path.join(projectRoot, 'assets/media/icons/photos'))).toBe(true);
 
-      const mediaFile = await fetch(`${first.origin}/api/media/file/logo.svg`);
+      const mediaFile = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/media/file/logo.svg`));
       expect(mediaFile.status).toBe(200);
       expect(mediaFile.headers.get('content-type')).toBe('image/svg+xml');
 
-      const docCheck = await fetch(`${first.origin}/api/docs/check-references`, {
+      const docCheck = await fetch(scopeProjectApiUrl(projectRoot, `${first.origin}/api/docs/check-references`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docName: 'overview.md', action: 'delete' }),
@@ -1060,15 +1121,20 @@ describe('make-server HTTP server', () => {
         references: [],
       });
 
-      const canvasCreate = await fetch(`${first.origin}/api/canvas/resources/main-canvas.excalidraw`, {
+      const canvasCreate = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${first.origin}/api/canvas/resources/main-canvas.excalidraw`,
+      ), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: createDefaultCanvasData() }),
       }).then((response) => response.json());
       expect(canvasCreate).toMatchObject({
+        success: true,
+        created: true,
         displayName: 'main-canvas',
+        name: 'main-canvas.excalidraw',
       });
-      expect(canvasCreate.name).toBe('main-canvas.excalidraw');
     } finally {
       await first.close();
     }
@@ -1602,6 +1668,158 @@ describe('make-server HTTP server', () => {
     }
   });
 
+  it('does not proxy an unknown project ID to the stale admin runtime origin', async () => {
+    const projectRoot = createProjectRoot();
+    const staleRuntimeRequests: string[] = [];
+    const staleRuntimeServer = http.createServer((req, res) => {
+      staleRuntimeRequests.push(req.url || '');
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'stale-admin-runtime', url: req.url }));
+    });
+    await new Promise<void>((resolve) => staleRuntimeServer.listen(0, 'localhost', resolve));
+    const staleRuntimeAddress = staleRuntimeServer.address() as AddressInfo;
+    const staleRuntimeOrigin = `http://localhost:${staleRuntimeAddress.port}`;
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath: createRegistryPath(),
+      runtimeOrigin: staleRuntimeOrigin,
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/prototypes/annotation-demo?projectId=missing-project`);
+      const body = await response.text();
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('content-type')).toContain('text/html');
+      expect(body).toContain('<title>Make 客户端未启动</title>');
+      expect(body).toContain('"type":"axhub:runtime-unavailable"');
+      expect(staleRuntimeRequests).toEqual([]);
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => staleRuntimeServer.close(() => resolve()));
+    }
+  });
+
+  it('keeps the configured runtime fallback after rejecting an unknown project request', async () => {
+    const projectRoot = createProjectRoot();
+    const configuredRuntimeRequests: string[] = [];
+    const configuredRuntimeServer = http.createServer((req, res) => {
+      configuredRuntimeRequests.push(req.url || '');
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({ upstream: 'configured-runtime', url: req.url }));
+    });
+    await new Promise<void>((resolve) => configuredRuntimeServer.listen(0, 'localhost', resolve));
+    const configuredRuntimeAddress = configuredRuntimeServer.address() as AddressInfo;
+    const configuredRuntimeOrigin = `http://localhost:${configuredRuntimeAddress.port}`;
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath: createRegistryPath(),
+      runtimeOrigin: configuredRuntimeOrigin,
+    });
+
+    try {
+      const unknownProjectResponse = await fetch(
+        `${server.origin}/prototypes/annotation-demo?projectId=missing-project`,
+      );
+      expect(unknownProjectResponse.status).toBe(503);
+      expect(configuredRuntimeRequests).toEqual([]);
+
+      const unscopedResponse = await fetch(`${server.origin}/prototypes/annotation-demo`);
+      expect(unscopedResponse.status).toBe(200);
+      expect(await unscopedResponse.json()).toEqual({
+        upstream: 'configured-runtime',
+        url: '/prototypes/annotation-demo',
+      });
+      expect(configuredRuntimeRequests).toEqual(['/prototypes/annotation-demo']);
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => configuredRuntimeServer.close(() => resolve()));
+    }
+  });
+
+  it('injects the active project runtime into the admin shell for an unknown project ID', async () => {
+    const projectRoot = createProjectRoot();
+    const adminRoot = path.join(projectRoot, 'admin-dist');
+    fs.mkdirSync(adminRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(adminRoot, 'index.html'),
+      '<html><head></head><body>Admin</body></html>',
+      'utf8',
+    );
+
+    const activeRuntimeServer = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify({
+        ok: true,
+        role: 'runtime',
+        projectRoot,
+        server: {
+          pid: process.pid,
+          port: (activeRuntimeServer.address() as AddressInfo).port,
+          host: 'localhost',
+          origin: `http://localhost:${(activeRuntimeServer.address() as AddressInfo).port}`,
+          projectRoot,
+          startedAt: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        },
+      }));
+    });
+    const staleRuntimeServer = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.end('stale runtime');
+    });
+    await new Promise<void>((resolve) => activeRuntimeServer.listen(0, 'localhost', resolve));
+    await new Promise<void>((resolve) => staleRuntimeServer.listen(0, 'localhost', resolve));
+    const activeRuntimeAddress = activeRuntimeServer.address() as AddressInfo;
+    const staleRuntimeAddress = staleRuntimeServer.address() as AddressInfo;
+    const activeRuntimeOrigin = `http://localhost:${activeRuntimeAddress.port}`;
+    const staleRuntimeOrigin = `http://localhost:${staleRuntimeAddress.port}`;
+    writeJson(getRuntimeServerInfoPath(projectRoot), {
+      pid: process.pid,
+      port: activeRuntimeAddress.port,
+      host: 'localhost',
+      origin: activeRuntimeOrigin,
+      projectRoot,
+      startedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot,
+      registryPath: createRegistryPath(),
+      runtimeOrigin: staleRuntimeOrigin,
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/?projectId=missing-project`);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(html).toContain(`window.__RUNTIME_ORIGIN__ = '${activeRuntimeOrigin}';`);
+      expect(html).not.toContain(`window.__RUNTIME_ORIGIN__ = '${staleRuntimeOrigin}';`);
+    } finally {
+      await server.close();
+      await new Promise<void>((resolve) => activeRuntimeServer.close(() => resolve()));
+      await new Promise<void>((resolve) => staleRuntimeServer.close(() => resolve()));
+    }
+  });
+
   it('discovers the active make client runtime before falling back to the stale admin runtime origin', async () => {
     const projectRoot = createProjectRoot();
     writePrototype(projectRoot, 'annotation-demo');
@@ -1789,10 +2007,10 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const project = await fetch(`${server.origin}/api/workspace/project`).then((response) => response.json());
+      const project = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/project`)).then((response) => response.json());
       expect(project).toEqual({ title: 'Demo Project' });
 
-      const entries = await fetch(`${server.origin}/api/entries.json`).then((response) => response.json());
+      const entries = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/entries.json`)).then((response) => response.json());
       expect(entries.components).toEqual([]);
       expect(entries.prototypes).toEqual(expect.arrayContaining([
 	        expect.objectContaining({
@@ -1810,7 +2028,7 @@ describe('make-server HTTP server', () => {
 	      ]));
 	      expect(entries.prototypes.every((item: Record<string, unknown>) => !Object.prototype.hasOwnProperty.call(item, 'demoUrl'))).toBe(true);
 
-      const navigation = await fetch(`${server.origin}/api/workspace/navigation?tab=prototypes`).then((response) => response.json());
+      const navigation = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/navigation?tab=prototypes`)).then((response) => response.json());
       expect(navigation).toMatchObject({
         tab: 'prototypes',
         version: 1,
@@ -1837,7 +2055,7 @@ describe('make-server HTTP server', () => {
         },
       ]);
 
-      const order = await fetch(`${server.origin}/api/workspace/resources/order?type=themes`).then((response) => response.json());
+      const order = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/resources/order?type=themes`)).then((response) => response.json());
       expect(order).toEqual({
         type: 'themes',
         version: 1,
@@ -1845,7 +2063,7 @@ describe('make-server HTTP server', () => {
       });
 
       writeTheme(projectRoot, 'new-theme');
-      const reconciledOrder = await fetch(`${server.origin}/api/workspace/resources/order?type=themes`).then((response) => response.json());
+      const reconciledOrder = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/resources/order?type=themes`)).then((response) => response.json());
       expect(reconciledOrder).toEqual({
         type: 'themes',
         version: 1,
@@ -1919,10 +2137,10 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const order = await fetch(`${server.origin}/api/workspace/resources/order?type=themes`).then((response) => response.json());
+      const order = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/resources/order?type=themes`)).then((response) => response.json());
       expect(order.order).toEqual(['apple', 'linear', 'notion', 'airbnb', 'kami']);
 
-      const navigation = await fetch(`${server.origin}/api/workspace/navigation?tab=themes`).then((response) => response.json());
+      const navigation = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/navigation?tab=themes`)).then((response) => response.json());
       expect(navigation.tree.map((node: { itemKey?: string }) => node.itemKey)).toEqual([
         'themes/apple',
         'themes/linear',
@@ -2011,7 +2229,7 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const navigation = await fetch(`${server.origin}/api/workspace/navigation?tab=themes`).then((response) => response.json());
+      const navigation = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/navigation?tab=themes`)).then((response) => response.json());
       expect(navigation.tree.map((node: { title?: string }) => node.title)).toEqual([
         'Figma',
         'Orderful',
@@ -2054,7 +2272,7 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const project = await fetch(`${server.origin}/api/workspace/project`).then((response) => response.json());
+      const project = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/project`)).then((response) => response.json());
       expect(project).toEqual({ title: path.basename(projectRoot) });
     } finally {
       await server.close();
@@ -2130,7 +2348,7 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const project = await fetch(`${server.origin}/api/workspace/project`).then((response) => response.json());
+      const project = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/project`)).then((response) => response.json());
       expect(project).toEqual({ title: path.basename(projectRoot) });
     } finally {
       await server.close();
@@ -2162,7 +2380,7 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const update = await fetch(`${server.origin}/api/workspace/navigation?tab=prototypes`, {
+      const update = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/navigation?tab=prototypes`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2240,7 +2458,7 @@ describe('make-server HTTP server', () => {
 
     try {
       await registerExistingMakeProject(server.origin, projectRoot);
-      const response = await fetch(`${server.origin}/api/workspace/navigation?tab=docs`, {
+      const response = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/workspace/navigation?tab=docs`), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -229,6 +229,43 @@ describe('make-server vendor packages', () => {
     expect(installedBundle).not.toContain('\\u5F53\\u524D\\u6807\\u6CE8\\u8282\\u70B9\\u5B9A\\u4F4D\\u53EF\\u80FD\\u4E0D\\u7A33\\u5B9A');
   });
 
+  it('keeps the vendored commentary tombstone restore contract in source and runtime bundles', () => {
+    const typesSource = fs.readFileSync(
+      path.join(appRoot, 'vendor/axhub-commentary/src/web-editor-types.ts'),
+      'utf8',
+    );
+    const persistenceSource = fs.readFileSync(
+      path.join(appRoot, 'vendor/axhub-commentary/src/core/editor/persistence.ts'),
+      'utf8',
+    );
+    const lifecycleSource = fs.readFileSync(
+      path.join(appRoot, 'vendor/axhub-commentary/src/core/editor/lifecycle.ts'),
+      'utf8',
+    );
+    const esmBundle = fs.readFileSync(
+      path.join(appRoot, 'vendor/axhub-commentary/dist/index.mjs'),
+      'utf8',
+    );
+    const cjsBundle = fs.readFileSync(
+      path.join(appRoot, 'vendor/axhub-commentary/dist/index.js'),
+      'utf8',
+    );
+
+    expect(typesSource.match(/deletedAt\?: number \| null;/gu)).toHaveLength(2);
+    expect(typesSource).not.toContain('PrototypeEditCommentTaskTombstone');
+    expect(typesSource).toContain('export type PrototypeEditCommentTombstone =');
+    expect(typesSource).toContain('observedTombstones?: PrototypeEditCommentTombstone[];');
+    expect(persistenceSource).toContain('function buildScopedElementIdentity(');
+    expect(persistenceSource).toContain('observedTombstones: adapterResult.observedTombstones');
+    expect(persistenceSource).toContain('const refreshedResult = await readAdapterDocument();');
+    expect(lifecycleSource.match(/discardDeletedElementStates\?\.\(deletedElementKeys\)/gu)).toHaveLength(2);
+    for (const bundle of [esmBundle, cjsBundle]) {
+      expect(bundle).toContain('observedTombstones');
+      expect(bundle).toContain('buildScopedElementIdentity');
+      expect(bundle).toContain('Failed to compact restored prototype comments');
+    }
+  });
+
   it('syncs prebuilt package artifacts and writes generated metadata', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'make-server-vendor-test-'));
     const appTempRoot = path.join(tempRoot, 'apps', 'make-server');

@@ -7,6 +7,7 @@ import {
   cleanupProjectApiTestRoots,
   createTempRoot,
   registerProject,
+  scopeProjectApiUrl,
   startTestServer,
   writeProjectMetadata,
 } from './projects-api.helpers';
@@ -63,12 +64,12 @@ describe('obsolete prompt execution APIs', () => {
 
     try {
       const [promptExecute, sessionRun] = await Promise.all([
-        fetch(`${server.origin}/api/prompt/execute`, {
+        fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/prompt/execute`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: 'run' }),
         }),
-        fetch(`${server.origin}/api/prototype-generation/session-run`, {
+        fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/prototype-generation/session-run`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: 'run' }),

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { apiService } from '../../services/index.api';
+import { requireProjectScope } from '../../services/projectScope';
 import { normalizePromptClientPreference } from '@/common/promptExecution';
 import type { PromptClientPreference } from '../../types';
 import type { IDEAvailabilityMap, MainIDEPreference } from '../../../common/ide';
@@ -73,7 +74,7 @@ export function useIndexPagePreferences({
         }
 
         let canceled = false;
-        apiService.getBootstrapConfig({ projectId: activeProjectId })
+        apiService.getBootstrapConfig(requireProjectScope(activeProjectId))
             .then((config) => {
                 if (canceled) return;
                 setPreferredPromptClient(normalizePromptClientPreference(config?.automation?.defaultPromptClient));
@@ -116,7 +117,7 @@ export function useIndexPagePreferences({
             return;
         }
 
-        apiService.getConfig({ projectId: activeProjectId })
+        apiService.getConfig(requireProjectScope(activeProjectId))
             .then((config) => {
                 setPreferredPromptClient(normalizePromptClientPreference(config?.automation?.defaultPromptClient));
                 setPreferredIDE(config?.automation?.defaultIDE || null);

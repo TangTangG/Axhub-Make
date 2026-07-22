@@ -15,6 +15,8 @@ export interface WebEditorUiSettings {
   darkMode: boolean;
   /** When true, CSS is injected into the page to disable animations (carousels, typewriters, etc.) */
   disablePageAnimations: boolean;
+  /** Switch between element-level design comments and document text-selection comments. */
+  documentCommentMode: boolean;
   /** When true, the host page content scales down from the right edge to make room for the panel. */
   pageZoomEnabled: boolean;
   /** Maximum number of concurrent element-level Agent runs. */
@@ -29,6 +31,7 @@ export const DEFAULT_WEB_EDITOR_UI_SETTINGS: WebEditorUiSettings = {
   styleDesignEnabled: true,
   darkMode: false,
   disablePageAnimations: false,
+  documentCommentMode: false,
   pageZoomEnabled: false,
   agentRunConcurrency: 5,
 };
@@ -86,6 +89,7 @@ export function sanitizeWebEditorUiSettings(value: unknown): WebEditorUiSettings
         : Boolean(record.styleDesignEnabled),
     darkMode: Boolean(record.darkMode),
     disablePageAnimations: Boolean(record.disablePageAnimations),
+    documentCommentMode: Boolean(record.documentCommentMode),
     pageZoomEnabled: Boolean(record.pageZoomEnabled),
   };
 }

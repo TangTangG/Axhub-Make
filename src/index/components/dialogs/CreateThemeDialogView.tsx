@@ -21,6 +21,7 @@ import {
     type ThemeLibraryPromptItem,
 } from '../../utils/themePrompts';
 import { getUserFriendlyUploadErrorMessage } from '../../utils/uploadErrors';
+import { requireProjectScope, withProjectScope } from '../../services/projectScope';
 
 type ThemeDialogTab = 'import' | 'onlineSelect';
 
@@ -54,6 +55,7 @@ interface ThemeLibraryState {
 
 interface CreateThemeDialogProps {
     visible: boolean;
+    activeProjectId: string;
     onClose: () => void;
     initialTab?: ThemeDialogTab;
     resourceWriteCapabilities: ResourceWriteCapabilities;
@@ -68,6 +70,7 @@ interface CreateThemeDialogProps {
 
 export default function CreateThemeDialog({
     visible,
+    activeProjectId,
     onClose,
     initialTab = 'import',
     resourceWriteCapabilities,
@@ -114,7 +117,7 @@ export default function CreateThemeDialog({
             loading: true,
             error: '',
         }));
-        fetch('/api/theme-library')
+        fetch(withProjectScope('/api/theme-library', requireProjectScope(activeProjectId)))
             .then(async (response) => {
                 const result = await response.json();
                 if (!response.ok || result?.ok === false) {
@@ -142,7 +145,7 @@ export default function CreateThemeDialog({
         return () => {
             cancelled = true;
         };
-    }, [activeTab, themeLibrary.loaded, visible]);
+    }, [activeProjectId, activeTab, themeLibrary.loaded, visible]);
 
     const handleThemeUpload = useCallback(async (files: File[]) => {
         if (files.length === 0) return;
@@ -151,6 +154,7 @@ export default function CreateThemeDialog({
         formData.append('uploadType', THEME_IMPORT_UPLOAD_TYPE);
         formData.append('targetType', 'themes');
         formData.append('uploadMode', 'zip');
+        formData.append('projectId', requireProjectScope(activeProjectId).projectId);
 
         const file = files[0];
         if (!file.name.toLowerCase().endsWith('.zip')) {
@@ -163,7 +167,7 @@ export default function CreateThemeDialog({
         setUploading(true);
         try {
             const endpoint = '/api/upload';
-            const response = await fetch(endpoint, {
+            const response = await fetch(withProjectScope(endpoint, requireProjectScope(activeProjectId)), {
                 method: 'POST',
                 body: formData,
             });
@@ -189,7 +193,7 @@ export default function CreateThemeDialog({
         } finally {
             setUploading(false);
         }
-    }, [onClose, onImportSuccess]);
+    }, [activeProjectId, onClose, onImportSuccess]);
 
     const handleDirectThemeLibraryImport = async (designSystem: ThemeLibraryItem) => {
         if (!designSystem.canDirectImport) {
@@ -198,7 +202,7 @@ export default function CreateThemeDialog({
         }
         setThemeImportingId(designSystem.id);
         try {
-            const response = await fetch('/api/theme-library/import', {
+            const response = await fetch(withProjectScope('/api/theme-library/import', requireProjectScope(activeProjectId)), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ designSystemId: designSystem.id }),

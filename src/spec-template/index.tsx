@@ -46,6 +46,10 @@ function enableDocumentEditor(options?: {
   markdownViewerRef.current?.enableDocumentEditor(options);
 }
 
+function setDocumentEditorContext(context: { projectId: string; documentPath: string }): void {
+  markdownViewerRef.current?.setContext(context);
+}
+
 function disableDocumentEditor(): void {
   markdownViewerRef.current?.disableDocumentEditor();
 }
@@ -239,6 +243,9 @@ if (typeof window !== 'undefined') {
         quickEditMode: 'none',
       };
     },
+    getCopyPromptText() {
+      return markdownViewerRef.current?.getCopyPromptText() ?? '';
+    },
     handleCopyPrompt() {
       return markdownViewerRef.current?.handleCopyPrompt() ?? Promise.reject(new Error('Markdown viewer is not ready'));
     },
@@ -246,6 +253,7 @@ if (typeof window !== 'undefined') {
       return markdownViewerRef.current?.saveCurrentDoc(options) ?? Promise.resolve(false);
     },
     enableDocumentEditor,
+    setContext: setDocumentEditorContext,
     disableDocumentEditor,
     getHostToolbarState: getDocumentHostToolbarState,
     subscribeHostToolbarState: subscribeDocumentHostToolbarState,

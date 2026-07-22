@@ -13,6 +13,11 @@ import {
   type HtmlResourceSaveBridge,
   type HtmlResourceSaveEditor,
 } from './htmlResourceSaveBridge';
+import {
+  createDocumentCommentsPersistenceAdapter,
+  createDocumentCommentsPersistenceScope,
+  type DocumentCommentContext,
+} from '../common/documentCommentsPersistence';
 
 declare global {
   interface Window {
@@ -32,10 +37,10 @@ let parentEditorBridgeUnsubscribe: (() => void) | null = null;
 let htmlReviewBridgeRuntime: HtmlReviewBridge | null = null;
 let htmlResourceSaveBridgeRuntime: HtmlResourceSaveBridge | null = null;
 const MAKE_COMMENTARY_SKILL_INSTALL_SOURCE = [
-  '.agents/skills/explore-options/SKILL.md',
-  '.claude/skills/explore-options/SKILL.md',
-  '.agents/skills/prototype-comments/SKILL.md',
-  '.claude/skills/prototype-comments/SKILL.md',
+    '.agents/skills/explore-options/SKILL.md',
+    '.claude/skills/explore-options/SKILL.md',
+    '.agents/skills/handle-comments/SKILL.md',
+    '.claude/skills/handle-comments/SKILL.md',
 ].join('\n');
 
 function readUrlParam(keys: string[]): string {
@@ -53,6 +58,11 @@ function resolveHtmlResourcePath(): string {
   const contextResourceId = typeof htmlEditorContext?.resourceId === 'string'
     ? htmlEditorContext.resourceId.trim()
     : '';
+  const contextDocumentPath = typeof htmlEditorContext?.documentPath === 'string'
+    ? htmlEditorContext.documentPath.trim()
+    : '';
+  const normalizedContextDocumentPath = normalizeHtmlReviewDocumentPath(contextDocumentPath);
+  if (normalizedContextDocumentPath) return normalizedContextDocumentPath;
   const contextPath = normalizeHtmlReviewDocumentPath(contextResourceId);
   if (contextPath) return contextPath;
 
@@ -98,8 +108,16 @@ function buildHtmlResourceContext() {
       docPath: path,
       storageScope: path ? `html-doc:${path}` : `html-doc:${window.location.pathname}`,
       displayName: title,
+      documentPath: path,
     },
   };
+}
+
+function buildDocumentCommentContext(): DocumentCommentContext | null {
+  const resource = buildHtmlResourceContext();
+  const documentPath = String(resource.meta.documentPath || '').trim();
+  const projectId = String(resource.meta.projectId || '').trim();
+  return documentPath && projectId ? { projectId, documentPath } : null;
 }
 
 function ensureHtmlReviewBridge(): HtmlReviewBridge {
@@ -163,6 +181,12 @@ function ensureCommentEditor(options?: {
     },
     host: {
       getResourceContext: buildHtmlResourceContext,
+      getPersistenceScope: () => {
+        const context = buildDocumentCommentContext();
+        return context ? createDocumentCommentsPersistenceScope(context, buildHtmlResourceContext()) : null;
+      },
+      persistenceAdapter: createDocumentCommentsPersistenceAdapter(buildDocumentCommentContext),
+      commentPersistenceMode: 'adapter-only',
       getElementTools: htmlReviewBridge.getElementTools,
       onElementToolAction: htmlReviewBridge.onElementToolAction,
       shouldAllowPageEvent: shouldAllowHtmlReviewPageEvent,

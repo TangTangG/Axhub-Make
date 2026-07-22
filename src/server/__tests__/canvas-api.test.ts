@@ -20,6 +20,17 @@ const GIF_DATA_URL = `data:image/gif;base64,${Buffer.from('GIF89a').toString('ba
 const JPEG_DATA_URL = `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`;
 const WEBP_DATA_URL = `data:image/webp;base64,${Buffer.from('RIFFxxxxWEBP').toString('base64')}`;
 const SVG_DATA_URL = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>').toString('base64')}`;
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const canvasProjectIdByOrigin = new Map<string, string>();
+
+async function fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  const url = new URL(String(input));
+  const projectId = canvasProjectIdByOrigin.get(url.origin);
+  if (projectId && url.pathname.startsWith('/api/canvas')) {
+    url.searchParams.set('projectId', projectId);
+  }
+  return nativeFetch(url, init);
+}
 
 class FakeCanvasSocket extends EventEmitter {
   readonly sentMessages: any[] = [];
@@ -154,12 +165,15 @@ async function startActiveCanvasTestServer(projectRoot: string) {
     metadataPath: getProjectMetadataPath(projectRoot),
   });
   registry.setActiveProject(projectId);
-  return startTestServer(projectRoot, registryHome);
+  const server = await startTestServer(projectRoot, registryHome);
+  canvasProjectIdByOrigin.set(server.origin, projectId);
+  return server;
 }
 
 describe('canvas API', () => {
   afterEach(() => {
     getCanvasBridgeHub().destroy();
+    canvasProjectIdByOrigin.clear();
     cleanupProjectApiTestRoots();
   });
 
@@ -851,11 +865,14 @@ describe('canvas API', () => {
         changed: true,
         resourcePath: 'flows/app.excalidraw',
         path: 'src/resources/flows/app.assets/screenshot.png',
-        screenshotUrl: expect.stringMatching(/^\/api\/canvas\/resources\/flows\/app\.excalidraw\/app\.assets\/screenshot\.png\?v=\d+$/u),
-        apiScreenshotUrl: expect.stringMatching(/^\/api\/canvas\/resources\/flows\/app\.excalidraw\/app\.assets\/screenshot\.png\?v=\d+$/u),
         width: 320,
         height: 180,
       });
+      const screenshotUrl = new URL(putBody.screenshotUrl, server.origin);
+      expect(screenshotUrl.pathname).toBe('/api/canvas/resources/flows/app.excalidraw/app.assets/screenshot.png');
+      expect(screenshotUrl.searchParams.get('v')).toMatch(/^\d+$/u);
+      expect(screenshotUrl.searchParams.get('projectId')).toBe(path.basename(projectRoot));
+      expect(putBody.apiScreenshotUrl).toBe(putBody.screenshotUrl);
       expect(fs.existsSync(screenshotPath)).toBe(true);
       const written = fs.readFileSync(screenshotPath);
       expect(written.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));

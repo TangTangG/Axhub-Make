@@ -2,6 +2,7 @@ import React from 'react';
 import NewSidebar from '../sidebar/NewSidebar';
 import PresentationArea from '../content/PresentationArea';
 import AssistantPanel from './AssistantPanel';
+import type { AssistantIframeRenderEntry } from './AssistantPanel';
 import type {
     NewSidebarGroupedProps,
     PresentationAreaGroupedProps,
@@ -17,9 +18,10 @@ interface IndexPageDesktopProps {
         width: number;
         minWidth: number;
         maxWidth: number;
-        iframeSrc: string;
-        iframeRef: React.MutableRefObject<HTMLIFrameElement | null>;
-        onLoad: () => void;
+        iframeEntries: AssistantIframeRenderEntry[];
+        activeIframeKey: string | null;
+        onIframeRef: (key: string, iframe: HTMLIFrameElement | null) => void;
+        onIframeLoad: (key: string) => void;
         onResize: (width: number) => void;
         onAddContextItems: (items: AcpContextItem[]) => boolean | Promise<boolean>;
         onToggle: () => void;
@@ -46,9 +48,10 @@ export default function IndexPageDesktop({
                             width={assistantPanel.width}
                             minWidth={assistantPanel.minWidth}
                             maxWidth={assistantPanel.maxWidth}
-                            iframeSrc={assistantPanel.iframeSrc}
-                            iframeRef={assistantPanel.iframeRef}
-                            onLoad={assistantPanel.onLoad}
+                            iframeEntries={assistantPanel.iframeEntries}
+                            activeIframeKey={assistantPanel.activeIframeKey}
+                            onIframeRef={assistantPanel.onIframeRef}
+                            onIframeLoad={assistantPanel.onIframeLoad}
                             onResize={assistantPanel.onResize}
                             onAddContextItems={assistantPanel.onAddContextItems}
                             onToggle={assistantPanel.onToggle}

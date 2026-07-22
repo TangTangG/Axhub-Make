@@ -3,11 +3,23 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('OpenInDropdown source', () => {
+  it('uses the official VS Code product name in local app help text', () => {
+    const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
+    const localAppHelpSource = source.slice(
+      source.indexOf('const LOCAL_APP_GROUP_HELP'),
+      source.indexOf('const WEB_AGENT_GROUP_HELP'),
+    );
+
+    expect(localAppHelpSource).toContain("'VS Code'");
+    expect(localAppHelpSource).not.toContain("'vscode'");
+  });
+
   it('saves IDE preference through the server preferences API', () => {
     const source = readFileSync(resolve(__dirname, './OpenInDropdown.tsx'), 'utf8');
 
     expect(source).toContain("import { apiService } from '../../services/api';");
     expect(source).toContain('apiService.saveServerPreferences');
+    expect(source).toContain('}, requireProjectScope(projectId));');
     expect(source).not.toContain("const configRes = await fetch('/api/config');");
     expect(source).not.toContain('const currentConfig = await configRes.json();');
   });
@@ -122,7 +134,7 @@ describe('OpenInDropdown source', () => {
     expect(source).toContain('activeProjectId?: string | null;');
     expect(source).toContain('targetProjectId?: string | null;');
     expect(source).toContain('targetPath?: string | null;');
-    expect(source).toContain('const projectId = targetProjectId?.trim() || activeProjectId?.trim() || undefined;');
+    expect(source).toContain("const projectId = targetProjectId?.trim() || activeProjectId?.trim() || '';");
     expect(source).toContain('const openTargetPath = targetPath?.trim() || undefined;');
     expect(source).toContain('handleOpenProjectInIDE(ide, openTargetPath, projectId)');
     expect(source).toContain('apiService.openCLIAgent({ agent, projectId, targetPath: openTargetPath });');

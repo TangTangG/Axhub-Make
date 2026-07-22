@@ -48,6 +48,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { apiService } from '../../services/api';
+import { requireProjectScope } from '../../services/projectScope';
 import { cn } from '@/lib/utils';
 import type { AcpProvider } from '@/common/assistant-context/types';
 
@@ -78,7 +79,7 @@ interface OpenInDropdownProps {
 const LOCAL_APP_GROUP_HELP = [
     {
         title: '本地应用',
-        items: ['ChatGPT', 'OpenCode', 'Cursor', 'TRAE', 'vscode', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
+        items: ['ChatGPT', 'OpenCode', 'Cursor', 'TRAE', 'VS Code', 'TRAE CN', 'Windsurf', 'Qoder', 'Antigravity'],
     },
     {
         title: '本地 CLI',
@@ -160,7 +161,7 @@ export default function OpenInDropdown({
     const overflowLocalAppOpenOptions = shouldCollapseLocalAppOpenOptions
         ? localAppOpenOptions.slice(MAX_INLINE_LOCAL_APP_OPEN_OPTIONS)
         : [];
-    const projectId = targetProjectId?.trim() || activeProjectId?.trim() || undefined;
+    const projectId = targetProjectId?.trim() || activeProjectId?.trim() || '';
     const openTargetPath = targetPath?.trim() || undefined;
 
     // Resolve the current open method from preferredIDE (which may contain `web:opencode` etc.)
@@ -219,7 +220,7 @@ export default function OpenInDropdown({
             automation: {
                 defaultIDE: serialized as any,
             },
-        });
+        }, requireProjectScope(projectId));
         onPreferredIDEChange?.(serialized as any);
     };
 

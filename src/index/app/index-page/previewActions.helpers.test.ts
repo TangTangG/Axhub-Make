@@ -596,6 +596,90 @@ describe('previewActions.helpers', () => {
     })).toBeNull();
   });
 
+  it('captures only iframe-owned state needed after preview refresh', () => {
+    const createSnapshot = (helpers as Record<string, unknown>).createPreviewRefreshRestoreSnapshot;
+
+    expect(typeof createSnapshot).toBe('function');
+    const capture = createSnapshot as (params: {
+      prototypeEditorActive: boolean;
+      documentEditorActive: boolean;
+      prototypeEditorLaunchOptions: { hostToolbar: boolean };
+      selectionModeActive: boolean;
+      documentQuickEditMode: 'comment' | 'edit';
+      standalonePanelOpen: boolean;
+    }) => {
+      prototypeEditor: { hostToolbar: boolean; selectionModeActive: boolean } | null;
+      documentQuickEditMode: 'comment' | 'edit' | null;
+      standalonePanelOpen: boolean;
+    };
+
+    expect(capture({
+      prototypeEditorActive: true,
+      documentEditorActive: false,
+      prototypeEditorLaunchOptions: { hostToolbar: true },
+      selectionModeActive: true,
+      documentQuickEditMode: 'comment',
+      standalonePanelOpen: false,
+    })).toEqual({
+      prototypeEditor: { hostToolbar: true, selectionModeActive: true },
+      documentQuickEditMode: null,
+      standalonePanelOpen: false,
+    });
+
+    expect(capture({
+      prototypeEditorActive: false,
+      documentEditorActive: true,
+      prototypeEditorLaunchOptions: { hostToolbar: true },
+      selectionModeActive: false,
+      documentQuickEditMode: 'edit',
+      standalonePanelOpen: false,
+    })).toEqual({
+      prototypeEditor: null,
+      documentQuickEditMode: 'edit',
+      standalonePanelOpen: false,
+    });
+
+    expect(capture({
+      prototypeEditorActive: false,
+      documentEditorActive: false,
+      prototypeEditorLaunchOptions: { hostToolbar: true },
+      selectionModeActive: false,
+      documentQuickEditMode: 'comment',
+      standalonePanelOpen: true,
+    })).toEqual({
+      prototypeEditor: null,
+      documentQuickEditMode: null,
+      standalonePanelOpen: true,
+    });
+  });
+
+  it('restores the saved Markdown mode instead of accepting the transient disabled refresh status', () => {
+    const resolveStatus = (helpers as Record<string, unknown>).resolveDocumentRefreshRestoreStatus;
+
+    expect(typeof resolveStatus).toBe('function');
+    const resolveRefreshStatus = resolveStatus as (
+      pendingMode: 'comment' | 'edit' | null,
+      status: { enabled: boolean },
+    ) => { acceptStatus: boolean; restoreMode: 'comment' | 'edit' | null };
+
+    expect(resolveRefreshStatus('edit', { enabled: false })).toEqual({
+      acceptStatus: false,
+      restoreMode: 'edit',
+    });
+    expect(resolveRefreshStatus('comment', { enabled: false })).toEqual({
+      acceptStatus: false,
+      restoreMode: 'comment',
+    });
+    expect(resolveRefreshStatus('edit', { enabled: true })).toEqual({
+      acceptStatus: true,
+      restoreMode: null,
+    });
+    expect(resolveRefreshStatus(null, { enabled: false })).toEqual({
+      acceptStatus: true,
+      restoreMode: null,
+    });
+  });
+
   it('does not expose host Space temporary interaction forwarding helpers', () => {
     expect('getQuickEditTemporaryInteractionTargets' in helpers).toBe(false);
     expect('shouldHandleQuickEditSpaceTemporaryInteractionEvent' in helpers).toBe(false);

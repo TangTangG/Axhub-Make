@@ -115,7 +115,7 @@ describe('screenshot-to-prototype skill', () => {
     expect(frontmatter).not.toMatch(/截图或本地图片|转换为|做网页|生成图片|提取主题|参考 URL/u);
     expect(frontmatter).not.toMatch(/还原.*复刻|复刻.*还原|截图或本地图片/u);
 
-    expect(combinedMarkdown).toContain('图片生成能力可以来自 `ui-design-image`、系统 `imagegen`、ACP UI 图片 MCP、等价图片 MCP，或 Agent 图片配置');
+    expect(combinedMarkdown).toContain('图片生成能力可以来自 `ui-image-generation`、系统 `imagegen`、内部图片生成 MCP 或其他可用图片生成工具，或 Agent 图片配置');
     expect(combinedMarkdown).not.toContain('Make/Codex 图片配置');
     expect(combinedMarkdown).toContain('停止前必须主动检查这些通道');
     expect(combinedMarkdown).not.toContain('用户提醒存在 Image Gen 或 UI 设计图片时');

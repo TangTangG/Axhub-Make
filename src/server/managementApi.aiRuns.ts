@@ -64,7 +64,7 @@ interface AiRunsHandlers {
     req: IncomingMessage,
     res: ServerResponse,
     options: ManagementApiOptions,
-    mode: 'active-fallback',
+    mode: 'explicit-required',
     body?: unknown,
   ) => AiRunsProjectContext | null;
   getServerConfigStoreForRequest: (options: ManagementApiOptions) => {
@@ -801,7 +801,7 @@ async function persistRunArtifactsSafely(params: {
   try {
     await appendAiRunArtifactsToHistory({
       context: {
-        project: { root: params.context.project.root },
+        project: { id: params.context.project.id, root: params.context.project.root },
         metadata: params.context.metadata,
       },
       targetPath: params.targetPath,
@@ -833,7 +833,7 @@ async function persistRunTaskSafely(params: {
   try {
     await upsertAiRunTaskToHistory({
       context: {
-        project: { root: params.context.project.root },
+        project: { id: params.context.project.id, root: params.context.project.root },
         metadata: params.context.metadata,
       },
       targetPath: params.targetPath,
@@ -872,7 +872,7 @@ export function handleAiRunsApi(
     const request = body && typeof body === 'object' && !Array.isArray(body)
       ? body as Record<string, any>
       : {};
-    const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', request);
+    const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', request);
     if (!context) return;
 
     const scene = normalizeScene(request.scene);

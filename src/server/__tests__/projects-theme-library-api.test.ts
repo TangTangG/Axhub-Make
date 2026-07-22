@@ -10,6 +10,7 @@ import {
   cleanupProjectApiTestRoots,
   createTempRoot,
   registerProject,
+  scopeProjectApiUrl,
   setActiveProject,
   startTestServer,
   writeProjectMetadata,
@@ -218,7 +219,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(200);
       expect(listed.body).toMatchObject({
@@ -250,7 +251,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(502);
       expect(listed.body).toMatchObject({
@@ -268,7 +269,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(200);
       expect(listed.body).toMatchObject({
@@ -303,7 +304,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(200);
       expect(listed.body.source).toMatchObject({ branch: 'local' });
@@ -345,7 +346,7 @@ describe('make-server project theme library APIs', () => {
     }));
 
     try {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(200);
       expect(listed.body).toMatchObject({
@@ -393,7 +394,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
-      const listed = await fetchJson(`${server.origin}/api/theme-library`);
+      const listed = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library`));
 
       expect(listed.status).toBe(502);
       expect(listed.body).toMatchObject({
@@ -417,7 +418,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
-      const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
+      const imported = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library/import`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ designSystemId: 'trae-design' }),
@@ -467,7 +468,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
-      const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
+      const imported = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library/import`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ designSystemId: 'hp' }),
@@ -525,7 +526,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     await withoutLocalThemeLibrary(async () => {
-      const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
+      const imported = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library/import`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ designSystemId: 'trae-design' }),
@@ -561,7 +562,7 @@ describe('make-server project theme library APIs', () => {
     const server = await startThemeLibraryTestServer(projectRoot);
 
     try {
-      const imported = await fetchJson(`${server.origin}/api/theme-library/import`, {
+      const imported = await fetchJson(scopeProjectApiUrl(projectRoot, `${server.origin}/api/theme-library/import`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ designSystemId: 'trae-design' }),

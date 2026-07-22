@@ -281,6 +281,7 @@ tasks:
             const canvasName = 'regression/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}' + '.excalidraw';
             const encodeCanvasApiPath = (name) => String(name || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
             const canvasUrl = new URL('/api/canvas/resources/' + encodeCanvasApiPath(canvasName), window.location.origin);
+            canvasUrl.searchParams.set('projectId', '${AXHUB_MAKE_E2E_PROJECT_ID}');
             const readResponse = await fetch(canvasUrl);
             if (!readResponse.ok) {
               throw new Error('Failed to read canvas before active-write regression: HTTP ' + readResponse.status);
@@ -472,6 +473,7 @@ tasks:
             const originalCanvas = window.__AXHUB_E2E_REALTIME_ORIGINAL_CANVAS_DOCUMENT__;
             if (originalCanvas) {
               const canvasUrl = new URL('/api/canvas/resources/' + encodeCanvasApiPath(canvasName), window.location.origin);
+              canvasUrl.searchParams.set('projectId', '${AXHUB_MAKE_E2E_PROJECT_ID}');
               await fetch(canvasUrl, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -498,7 +500,7 @@ tasks:
               });
             }
             const targetPath = 'prototypes/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}';
-            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath);
+            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath) + '&projectId=' + encodeURIComponent('${AXHUB_MAKE_E2E_PROJECT_ID}');
             await fetch(endpoint, {
               method: 'DELETE',
               headers: { 'Content-Type': 'application/json' },
@@ -576,7 +578,7 @@ tasks:
               return window.__AXHUB_E2E_SKIP_ARTIFACT_HISTORY__;
             }
             const targetPath = 'prototypes/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}';
-            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath);
+            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath) + '&projectId=' + encodeURIComponent('${AXHUB_MAKE_E2E_PROJECT_ID}');
             const runId = '${AXHUB_MAKE_E2E_RUN_ID}';
             const ids = {
               imageSuccess: 'make-e2e-ai-artifact-image-success-' + runId,
@@ -989,7 +991,7 @@ tasks:
               return window.__AXHUB_E2E_SKIP_ARTIFACT_HISTORY__;
             }
             const targetPath = 'prototypes/' + '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}';
-            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath);
+            const endpoint = '/api/ai/artifact-history?targetPath=' + encodeURIComponent(targetPath) + '&projectId=' + encodeURIComponent('${AXHUB_MAKE_E2E_PROJECT_ID}');
             const runId = '${AXHUB_MAKE_E2E_RUN_ID}';
             const ids = [
               'make-e2e-ai-artifact-image-success-' + runId,
@@ -1076,7 +1078,7 @@ tasks:
             };
 
             const document = {
-                schemaVersion: 1,
+                schemaVersion: 2,
                 kind: 'prototype-edit-comments',
                 resource: {
                   id: '${AXHUB_MAKE_E2E_CANVAS_PROTOTYPE}',
@@ -1094,27 +1096,20 @@ tasks:
                       shadowHostChain: [],
                     },
                     comment: commentText,
-                    status: 'open',
+                    state: 'idle',
                     createdAt: '2026-06-06T00:00:00.000Z',
                   },
                 ],
-                tasks: {
-                  execute: {
-                    id: 'midscene-comment-ai-smoke-task-' + runId,
-                    status: 'pending',
-                    commentIds: ['midscene-comment-ai-smoke-' + runId],
-                  },
-                },
                 images: [],
               };
-              const commentEndpoint = '/api/prototype-comments?targetPath=' + encodeURIComponent(targetPath);
+              const commentEndpoint = '/api/prototype-comments?targetPath=' + encodeURIComponent(targetPath) + '&projectId=' + encodeURIComponent('${AXHUB_MAKE_E2E_PROJECT_ID}');
               const saved = await putJson(commentEndpoint, { document });
               if (saved?.ok !== true || saved?.document?.comments?.[0]?.id !== document.comments[0].id) {
                 throw new Error('Prototype comment write did not echo expected document: ' + JSON.stringify(saved));
               }
               const readbackResponse = await fetch(commentEndpoint);
               const readback = await readbackResponse.json().catch(() => null);
-              if (!readbackResponse.ok || readback?.exists !== true || readback?.document?.tasks?.execute?.id !== document.tasks.execute.id) {
+              if (!readbackResponse.ok || readback?.exists !== true || readback?.document?.comments?.[0]?.id !== document.comments[0].id) {
                 throw new Error('Prototype comment readback failed: ' + JSON.stringify({ status: readbackResponse.status, readback }));
               }
 
@@ -1133,7 +1128,6 @@ tasks:
                   targetPath,
                   context: {
                     comments: readback.document.comments,
-                    tasks: readback.document.tasks,
                   },
                   taskId: 'midscene-comment-ai-smoke-task-' + runId,
                   runId: 'midscene-comment-ai-smoke-run-' + runId,
@@ -1558,7 +1552,7 @@ tasks:
                 ? resources.data.prototypes
                 : [];
             const beforeNames = new Set(readPrototypes(beforeResources).map((item) => item?.name).filter(Boolean));
-            const response = await fetch('/api/prototypes/create-placeholder', { method: 'POST' });
+            const response = await fetch('/api/prototypes/create-placeholder?projectId=' + encodeURIComponent('${AXHUB_MAKE_E2E_PROJECT_ID}'), { method: 'POST' });
             const body = await response.json().catch(() => null);
             if (response.status !== 201 || !body?.name || body.placeholder !== true) {
               throw new Error('Placeholder prototype creation failed from frontend: ' + JSON.stringify({ status: response.status, body }));

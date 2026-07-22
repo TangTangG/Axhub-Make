@@ -7,6 +7,7 @@ import {
   cleanupProjectApiTestRoots,
   createTempRoot,
   registerProject,
+  scopeProjectApiUrl,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -49,13 +50,13 @@ describe('obsolete AI image APIs', () => {
 
     try {
       const [historyGet, historyPut, generate] = await Promise.all([
-        fetch(`${server.origin}/api/ai-image/history?targetPath=prototypes/home`),
-        fetch(`${server.origin}/api/ai-image/history?targetPath=prototypes/home`, {
+        fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/ai-image/history?targetPath=prototypes/home`)),
+        fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/ai-image/history?targetPath=prototypes/home`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tasks: [], images: {} }),
         }),
-        fetch(`${server.origin}/api/ai-image/generate`, {
+        fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/ai-image/generate`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

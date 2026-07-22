@@ -49,6 +49,7 @@ vite.config.*.timestamp-*
 # Local tools and caches
 .local/
 **/.local/
+docs/superpowers/
 .logs/
 **/.logs/
 .trae/

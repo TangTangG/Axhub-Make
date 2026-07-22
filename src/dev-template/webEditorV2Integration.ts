@@ -770,14 +770,20 @@ function createPrototypeAnnotationClient() {
   };
 }
 
-export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommentsPersistenceAdapter {
+export function createPrototypeCommentsPersistenceAdapter(options: {
+  getProjectId?: () => unknown;
+} = {}): PrototypeEditCommentsPersistenceAdapter {
   let cachedPrototypeCommentsApiOrigin = '';
 
   const resolveRequestUrl = async (
     scope: PrototypeEditCommentsPersistenceScope,
     extraSearchParams: Record<string, string> = {},
   ): Promise<string> => {
-    const path = buildPrototypeCommentsUrl(scope, extraSearchParams);
+    const projectId = normalizeString(options.getProjectId?.());
+    const path = buildPrototypeCommentsUrl(scope, {
+      ...extraSearchParams,
+      ...(projectId ? { projectId } : {}),
+    });
     if (!path) return '';
     if (!cachedPrototypeCommentsApiOrigin) {
       cachedPrototypeCommentsApiOrigin = await resolvePrototypeCommentsApiOrigin();
@@ -810,20 +816,27 @@ export function createPrototypeCommentsPersistenceAdapter(): PrototypeEditCommen
         return null;
       }
     },
-    async write(scope, document) {
+    async write(scope, document, reason, context) {
       const url = await resolveRequestUrl(scope);
       if (!url) return;
       try {
         const response = await fetch(url, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ document }),
+          body: JSON.stringify({
+            document,
+            reason,
+            ...(context?.observedTombstones?.length
+              ? { observedTombstones: context.observedTombstones }
+              : {}),
+          }),
         });
         if (!response.ok) {
-          console.warn('[MakeWebEditor] Failed to write prototype comments:', response.status);
+          throw new Error(`Failed to write prototype comments: ${response.status}`);
         }
       } catch (error) {
         console.warn('[MakeWebEditor] Failed to write prototype comments:', error);
+        throw error;
       }
     },
   };
@@ -1676,7 +1689,9 @@ export const createWebEditorV2Controller = (
             ?? buildHostCopyPrompt,
           persistenceAdapter:
             options.host?.persistenceAdapter
-            ?? createPrototypeCommentsPersistenceAdapter(),
+            ?? createPrototypeCommentsPersistenceAdapter({
+              getProjectId: () => runtimeAnnotationProjectId,
+            }),
           canEditAnnotationMarkdown: (element) => Boolean(
             annotationClient.isEnabled()
             && canEditLocalAnnotationMarkdown(element),

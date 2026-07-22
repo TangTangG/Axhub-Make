@@ -21,6 +21,7 @@ import {
   createTempRoot,
   getTestProjectRegistryPath,
   registerProject,
+  scopeProjectApiUrl,
   startTestServer,
   writeJson,
   writeProjectMetadata,
@@ -1089,7 +1090,7 @@ describe('make-server make client project APIs', () => {
 
       const resourcesResponse = await fetch(`${server.origin}/api/projects/live-links-client/resources`);
       const resourcesBody = await resourcesResponse.json();
-      const entriesResponse = await fetch(`${server.origin}/api/entries.json`);
+      const entriesResponse = await fetch(scopeProjectApiUrl(projectRoot, `${server.origin}/api/entries.json`));
       const entriesBody = await entriesResponse.json();
 
       expect(resourcesResponse.status).toBe(200);

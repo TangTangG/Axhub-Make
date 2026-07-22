@@ -15,7 +15,7 @@ describe('useIndexPagePreferences source', () => {
     expect(source).toContain('enabled = true,');
     expect(initialEffectSource).toContain('if (!enabled) {');
     expect(initialEffectSource).toContain('setInitialPreferencesLoaded(false);');
-    expect(initialEffectSource).toContain('apiService.getBootstrapConfig({ projectId: activeProjectId })');
+    expect(initialEffectSource).toContain('apiService.getBootstrapConfig(requireProjectScope(activeProjectId))');
     expect(initialEffectSource).not.toContain('apiService.getConfigAvailability()');
     expect(initialEffectSource).not.toContain('apiService.getConfig()');
     expect(initialEffectSource).toContain('[activeProjectId, enabled,');
@@ -39,7 +39,7 @@ describe('useIndexPagePreferences source', () => {
     const handleSettingsSource = source.slice(handleSettingsStart, returnStart);
 
     expect(handleSettingsSource).toContain('if (!enabled) {');
-    expect(handleSettingsSource).toContain('apiService.getConfig({ projectId: activeProjectId })');
+    expect(handleSettingsSource).toContain('apiService.getConfig(requireProjectScope(activeProjectId))');
     expect(handleSettingsSource).not.toContain('apiService.getBootstrapConfig()');
     expect(handleSettingsSource).toContain('[activeProjectId, enabled, onExcalidrawPropertyPanelModeLoaded,');
   });

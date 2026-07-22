@@ -1830,7 +1830,7 @@ export function createAgentBridgeService(options: {
       errorCode: string | null;
     },
   ): ElementAgentTaskState | null {
-    return updateTaskStateByRequestId(requestId, {
+    const task = updateTaskStateByRequestId(requestId, {
       status: patch.status,
       provider:
         typeof patch.provider === 'string' && patch.provider.trim()
@@ -1856,6 +1856,10 @@ export function createAgentBridgeService(options: {
     }, {
       reviveDismissed: true,
     });
+    if (task) {
+      options.persistence.flushPendingWrite('state');
+    }
+    return task;
   }
 
   function normalizeExternalTaskRef(
@@ -1941,7 +1945,6 @@ export function createAgentBridgeService(options: {
     const deleted = state.externalEditingTaskByElementKey.delete(meta.elementKey);
     removeTaskStateByRequestId(persistedTask.requestId);
     if (deleted) {
-      options.changes.markElementEditsHandled(element);
       notifyTaskStateChange();
     }
     return deleted;
@@ -1964,28 +1967,18 @@ export function createAgentBridgeService(options: {
 
   function finalizeExternalEditingCompletedTask(
     task: ElementAgentTaskState,
-    element?: Element | null,
+    _element?: Element | null,
   ): void {
     if (task.origin !== 'external-editing') return;
-    if (element?.isConnected) {
-      options.changes.markElementEditsHandled(element);
-    } else {
-      try {
-        const locatedElement = locateElement(task.locator);
-        if (locatedElement?.isConnected) {
-          options.changes.markElementEditsHandled(locatedElement);
-        }
-      } catch {
-        // Fall back to key-based cleanup below.
-      }
-    }
-    options.changes.markElementEditsHandledByKey({
-      elementKey: task.elementKey,
-      locator: task.locator,
-      label: task.label,
-    });
-    options.persistence.clearCommentRecord?.(task.elementKey);
-    options.persistence.flushPendingWrite();
+    options.persistence.recordCommentTaskState?.(
+      task.elementKey,
+      'completed',
+      task.taskRef ?? {
+        provider: task.provider,
+        sessionId: task.sessionId,
+        requestId: task.requestId,
+      },
+    );
   }
 
   function setExternalEditingTerminalState(
@@ -2280,6 +2273,13 @@ export function createAgentBridgeService(options: {
       }
     }
 
+    if (
+      updatedTasks.some((task) => task.origin !== 'external-editing') &&
+      (mapped.taskStatus === 'completed' || mapped.taskStatus === 'error')
+    ) {
+      options.persistence.flushPendingWrite('state');
+    }
+
     logInfo('Applied Agent state sync payload', {
       sessionId: payload.sessionId,
       provider: payload.provider,
@@ -2320,21 +2320,14 @@ export function createAgentBridgeService(options: {
     });
   }
 
-  function markTaskElementsEditsHandled(
+  function persistTaskElementStates(
     requestId: string,
     source: 'accepted_reused_session' | 'session_created',
   ): void {
     const tasks = getTaskStatesByRequestId(requestId);
     if (tasks.length === 0) return;
-    for (const task of tasks) {
-      const taskElement = locateElement(task.locator);
-      if (!taskElement?.isConnected) {
-        continue;
-      }
-      options.changes.markElementEditsHandled(taskElement);
-    }
-    options.persistence.flushPendingWrite();
-    logInfo('Marked element edits as handled after Agent handoff', { source, requestId });
+    options.persistence.flushPendingWrite('state');
+    logInfo('Persisted element task states after Agent handoff', { source, requestId });
   }
 
   function rehydratePersistedAgentState(): void {
@@ -2489,6 +2482,25 @@ export function createAgentBridgeService(options: {
         }
       }, RECOVERY_PENDING_STALENESS_MS);
     }
+  }
+
+  function discardDeletedElementStates(elementKeys: readonly WebEditorElementKey[]): void {
+    const deletedKeys = new Set(elementKeys.map((key) => String(key ?? '').trim()).filter(Boolean));
+    if (deletedKeys.size === 0) return;
+
+    for (const key of deletedKeys) {
+      state.agentTaskByElementKey.delete(key);
+      state.externalEditingTaskByElementKey.delete(key);
+    }
+    for (const [requestId, task] of state.agentTaskByRequestId) {
+      if (deletedKeys.has(String(task.elementKey ?? '').trim())) {
+        state.agentTaskByRequestId.delete(requestId);
+      }
+    }
+    options.persistence.discardAgentTaskStates(
+      resolveConversationLookupKeys(),
+      [...deletedKeys] as WebEditorElementKey[],
+    );
   }
 
   function clearProbeTimeout(): void {
@@ -3039,7 +3051,7 @@ export function createAgentBridgeService(options: {
         reviveDismissed: true,
       });
       if (currentRun?.sessionId) {
-        markTaskElementsEditsHandled(parsed.requestId ?? '', 'accepted_reused_session');
+        persistTaskElementStates(parsed.requestId ?? '', 'accepted_reused_session');
       }
       if (!pending.acceptedNotified) {
         pending.acceptedNotified = true;
@@ -3094,7 +3106,7 @@ export function createAgentBridgeService(options: {
           invalidated: false,
         });
       }
-      markTaskElementsEditsHandled(parsed.requestId ?? '', 'session_created');
+      persistTaskElementStates(parsed.requestId ?? '', 'session_created');
       if (!pending.sessionCreatedNotified) {
         pending.sessionCreatedNotified = true;
       }
@@ -4264,6 +4276,7 @@ export function createAgentBridgeService(options: {
     handleSyncCommentContextToAgent,
     handleSendPromptToAgentForElements,
     handleSendPromptToAgentForElement,
+    discardDeletedElementStates,
     rehydratePersistedAgentState,
   };
 }

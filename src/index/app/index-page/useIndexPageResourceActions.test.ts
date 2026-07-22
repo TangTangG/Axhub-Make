@@ -47,6 +47,7 @@ describe('useIndexPageResourceActions source', () => {
 
     expect(source).toContain('if (!hasExplicitLocalPath(item))');
     expect(source).toContain('messageApi.warning(\'当前资源未声明本地文件路径，无法导出源码\');');
+    expect(source).toContain('const baseUrl = buildResourceUrl(`/api/zip?path=${encodeURIComponent(targetPath)}`);');
     expect(source).toContain('void handleDownloadZipByPath(getLocalBasePathForItem(item), `${item.name}.zip`);');
     expect(source).not.toContain('void handleDownloadZipByPath(`themes/${item.name}`, `${item.name}.zip`);');
   });
@@ -95,7 +96,19 @@ describe('useIndexPageResourceActions source', () => {
     expect(rootSource).toContain('checkTemplateReferencesRequest(templateName, action, nextBaseName, activeProjectId)');
     expect(combinedSource).toContain('export function withResourceProject(');
     expect(combinedSource).toContain('export function withResourceProjectBody');
-    expect(combinedSource).toContain('projectId: normalizedProjectId');
+    expect(combinedSource).toContain('withProjectScope(url, requireProjectScope(projectId))');
+    expect(combinedSource).toContain('withProjectScopeBody(body, requireProjectScope(projectId))');
+    expect(rootSource).toContain("sidebarApi.saveResourceOrder('themes', nextOrder, requireProjectScope(activeProjectId))");
+    expect(rootSource).toContain('sidebarApi.saveSidebarTree(tab, normalizedTree, requireProjectScope(activeProjectId))');
+    expect(rootSource).toContain('sidebarApi.updateProjectTitle(nextTitle, requireProjectScope(activeProjectId))');
+    expect(rootSource).toContain("fetch(buildResourceUrl('/api/config'))");
+    expect(rootSource).toContain("fetch(buildResourceUrl('/api/config'), {");
+    expect(rootSource).toContain("fetch(buildResourceUrl('/api/themes/sync-design'), {");
+    expect(rootSource).toContain('fetch(buildResourceUrl(`/api/themes/${encodeURIComponent(item.name)}`), {');
+    expect(rootSource).toContain('fetch(buildResourceUrl(`/api/data/tables/${encodeURIComponent(item.fileName)}`), {');
+    expect(rootSource).not.toContain("fetch('/api/config')");
+    expect(rootSource).not.toContain('fetch(`/api/themes/${encodeURIComponent(item.name)}`');
+    expect(rootSource).not.toContain('fetch(`/api/data/tables/${encodeURIComponent(item.fileName)}`');
     expect(prototypeRenameSource).toContain('fetch(buildResourceUrl(`/api/prototypes/${encodeURIComponent(item.name)}`),');
     expect(prototypeRenameSource).toContain('body: JSON.stringify(buildResourceBody({ displayName: trimmedName }))');
     expect(prototypeDuplicateSource).toContain("fetch(buildResourceUrl('/api/copy'),");
@@ -221,11 +234,11 @@ describe('useIndexPageResourceActions source', () => {
     expect(source).toContain('const [defaultThemeName, setDefaultThemeName] = useState<string | null>(null);');
     expect(handlerSource).toContain('const nextValue = defaultThemeName === themeName ? null : themeName;');
     expect(handlerSource).toContain('setDefaultThemeName(nextValue);');
-    expect(handlerSource).toContain("const currentConfigResponse = await fetch('/api/config');");
+    expect(handlerSource).toContain("const currentConfigResponse = await fetch(buildResourceUrl('/api/config'));");
     expect(handlerSource).toContain('projectDefaults: {');
     expect(handlerSource).toContain('defaultTheme: nextValue,');
-    expect(handlerSource).toContain("fetch('/api/config', {");
-    expect(handlerSource).toContain("fetch('/api/themes/sync-design', {");
+    expect(handlerSource).toContain("fetch(buildResourceUrl('/api/config'), {");
+    expect(handlerSource).toContain("fetch(buildResourceUrl('/api/themes/sync-design'), {");
     expect(handlerSource).toContain("body: JSON.stringify({ themeName: nextValue || '' })");
     expect(handlerSource).toContain("messageApi.success(nextValue ? '已设为默认设计' : '已取消默认设计');");
     expect(source).toContain('defaultThemeName,');
@@ -259,7 +272,9 @@ describe('useIndexPageResourceActions source', () => {
     expect(source).toContain("const createdName = buildUniqueResourceFileName(docsItems, targetFolder, 'untitled.drawio');");
     expect(source).toContain("body: JSON.stringify(buildResourceBody({ content: EMPTY_DRAWIO_RESOURCE_CONTENT }))");
     expect(source).toContain('await openDrawioResourceEditor({');
-    expect(source).toContain('resource: createdDoc,');
+    expect(source).toContain('resource: {');
+    expect(source).toContain('...createdDoc,');
+    expect(source).toContain('projectId: requireProjectScope(activeProjectId).projectId,');
     expect(source).toContain("kind: 'doc',");
     expect(source).toContain('onSaved: reloadDocsItems,');
     expect(source).toContain('setSelectedDoc(createdDoc);');
@@ -277,9 +292,9 @@ describe('useIndexPageResourceActions source', () => {
     const handlerEnd = source.indexOf('const handleVersionManagement', handlerStart);
     const handlerSource = source.slice(handlerStart, handlerEnd);
 
-    expect(handlerSource).toContain('await sidebarApi.saveSidebarTree(tab, normalizedTree)');
+    expect(handlerSource).toContain('await sidebarApi.saveSidebarTree(tab, normalizedTree, requireProjectScope(activeProjectId))');
     expect(handlerSource).toMatch(/const latestItems = tab === 'docs'\s+\? await reloadDocsItems\(\)\s+: getSidebarTabItems\(tab\);/);
-    expect(handlerSource.indexOf('await sidebarApi.saveSidebarTree(tab, normalizedTree)'))
+    expect(handlerSource.indexOf('await sidebarApi.saveSidebarTree(tab, normalizedTree, requireProjectScope(activeProjectId))'))
       .toBeLessThan(handlerSource.indexOf('await reloadDocsItems()'));
   });
 

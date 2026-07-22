@@ -35,6 +35,44 @@ export type QuickEditMessageType =
     | 'axhub.quickEdit.export.axureJsonResult';
 export type QuickEditSaveAction = 'save-text' | 'save-style' | 'clear-style';
 
+export function createPreviewRefreshRestoreSnapshot<T extends Record<string, unknown>>(params: {
+    prototypeEditorActive: boolean;
+    documentEditorActive: boolean;
+    prototypeEditorLaunchOptions: T;
+    selectionModeActive: boolean;
+    documentQuickEditMode: 'comment' | 'edit';
+    standalonePanelOpen: boolean;
+}) {
+    return {
+        prototypeEditor: params.prototypeEditorActive
+            ? {
+                ...params.prototypeEditorLaunchOptions,
+                selectionModeActive: params.selectionModeActive,
+            }
+            : null,
+        documentQuickEditMode: params.documentEditorActive
+            ? params.documentQuickEditMode
+            : null,
+        standalonePanelOpen: params.standalonePanelOpen,
+    };
+}
+
+export function resolveDocumentRefreshRestoreStatus(
+    pendingMode: 'comment' | 'edit' | null,
+    status: { enabled: boolean },
+): { acceptStatus: boolean; restoreMode: 'comment' | 'edit' | null } {
+    if (pendingMode && !status.enabled) {
+        return {
+            acceptStatus: false,
+            restoreMode: pendingMode,
+        };
+    }
+    return {
+        acceptStatus: true,
+        restoreMode: null,
+    };
+}
+
 export function createPrototypeSpecMarkdownStatusGate() {
     let phase: 'idle' | 'waiting' | 'starting' | 'active' = 'idle';
     return {
@@ -154,6 +192,7 @@ export const DEFAULT_EXPORT_IMAGE_CONFIG: ImageConfig = {
     width: 500,
     height: 300,
     includeConfig: 'code',
+    includeImageAssets: true,
     contentType: 'title',
     isFullScreen: true,
     rawScreenshotUrl: '',
@@ -186,6 +225,7 @@ export type HostToolbarEditorsApi = {
 };
 
 export type DocumentEditorApi = HostToolbarEditorsApi & {
+    setContext?: (context: { projectId: string; documentPath: string }) => void;
     enableDocumentEditor?: (options?: {
         toolbarMode?: 'inline' | 'host';
         quickEditMode?: 'comment' | 'edit';
@@ -196,8 +236,9 @@ export type DocumentEditorApi = HostToolbarEditorsApi & {
 };
 
 export type PrototypeEditorContext = {
-    projectId?: string;
-    resourceId?: string;
+  projectId?: string;
+  resourceId?: string;
+  documentPath?: string;
     resourceType: 'prototype' | 'theme';
     pane: PreviewPane;
     pageId?: string;

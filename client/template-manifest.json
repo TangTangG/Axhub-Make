@@ -32,6 +32,11 @@
         "action": "exclude",
         "pattern": "^scripts/subset-beginner-guide-fonts\\.mjs$",
         "description": "发布包只保留已裁剪字体，不携带字体裁剪开发工具。"
+      },
+      {
+        "action": "exclude",
+        "pattern": "^\\.(?:agents|claude)/skills/prototype-comments(?:/|$)",
+        "description": "旧版 prototype-comments 已由 handle-comments 替代，不进入发布模板。"
       }
     ]
   },
@@ -105,6 +110,7 @@
       "src/resources/.gitkeep",
       "src/resources/README.md",
       "src/resources/templates/prd-template.md",
+      "src/resources/templates/prd-comprehensive-template.md",
       "src/resources/templates/prototype-review-report-template.md",
       "src/resources/templates/ui-review-report-template.md",
       "src/resources/templates/规格文档 HTML 模板.html",

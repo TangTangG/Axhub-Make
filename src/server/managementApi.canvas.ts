@@ -25,7 +25,8 @@ const CANVAS_IMAGE_MIME_EXTENSIONS: Record<string, string> = {
 };
 
 interface CanvasApiContext {
-  metadata?: unknown;
+    metadata?: unknown;
+    projectId?: string;
 }
 
 interface CanvasAssetStorageOptions {
@@ -398,6 +399,7 @@ function encodeCanvasApiPath(canvasPath: string): string {
 
 function createResourceScreenshotResponse(
   projectRoot: string,
+  projectId: string,
   resourcePath: string,
   canvasPath: string,
   screenshotPath: string,
@@ -413,7 +415,8 @@ function createResourceScreenshotResponse(
   const relativeScreenshotPath = path.relative(projectRoot, screenshotPath).split(path.sep).join('/');
   const latestPath = params.latestPath ? path.relative(projectRoot, params.latestPath).split(path.sep).join('/') : undefined;
   const assetRelativePath = path.relative(path.dirname(canvasPath), screenshotPath).split(path.sep).join('/');
-  const apiScreenshotUrl = `/api/canvas/resources/${encodeCanvasApiPath(resourcePath)}/${encodeCanvasApiPath(assetRelativePath)}?v=${updatedAt}`;
+  const query = new URLSearchParams({ v: String(updatedAt), projectId });
+  const apiScreenshotUrl = `/api/canvas/resources/${encodeCanvasApiPath(resourcePath)}/${encodeCanvasApiPath(assetRelativePath)}?${query.toString()}`;
   return {
     success: true,
     changed: params.changed,
@@ -452,6 +455,7 @@ function handleResourceCanvasScreenshotApi(
   res: ServerResponse,
   projectRoot: string,
   pathname: string,
+  projectId: string,
 ): boolean {
   const match = pathname.match(/^\/api\/canvas\/resources\/(.+?\.excalidraw)\/(screenshot|[^?]+\.png)$/iu);
   if (!match) {
@@ -522,7 +526,7 @@ function handleResourceCanvasScreenshotApi(
       : writeScreenshotIfChanged(latestScreenshotPath, png);
     sendJson(
       res,
-      createResourceScreenshotResponse(projectRoot, resolved.relativePath, resolved.absolutePath, screenshotPath, {
+      createResourceScreenshotResponse(projectRoot, projectId, resolved.relativePath, resolved.absolutePath, screenshotPath, {
         changed: changed || latestChanged,
         latestPath: screenshotPath === latestScreenshotPath ? undefined : latestScreenshotPath,
         width: normalizeScreenshotDimension(body?.width),
@@ -619,7 +623,7 @@ export function handleCanvasApi(
   if (!pathname.startsWith('/api/canvas')) {
     return false;
   }
-  if (handleResourceCanvasScreenshotApi(req, res, projectRoot, pathname)) {
+  if (handleResourceCanvasScreenshotApi(req, res, projectRoot, pathname, String(context.projectId || ''))) {
     return true;
   }
   if (handleResourceCanvasApi(req, res, projectRoot, pathname)) {

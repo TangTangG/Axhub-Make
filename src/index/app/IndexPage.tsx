@@ -40,6 +40,7 @@ import {
 } from './index-page.helpers';
 import { getSelectedResourceTargetPath } from './index-page/previewActions.helpers';
 import { apiService } from '../services/index.api';
+import { requireProjectScope, withProjectScope } from '../services/projectScope';
 import type { MakeClientUpdateStatus } from '../services/api';
 import type { AcpProvider } from '@/common/assistant-context/types';
 import { DEFAULT_LOCAL_EXPORT_CAPABILITIES, DEFAULT_RESOURCE_WRITE_CAPABILITIES, normalizeProjectResourcesPayload } from '../services/projectResources';
@@ -367,10 +368,10 @@ export default function IndexPage({
             uiPreferences: {
                 excalidrawPropertyPanelMode: mode,
             },
-        }).catch((error) => {
+        }, requireProjectScope(workspace.activeProjectId)).catch((error) => {
             console.warn('Failed to save Excalidraw property panel preference:', error);
         });
-    }, [setExcalidrawPropertyPanelMode]);
+    }, [setExcalidrawPropertyPanelMode, workspace.activeProjectId]);
 
     const handleExcalidrawPropertyPanelPositionChange = useCallback((position: ExcalidrawPropertyPanelPosition) => {
         setExcalidrawPropertyPanelPosition(position);
@@ -378,10 +379,10 @@ export default function IndexPage({
             uiPreferences: {
                 excalidrawPropertyPanelPosition: position,
             },
-        }).catch((error) => {
+        }, requireProjectScope(workspace.activeProjectId)).catch((error) => {
             console.warn('Failed to save Excalidraw property panel position preference:', error);
         });
-    }, [setExcalidrawPropertyPanelPosition]);
+    }, [setExcalidrawPropertyPanelPosition, workspace.activeProjectId]);
 
     const availableDocOptions = useMemo(
         () => workspace.docsItems.map((doc) => ({ name: doc.name, displayName: doc.displayName || doc.name })),
@@ -410,6 +411,8 @@ export default function IndexPage({
         setViewMode('demo');
         setSelectedItem(null);
         setSelectedPrototypePageId(null);
+        setResourceStartDraftActive(false);
+        setThemeStartDraftActive(false);
         setPrototypeStartDraftActive(true);
     }, []);
 
@@ -516,13 +519,11 @@ export default function IndexPage({
         const hide = messageApi.loading('正在上传资源...', 0);
         try {
             const formData = new FormData();
-            if (workspace.activeProjectId) {
-                formData.append('projectId', workspace.activeProjectId);
-            }
+            formData.append('projectId', requireProjectScope(workspace.activeProjectId).projectId);
             for (const file of Array.from(files)) {
                 formData.append('file', file, file.name);
             }
-            const response = await fetch('/api/docs/upload', {
+            const response = await fetch(withProjectScope('/api/docs/upload', requireProjectScope(workspace.activeProjectId)), {
                 method: 'POST',
                 body: formData,
             });
@@ -744,7 +745,7 @@ export default function IndexPage({
             prompt,
             projectPath: assistantController.assistantProjectPath,
             projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
-            projectId: workspace.activeProjectId,
+            projectId: requireProjectScope(workspace.activeProjectId).projectId,
             preferredPromptClient: annotationPromptClient || `acp:${annotationProvider}`,
             provider: annotationProvider,
             model: annotationModel,
@@ -790,7 +791,7 @@ export default function IndexPage({
             prompt,
             projectPath: assistantController.assistantProjectPath,
             projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
-            projectId: workspace.activeProjectId,
+            projectId: requireProjectScope(workspace.activeProjectId).projectId,
             preferredPromptClient: annotationPromptClient || `acp:${annotationProvider}`,
             scene: 'prototype-review-direct',
             provider: annotationProvider,
@@ -860,7 +861,7 @@ export default function IndexPage({
         handleInitialResourceDeepLinkHandled();
 
         const buildNextContext = (overrides: Partial<PreviewHostContext>): PreviewHostContext => ({
-            projectId: workspace.activeProjectId,
+            projectId: requireProjectScope(workspace.activeProjectId).projectId,
             activeTab,
             viewMode,
             contentMode,
@@ -1087,6 +1088,7 @@ export default function IndexPage({
     }, [preview.handleEnableDocEdit, prototypeSpec.currentItem?.name]);
 
     const selection = useIndexPageSelectionSync({
+        projectId: workspace.activeProjectId,
         loading: workspace.loading,
         data: workspace.data,
         docsItems: workspace.docsItems,
@@ -1593,8 +1595,8 @@ export default function IndexPage({
                 nextPrototypes = normalizeProjectResourcesPayload(payload, projectId).data.prototypes;
             }
         }
-        if (!projectId || nextPrototypes === workspace.data.prototypes) {
-            const response = await fetch('/api/entries.json').catch(() => null);
+        if (projectId && nextPrototypes === workspace.data.prototypes) {
+            const response = await fetch(withProjectScope('/api/entries.json', { projectId })).catch(() => null);
             if (response?.ok) {
                 const body = await response.json().catch(() => null);
                 nextPrototypes = Array.isArray(body?.prototypes) ? body.prototypes : workspace.data.prototypes;
@@ -1612,7 +1614,7 @@ export default function IndexPage({
 
     const handleCreatePrototypeForDraftStart = useCallback(async (): Promise<ItemData | null> => {
         try {
-            const result = await apiService.createPlaceholderPrototype({ projectId: workspace.activeProjectId });
+            const result = await apiService.createPlaceholderPrototype(requireProjectScope(workspace.activeProjectId));
             const createdFromResult = buildCreatedPrototypeStartItem(result);
             if (!createdFromResult) {
                 throw new Error('创建原型失败');
@@ -1757,7 +1759,7 @@ export default function IndexPage({
             prompt,
             projectPath: assistantController.assistantProjectPath,
             projectScope: workspace.activeProjectId || assistantController.assistantProjectPath || workspace.projectTitle,
-            projectId: workspace.activeProjectId,
+            projectId: requireProjectScope(workspace.activeProjectId).projectId,
             preferredPromptClient: selectedProvider ? `acp:${selectedProvider}` : annotationPromptClient,
             scene: `canvas-${request.scene}-direct`,
             provider: selectedProvider,
@@ -2196,9 +2198,10 @@ export default function IndexPage({
         width: assistantController.assistantPanelWidth,
         minWidth: assistantController.assistantPanelMinWidth,
         maxWidth: assistantController.assistantPanelMaxWidth,
-        iframeSrc: assistantController.assistantIframeSrc,
-        iframeRef: assistantController.assistantIframeRef,
-        onLoad: assistantController.handleAssistantIframeLoad,
+        iframeEntries: assistantController.assistantIframeEntries,
+        activeIframeKey: assistantController.assistantActiveIframeKey,
+        onIframeRef: assistantController.handleAssistantIframeRef,
+        onIframeLoad: assistantController.handleAssistantIframeLoad,
         onResize: assistantController.setAssistantPanelWidth,
         onAddContextItems: assistantController.addContextItems,
         onToggle: handleToggleAssistantPanel,
@@ -2228,7 +2231,7 @@ export default function IndexPage({
         createDialog: {
             visible: createDialogVisible,
             activeTab: selection.activeTab,
-            activeProjectId: workspace.activeProjectId,
+            activeProjectId: workspace.activeProjectId || '',
             initialTab: initialCreateDialogTab,
             initialUploadType: initialCreateDialogUploadType,
             targetPrototypeName: createDialogTargetPrototypeName,
@@ -2242,6 +2245,7 @@ export default function IndexPage({
         },
         createThemeDialog: {
             visible: resources.themeCreateDialogVisible,
+            activeProjectId: workspace.activeProjectId || '',
             initialTab: resources.initialThemeDialogTab,
             resourceWriteCapabilities,
             ideAvailability: preferences.ideAvailability,
@@ -2253,6 +2257,7 @@ export default function IndexPage({
         },
         exportDialog: {
             open: preview.isExportModalOpen,
+            projectId: workspace.activeProjectId || '',
             preferencesStorageKey: preview.exportPreferencesStorageKey,
             imageConfig: preview.imageConfig,
             axureCopyOptions: preview.axureCopyOptions,
@@ -2279,6 +2284,7 @@ export default function IndexPage({
         },
         figmaMakeExportDialog: {
             open: preview.isFigmaMakeExportDialogOpen,
+            projectId: workspace.activeProjectId || '',
             itemName: selection.selectedItem?.name,
             itemDisplayName: selection.selectedItem?.displayName,
             targetPath: selection.selectedItem ? getSelectedResourceTargetPath(selection.selectedItem) : '',
@@ -2289,6 +2295,7 @@ export default function IndexPage({
         },
         cloudPublishSettingsDialog: {
             open: preview.cloudPublishSettingsOpen,
+            projectId: workspace.activeProjectId || '',
             initialTarget: preview.cloudPublishSettingsInitialTarget,
             onOpenChange: preview.setCloudPublishSettingsOpen,
             onSaved: preview.handleCloudPublishSettingsSaved,
@@ -2296,10 +2303,11 @@ export default function IndexPage({
         axhubPublishDialog: {
             open: preview.axhubPublishDialogOpen,
             targetPath: preview.currentPublishResourcePath,
-            projectId: workspace.activeProjectId,
+            projectId: workspace.activeProjectId || '',
             onOpenChange: preview.setAxhubPublishDialogOpen,
             onPublished: preview.handleAxhubPublished,
         },
+        settingsDialogProjectId: workspace.activeProjectId || '',
         settingsDialogOpen,
         settingsDialogInitialTab,
         settingsDialogAIContext,

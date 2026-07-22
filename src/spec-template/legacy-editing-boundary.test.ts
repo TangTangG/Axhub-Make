@@ -80,6 +80,19 @@ describe('spec-template quick editing regression boundary', () => {
     expect(helperSource).toContain('formatLocatorPath');
   });
 
+  it('exposes synchronous Markdown comment prompt text to the preview host', () => {
+    const viewerSource = readSpecTemplateSource('MarkdownViewer.tsx');
+    const bootstrapSource = readSpecTemplateSource('index.tsx');
+
+    expect(viewerSource).toContain('getCopyPromptText: () => string;');
+    expect(viewerSource).toMatch(
+      /getCopyPromptText\(\) \{[\s\S]*?return buildCommentPromptPayload\(\)\.prompt;/,
+    );
+    expect(bootstrapSource).toMatch(
+      /getCopyPromptText\(\) \{[\s\S]*?return markdownViewerRef\.current\?\.getCopyPromptText\(\) \?\? '';/,
+    );
+  });
+
   it('unwraps JSON document content responses before rendering Markdown', () => {
     const bootstrapSource = readSpecTemplateSource('index.tsx');
 

@@ -1,7 +1,7 @@
 export const MAKE_CLIENT_TEMPLATE_ZIP_NAME = 'axhub-make-client-template.zip';
 export const MAKE_CLIENT_TEMPLATE_LATEST_MANIFEST_NAME = 'axhub-make-client-template.latest.json';
-export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.13';
-export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "# Axhub Make Client 0.1.13\n\n- 局域网访问更安全\n- 工作规则和协作流程已更新\n- 标注评审流程更清晰\n- 客户端依赖安装体积更小，标注动画不再依赖 Motion\n- 发布模板改用 pnpm 独立锁文件，并移除测试与字体裁剪工具";
+export const DEFAULT_MAKE_CLIENT_TEMPLATE_VERSION = '0.1.15';
+export const DEFAULT_MAKE_CLIENT_TEMPLATE_RELEASE_NOTES = "# Axhub Make Client 0.1.15\n\n- 用 `handle-comments` 统一处理原型、Markdown、HTML 和规格文档批注\n- 统一共享批注与图片资源的项目内存储约定\n- 修复预览管理运行时的加载顺序、重复注入和 HTML 转换边界\n- 保持发布模板仅包含官方原型、主题、规则与资源模板";
 export const PRIMARY_MAKE_CLIENT_TEMPLATE_RELEASE_REPOSITORY = 'lintendo/Axhub-Make';
 export const GITEE_MAKE_CLIENT_TEMPLATE_RELEASE_BASE_URL = 'https://gitee.com/axhub/Axhub-Make/releases/download';
 export const GITEE_MAKE_CLIENT_TEMPLATE_LATEST_RELEASE_TAG = 'make-client-template-latest';

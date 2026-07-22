@@ -159,7 +159,27 @@ export function useIndexPageSidebarPropsBuilder({
         },
         actions: {
             handleTabChange: deps.handleTabChange,
-            onSidebarTabChange: deps.setSidebarTab,
+            onSidebarTabChange: (tab) => {
+                if (tab === 'prototype') {
+                    if (deps.handleCreatePrototypeStartDraft) {
+                        deps.handleCreatePrototypeStartDraft();
+                        return;
+                    }
+                }
+                if (tab === 'document') {
+                    if (deps.handleCreateResourceStartDraft) {
+                        deps.handleCreateResourceStartDraft();
+                        return;
+                    }
+                }
+                if (tab === 'assets') {
+                    if (deps.handleCreateThemeStartDraft) {
+                        deps.handleCreateThemeStartDraft();
+                        return;
+                    }
+                }
+                deps.setSidebarTab(tab);
+            },
             onPrototypeViewSelect: async (item, mode) => {
                 await Promise.resolve(deps.handleMenuClick({ key: item.name }));
                 deps.setSelectedPrototypePageId?.(null);

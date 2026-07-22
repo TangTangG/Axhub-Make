@@ -738,8 +738,10 @@ describe('ContentPanel document paste upload source', () => {
     expect(pasteEffectSource).toContain('if (pastedFiles.length === 0) {');
     expect(pasteEffectSource).toContain('event.preventDefault();');
     expect(pasteEffectSource).toContain('void uploadResourceFiles(pastedFiles, { targetFolder: documentPasteTargetFolder });');
-    expect(uploadSource).toContain("formData.append('projectId', activeProjectId);");
+    expect(uploadSource).toContain("formData.append('projectId', requireProjectScope(activeProjectId).projectId);");
     expect(uploadSource).toContain("formData.append('targetFolder', targetFolder);");
+    expect(source).toContain('sidebarApi.openResourceInSystem(');
+    expect(source).toContain('requireProjectScope(activeProjectId),');
   });
 
   it('passes uploaded document resources back to the parent so the new file can be selected', () => {

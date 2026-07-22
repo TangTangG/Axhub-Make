@@ -102,6 +102,7 @@ export interface ImageConfig {
     width: number;
     height: number;
     includeConfig: 'none' | 'code';
+    includeImageAssets: boolean;
     contentType: 'title' | 'screenshot';
     isFullScreen?: boolean;
     rawScreenshotUrl: string;

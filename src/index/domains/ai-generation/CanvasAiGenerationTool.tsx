@@ -92,6 +92,7 @@ export interface CanvasAiGenerationResult {
 }
 
 interface CanvasAiGenerationToolProps {
+  projectId: string;
   excalidrawAPI: any;
   canvasDirectRunOverlayController?: CanvasDirectRunOverlayController;
   canvasFilePath?: string;
@@ -202,7 +203,7 @@ function getCanvasStartSettingsSummary(
   if (scene === 'document') {
     const documentSettings = settings as CanvasDocumentPromptSettings;
     appendDefinedSetting(result, '格式', documentSettings.format);
-    appendDefinedSetting(result, '需求分析', documentSettings.needsRequirementsAnalysis);
+    appendDefinedSetting(result, 'PRD 规划', documentSettings.usePrdPlanning);
     return result;
   }
   const prototypeSettings = settings as CanvasPrototypePromptSettings;
@@ -247,10 +248,10 @@ function buildCanvasDirectRunOverlayTaskDetails({
 
 function CanvasStartSettingsPopover({
   documentFormat,
-  documentNeedsRequirementsAnalysis,
+  documentUsePrdPlanning,
   imageSettings,
   onDocumentFormatChange,
-  onDocumentNeedsRequirementsAnalysisChange,
+  onDocumentUsePrdPlanningChange,
   onImageSettingsChange,
   onPrototypeCountChange,
   onPrototypeNeedsRequirementsAnalysisChange,
@@ -263,10 +264,10 @@ function CanvasStartSettingsPopover({
   themes,
 }: {
   documentFormat: CanvasDocumentFormat | '';
-  documentNeedsRequirementsAnalysis: boolean;
+  documentUsePrdPlanning: boolean;
   imageSettings: CanvasImagePromptSettings;
   onDocumentFormatChange: (format: CanvasDocumentFormat | '') => void;
-  onDocumentNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
+  onDocumentUsePrdPlanningChange: (usePrdPlanning: boolean) => void;
   onImageSettingsChange: (settings: CanvasImagePromptSettings) => void;
   onPrototypeCountChange: (count?: number) => void;
   onPrototypeNeedsRequirementsAnalysisChange: (needsRequirementsAnalysis: boolean) => void;
@@ -306,7 +307,7 @@ function CanvasStartSettingsPopover({
     : scene === 'document'
       ? [
         CANVAS_START_DOCUMENT_FORMAT_OPTIONS.find((option) => option.value === documentFormat)?.label || null,
-        documentNeedsRequirementsAnalysis ? '需求分析' : null,
+        documentUsePrdPlanning ? 'PRD 规划' : null,
       ].filter(Boolean).join(' · ') || '未指定'
       : [
         hasPrototypeCount ? `${prototypeCount} 个` : null,
@@ -466,12 +467,12 @@ function CanvasStartSettingsPopover({
               </label>
 
               <label className="space-y-1.5 text-xs font-medium text-foreground">
-                <span className="text-xs font-medium text-muted-foreground">需求分析</span>
+                <span className="text-xs font-medium text-muted-foreground">PRD 规划</span>
                 <div className="flex h-8 items-center gap-2">
                   <Switch
-                    checked={documentNeedsRequirementsAnalysis}
-                    onCheckedChange={(checked) => onDocumentNeedsRequirementsAnalysisChange(checked === true)}
-                    aria-label="画布 AI 文档需要需求分析"
+                    checked={documentUsePrdPlanning}
+                    onCheckedChange={(checked) => onDocumentUsePrdPlanningChange(checked === true)}
+                    aria-label="画布 AI 文档使用 PRD 规划流程"
                   />
                   <span>开启</span>
                 </div>
@@ -528,6 +529,7 @@ function CanvasStartSettingsPopover({
 }
 
 export default function CanvasAiGenerationTool({
+  projectId,
   excalidrawAPI,
   canvasDirectRunOverlayController,
   canvasFilePath,
@@ -546,7 +548,7 @@ export default function CanvasAiGenerationTool({
   const [canvasStartPrototypeNeedsRequirementsAnalysis, setCanvasStartPrototypeNeedsRequirementsAnalysis] = useState(false);
   const [canvasStartImageParams, setCanvasStartImageParams] = useState<CanvasImagePromptSettings>(DEFAULT_CANVAS_START_IMAGE_SETTINGS);
   const [canvasStartDocumentFormat, setCanvasStartDocumentFormat] = useState<CanvasDocumentFormat | ''>('');
-  const [canvasStartDocumentNeedsRequirementsAnalysis, setCanvasStartDocumentNeedsRequirementsAnalysis] = useState(false);
+  const [canvasStartDocumentUsePrdPlanning, setCanvasStartDocumentUsePrdPlanning] = useState(false);
   const [canvasStartSelectedThemeName, setCanvasStartSelectedThemeName] = useState(() => resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
   const [canvasStartLocalContextRefs, setCanvasStartLocalContextRefs] = useState<CanvasLocalContextRef[]>([]);
   const [hasCopiedCanvasReference, setHasCopiedCanvasReference] = useState(false);
@@ -696,8 +698,8 @@ export default function CanvasAiGenerationTool({
   }), [canvasStartImageParams, canvasStartSelectedTheme?.name, canvasStartSelectedThemeName]);
   const canvasStartDocumentSettings = useMemo<CanvasDocumentPromptSettings>(() => ({
     ...(canvasStartDocumentFormat ? { format: canvasStartDocumentFormat } : {}),
-    ...(canvasStartDocumentNeedsRequirementsAnalysis ? { needsRequirementsAnalysis: true } : {}),
-  }), [canvasStartDocumentFormat, canvasStartDocumentNeedsRequirementsAnalysis]);
+    ...(canvasStartDocumentUsePrdPlanning ? { usePrdPlanning: true } : {}),
+  }), [canvasStartDocumentFormat, canvasStartDocumentUsePrdPlanning]);
   const canvasStartDraftStorageKey = useMemo(() => (
     createCanvasGenerationComposerDraftStorageKey([
       assistantProjectPath,
@@ -713,6 +715,7 @@ export default function CanvasAiGenerationTool({
       throw { action: 'open-ai-settings' };
     }
     return optimizeCanvasPrompt({
+      projectId,
       prompt: request.prompt,
       scene: canvasStartScene,
       sceneSettings: canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings,
@@ -733,6 +736,25 @@ export default function CanvasAiGenerationTool({
     canvasStartPrototypeSettings,
     canvasStartScene,
     preferredPromptClient,
+    projectId,
+  ]);
+
+  const copyCanvasStartPrompt = useCallback(({ prompt }: { prompt: string }) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return '';
+    const startSystemPrompt = getCanvasAiPrototypeStartSystemPrompt(canvasStartScene);
+    const promptWithStartSystemPrompt = appendCanvasAiPrototypeStartSystemPrompt(trimmedPrompt, startSystemPrompt);
+    return appendCanvasGenerationPromptSettings({
+      scene: canvasStartScene,
+      prompt: promptWithStartSystemPrompt,
+      settings: canvasStartScene === 'design' ? canvasStartImageSettings : canvasStartScene === 'document' ? canvasStartDocumentSettings : canvasStartPrototypeSettings,
+      finalGuide: 'local-ai-acknowledgement',
+    });
+  }, [
+    canvasStartDocumentSettings,
+    canvasStartImageSettings,
+    canvasStartPrototypeSettings,
+    canvasStartScene,
   ]);
 
   const resetCanvasStartSubmitState = useCallback(() => {
@@ -743,7 +765,7 @@ export default function CanvasAiGenerationTool({
     setCanvasStartPrototypeNeedsRequirementsAnalysis(false);
     setCanvasStartImageParams({ ...DEFAULT_CANVAS_START_IMAGE_SETTINGS });
     setCanvasStartDocumentFormat('');
-    setCanvasStartDocumentNeedsRequirementsAnalysis(false);
+    setCanvasStartDocumentUsePrdPlanning(false);
     canvasStartUserSelectedThemeRef.current = false;
     setCanvasStartSelectedThemeName(resolvePrototypeGenerationInitialThemeName(themes, defaultThemeName));
   }, [defaultThemeName, themes]);
@@ -966,6 +988,7 @@ export default function CanvasAiGenerationTool({
             </button>
           </div>
           <CanvasGenerationDisplayComposer
+            projectId={projectId}
             key={`${canvasStartDraftStorageKey}:${canvasStartDraftRestoreVersion}`}
             placeholder={canvasStartPlaceholder || getCanvasAiPrototypeStartPlaceholders(canvasStartScene)[0] || canvasStartSceneDefinition.placeholders[0] || '描述你想创建的内容'}
             ariaLabel="画布 AI 输入"
@@ -976,6 +999,7 @@ export default function CanvasAiGenerationTool({
             draftStorageKey={canvasStartDraftStorageKey}
             onOpenAISettings={onOpenAISettings}
             onOptimizePrompt={optimizeCanvasStartPrompt}
+            onCopyPrompt={copyCanvasStartPrompt}
             onSubmit={handleCanvasStartSubmit}
             canPasteReferenceImages={hasCopiedCanvasReference}
             initialLocalContextRefs={canvasStartLocalContextRefs}
@@ -987,7 +1011,7 @@ export default function CanvasAiGenerationTool({
                 prototypeNeedsRequirementsAnalysis={canvasStartPrototypeNeedsRequirementsAnalysis}
                 imageSettings={canvasStartImageParams}
                 documentFormat={canvasStartDocumentFormat}
-                documentNeedsRequirementsAnalysis={canvasStartDocumentNeedsRequirementsAnalysis}
+                documentUsePrdPlanning={canvasStartDocumentUsePrdPlanning}
                 selectedThemeName={canvasStartSelectedThemeName}
                 themeLabel={canvasStartThemeLabel}
                 themes={themes}
@@ -995,7 +1019,7 @@ export default function CanvasAiGenerationTool({
                 onPrototypeNeedsRequirementsAnalysisChange={setCanvasStartPrototypeNeedsRequirementsAnalysis}
                 onImageSettingsChange={setCanvasStartImageParams}
                 onDocumentFormatChange={setCanvasStartDocumentFormat}
-                onDocumentNeedsRequirementsAnalysisChange={setCanvasStartDocumentNeedsRequirementsAnalysis}
+                onDocumentUsePrdPlanningChange={setCanvasStartDocumentUsePrdPlanning}
                 onThemeChange={(themeName) => {
                   canvasStartUserSelectedThemeRef.current = true;
                   setCanvasStartSelectedThemeName(themeName);

@@ -176,7 +176,8 @@ describe('default client skills', () => {
       expect(skillSource).toContain('rules/requirements-alignment-guide.md');
       expect(skillSource).toContain('原型主规格');
       expect(skillSource).not.toContain('同时存在时以 HTML 为准');
-      expect(skillSource).toContain('PRD 仍写入 `src/resources/prd/`');
+      expect(skillSource).toContain('按任务给出的目标路径写入');
+      expect(skillSource).toContain('未指定时遵循项目默认存储规则');
       expect(skillSource).toContain('同步更新主规格中的引用或相关决策');
       expect(skillSource).not.toContain('ready-for-agent');
       expect(skillSource).not.toContain('/setup-matt-pocock-skills');
@@ -184,27 +185,28 @@ describe('default client skills', () => {
     }
   });
 
-  it('keeps requirements exploration in the current prototype main spec', () => {
+  it('bundles the PRD planning workflow with traceable sources and explicit confirmation', () => {
     const skillRoots = [
-      '.agents/skills/requirements-exploration',
-      '.claude/skills/requirements-exploration',
+      '.agents/skills/plan-prds',
+      '.claude/skills/plan-prds',
     ];
 
     for (const root of skillRoots) {
       const skillSource = readClientFile(`${root}/SKILL.md`);
 
-      expect(skillSource).toContain('rules/requirements-alignment-guide.md');
-      expect(skillSource).toContain('原型主规格');
-      expect(skillSource).not.toContain('同时存在时以 HTML 为准');
-      expect(skillSource).not.toContain('确认前不得修改原型');
-      expect(skillSource).not.toContain('snapshot files');
+      expect(skillSource).toContain('src/resources/prd/');
+      expect(skillSource).toContain('SOURCES.md');
+      expect(skillSource).toContain('PLAN.md');
+      expect(skillSource).toContain('确认前不执行 `write-prd`');
+      expect(skillSource).toContain('现状反推');
+      expect(skillSource).toContain('新增或创作需求');
     }
   });
 
   it('keeps UI design image skill size guidance within GPT Image 2 API constraints', () => {
     const skillRoots = [
-      '.agents/skills/ui-design-image',
-      '.claude/skills/ui-design-image',
+      '.agents/skills/ui-image-generation',
+      '.claude/skills/ui-image-generation',
     ];
 
     for (const root of skillRoots) {

@@ -79,13 +79,36 @@ describe('client workflow guidance', () => {
   it('keeps preview-link guidance brief with a default Make origin and custom-host fallback', () => {
     const alignmentGuide = readRule('requirements-alignment-guide.md');
     const developmentGuide = readRule('prototype-development-guide.md');
-    const themeGuide = readRule('theme-guide.md');
 
     expect(alignmentGuide).toContain('预览链接默认以 `http://localhost:53817/` 拼接；Make 服务使用其他 host 或端口时改用实际服务地址。');
     expect(alignmentGuide).not.toContain('## 预览链接口径');
     expect(alignmentGuide).not.toContain('.dev-server-info.json');
     expect(developmentGuide).not.toContain('“预览链接口径”');
-    expect(themeGuide).not.toContain('“预览链接口径”');
+  });
+
+  it('routes theme work through build-design-system instead of legacy rule files', () => {
+    for (const guidancePath of ['AGENTS.md', 'CLAUDE.md', 'AGENTS.template.md', 'rules/prototype-development-guide.md']) {
+      const guidance = readClientFile(guidancePath);
+      expect(guidance).toContain('$build-design-system');
+      expect(guidance).not.toContain('rules/theme-guide.md');
+      expect(guidance).not.toContain('rules/theme-source-capture-guide.md');
+    }
+
+    expect(fs.existsSync(path.join(clientRoot, 'rules/theme-guide.md'))).toBe(false);
+    expect(fs.existsSync(path.join(clientRoot, 'rules/theme-source-capture-guide.md'))).toBe(false);
+  });
+
+  it('lists discoverable theme and PRD skill routes in every core workflow table', () => {
+    for (const guidancePath of ['AGENTS.md', 'CLAUDE.md', 'AGENTS.template.md']) {
+      const guidance = readClientFile(guidancePath);
+      expect(guidance).toContain('| 主题、设计系统、设计规范 |');
+      expect(guidance).toContain('$build-design-system 技能');
+      expect(guidance).toContain('| PRD 文档 | `src/resources/` |');
+      expect(guidance).toContain('$plan-prds 技能');
+      expect(guidance).toContain('$write-prd 技能');
+      expect(guidance).not.toContain('主题设计系统设计规范');
+      expect(guidance).not.toContain('src/resources/prd/');
+    }
   });
 
   it('ships aligned Markdown and HTML main-spec templates with stable multipage navigation', () => {
@@ -145,8 +168,6 @@ describe('client workflow guidance', () => {
 
   it('keeps spec confirmation policy in the shared alignment guide instead of skill copies', () => {
     const skillPaths = [
-      '.agents/skills/requirements-exploration/SKILL.md',
-      '.claude/skills/requirements-exploration/SKILL.md',
       '.agents/skills/write-prd/SKILL.md',
       '.claude/skills/write-prd/SKILL.md',
     ];

@@ -93,7 +93,7 @@ interface AssistantIdeHandlers {
     req: IncomingMessage,
     res: ServerResponse,
     options: ManagementApiOptions,
-    mode: 'active-fallback',
+    mode: 'explicit-required',
     body?: unknown,
   ) => AssistantIdeProjectContext | null;
   getServerConfigStoreForRequest: (options: ManagementApiOptions) => {
@@ -360,7 +360,7 @@ export function handleAssistantPromptIde(
   }
 
   if (pathname === '/api/assistant/runtime' && req.method === 'GET') {
-    const context = handlers.resolveProjectContext(req, res, options, 'active-fallback');
+    const context = handlers.resolveProjectContext(req, res, options, 'explicit-required');
     if (!context) return true;
     const url = getRequestUrl(req);
     const serverConfigStore = handlers.getServerConfigStoreForRequest(options);
@@ -418,7 +418,7 @@ export function handleAssistantPromptIde(
 
   if (pathname === '/api/ide/open' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
+      const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', body);
       if (!context) return;
 
       const rawTargetPath = String(body?.path || body?.targetPath || '').trim();
@@ -496,7 +496,7 @@ export function handleAssistantPromptIde(
 
   if (pathname === '/api/agent/cli/open' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
+      const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', body);
       if (!context) return;
 
       const rawTargetPath = String(body?.path || body?.targetPath || '').trim();
@@ -573,7 +573,7 @@ export function handleAssistantPromptIde(
 
   if (pathname === '/api/agent/local-app/open' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
+      const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', body);
       if (!context) return;
 
       const rawTargetPath = String(body?.path || body?.targetPath || '').trim();
@@ -651,7 +651,7 @@ export function handleAssistantPromptIde(
 
   if (pathname === '/api/agent/web/open' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
+      const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', body);
       if (!context) return;
 
       const rawTargetPath = String(body?.path || body?.targetPath || '').trim();
@@ -729,7 +729,7 @@ export function handleAssistantPromptIde(
 
   if (pathname === '/api/assistant/bootstrap' && req.method === 'POST') {
     readJsonBody(req).then(async (body) => {
-      const context = handlers.resolveProjectContext(req, res, options, 'active-fallback', body);
+      const context = handlers.resolveProjectContext(req, res, options, 'explicit-required', body);
       if (!context) return;
       const mode = normalizeAssistantBootstrapMode(body?.mode);
       if (!mode) {

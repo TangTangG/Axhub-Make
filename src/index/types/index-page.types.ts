@@ -108,7 +108,7 @@ export interface ExportAvailability {
 export interface CreateDialogState {
     visible: boolean;
     activeTab: TabType;
-    activeProjectId?: string | null;
+    activeProjectId: string;
     initialTab?: CreateDialogTab;
     initialUploadType?: PrototypeUploadType;
     targetPrototypeName?: string;
@@ -128,6 +128,7 @@ export interface CreateDialogActions {
 
 export interface ExportState {
     open: boolean;
+    projectId: string;
     preferencesStorageKey: string;
     imageConfig: ImageConfig;
     axureCopyOptions: AxureCopyOptions;

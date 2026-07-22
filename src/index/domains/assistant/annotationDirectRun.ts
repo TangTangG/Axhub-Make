@@ -23,7 +23,7 @@ export interface SubmitAnnotationPromptViaApiOptions {
   prompt: string;
   projectPath?: string | null;
   projectScope?: string | null;
-  projectId?: string | null;
+  projectId: string;
   preferredPromptClient?: string | null;
   scene?: string | null;
   provider?: string | null;
@@ -124,7 +124,7 @@ export async function submitAnnotationPromptViaApi(
     model: options.model,
     mode: options.mode,
     thought: options.thought,
-    projectId: options.projectId || undefined,
+    projectId: options.projectId,
     context: options.context,
     contextBundle: mapAssistantContextToAcpContextBundle(options.context),
     targetPath: toPrototypeRelativePath(options.targetPath || target.currentFilePath) || target.currentFilePath,

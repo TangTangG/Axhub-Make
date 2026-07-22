@@ -73,7 +73,9 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain("void ensureAssistantReadyThenOpen('button', undefined, undefined, 'iframe', null, {");
     expect(source).toContain("panelMode: 'image-ai',");
     expect(source).toContain('suppressResourceThreadBinding: true,');
-    expect(source).toContain('apiService.getAssistantRuntime({ autoStart: true, projectId })');
+    expect(source).toContain('const requestedProjectId = projectId || \'\';');
+    expect(source).toContain('const runtime = await apiService.getAssistantRuntime({');
+    expect(source).toContain('projectId: requestedProjectId,');
     expect(source).toContain('refreshRuntime({ autoStart: false })');
     expect(source).not.toContain('buildAssistantIframeUrlForRuntime(assistantRuntime, provider)');
     expect(source).not.toContain("searchParams.set('targetPath'");
@@ -123,26 +125,96 @@ describe('useAssistantPanelController source', () => {
 
     expect(source).toContain('projectId?: string | null;');
     expect(source).toContain('function resolveAssistantRuntimeProjectKey(projectId?: string | null): string');
-    expect(source).toContain("return projectId?.trim() || '__active__';");
+    expect(source).toContain("return projectId?.trim() || '__none__';");
     expect(source).toContain('const projectKey = resolveAssistantRuntimeProjectKey(projectId);');
     expect(source).toContain('stores: Record<string, AssistantRuntimeProjectStore>;');
-    expect(source).toContain('requestAssistantRuntime(projectId, {');
+    expect(source).toContain('requestAssistantRuntime(normalizedProjectId, {');
     expect(source).toContain('apiService.getAssistantRuntime({');
-    expect(source).toContain('projectId: projectId?.trim() || undefined,');
+    expect(source).toContain('projectId,');
+    expect(source).toContain('if (!normalizedProjectId) {');
   });
 
-  it('reopens a visible mounted ACP UI iframe after the active project changes', () => {
+  it('deactivates the current pooled iframe before reopening the assistant for a changed project', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
+    expect(source).toContain('buildAssistantIframePoolKey,');
+    expect(source).toContain('readAssistantIframeRunEvent,');
+    expect(source).toContain('useAssistantIframePool,');
+    expect(source).toContain('const assistantIframePool = useAssistantIframePool();');
     expect(source).toContain('const previousAssistantProjectIdRef = useRef(projectId || \'\');');
     expect(source).toContain('const reopenMountedAssistantForProjectChange = assistantPanelMounted');
     expect(source).toContain('&& assistantVisible');
     expect(source).toContain('previousAssistantProjectIdRef.current = nextProjectId;');
-    expect(source).toContain("setAssistantIframeOverrideUrl(null);");
+    expect(source).toContain('assistantIframePool.deactivate();');
+    expect(source).not.toContain('setAssistantIframeOverrideUrl(null);');
     expect(source).toContain("void ensureAssistantReadyThenOpen('event', undefined, getAssistantContextCurrentFilePath(assistantContextV1), 'iframe', null, {");
     expect(source).toContain("panelMode: 'general-ai',");
     expect(source).toContain('loadingText: false,');
     expect(source).toContain('openSettingsOnFailure: false,');
+  });
+
+  it('activates stable general-assistant keys and routes ACP run events to their source iframe entries', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(source).toContain('const assistantIframeKey = buildAssistantIframePoolKey({');
+    expect(source).toContain('assistantIframePool.activate({');
+    expect(source).toContain('key: assistantIframeKey,');
+    expect(source).toContain("panelMode: 'general-ai',");
+    expect(source).toContain('const iframeKey = assistantIframePool.findKeyByWindow(event.source);');
+    expect(source).toContain('const runEvent = readAssistantIframeRunEvent(event.data);');
+    expect(source).toContain('assistantIframePool.markRunState(iframeKey, runEvent.runState, runEvent.threadId);');
+    expect(source).toContain('assistantIframeEntries,');
+    expect(source).toContain('assistantActiveIframeKey,');
+    expect(source).toContain('handleAssistantIframeRef,');
+  });
+
+  it('keeps navigation state per pooled iframe and restores it when the key is reused', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+
+    expect(source).toContain('const iframeKey = assistantIframePool.findKeyByWindow(event.source);');
+    expect(source).toContain('const iframeEntry = assistantIframePool.entries.find((entry) => entry.key === iframeKey);');
+    expect(source).toContain('assistantIframePool.markNavigation(');
+    expect(source).toContain('if (iframeKey !== assistantIframePool.activeKey) {');
+    expect(source).toContain('const targetNavigationUrl = targetPoolEntry?.navigationUrl || nextUrl;');
+    expect(source).toContain('latestAssistantNavigationThreadIdRef.current = targetPoolEntry');
+    expect(source).toContain('? targetPoolEntry.navigationThreadId');
+  });
+
+  it('waits for the current project runtime before activating a resource iframe', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const resourceEffect = source.slice(
+      source.indexOf('const targetProjectId = projectId || \'\';'),
+      source.indexOf('const openAssistantWithUrl = useCallback(('),
+    );
+
+    expect(resourceEffect).toContain('if (previousAssistantProjectIdRef.current !== targetProjectId) {');
+    expect(source).toContain("&& assistantRuntime.health.status === 'ready'");
+    expect(source).toContain('&& (!projectId || assistantRuntime.projectId === projectId),');
+    expect(resourceEffect).toContain('if (!assistantRuntimeReadyForCurrentProject) {');
+    expect(resourceEffect.indexOf('if (!assistantRuntimeReadyForCurrentProject) {'))
+      .toBeLessThan(resourceEffect.indexOf('assistantIframePool.activate(assistantIframeDescriptor);'));
+  });
+
+  it('refuses to activate a stale assistant runtime response for another project', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const ensureSource = source.slice(
+      source.indexOf('const ensureAssistantReadyThenOpen = useCallback(async ('),
+      source.indexOf('useEffect(() => {\n        const nextProjectId', source.indexOf('const ensureAssistantReadyThenOpen = useCallback(async (')),
+    );
+
+    expect(source).toContain('const currentAssistantProjectIdRef = useRef(projectId || \'\');');
+    expect(source).toContain('currentAssistantProjectIdRef.current = projectId || \'\';');
+    expect(source).toContain('const assistantOpenRequestIdRef = useRef(0);');
+    expect(ensureSource).toContain("if (assistantChecking && trigger === 'button') {");
+    expect(ensureSource).toContain('const requestId = assistantOpenRequestIdRef.current + 1;');
+    expect(ensureSource).toContain('const requestedProjectId = projectId || \'\';');
+    expect(ensureSource).toContain('if (requestId !== assistantOpenRequestIdRef.current');
+    expect(ensureSource).toContain('|| currentAssistantProjectIdRef.current !== requestedProjectId');
+    expect(ensureSource).toContain('|| (requestedProjectId && runtime.projectId !== requestedProjectId)');
+    expect(ensureSource).toContain("console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} ignored stale runtime response`");
+    expect(ensureSource.indexOf('if (requestId !== assistantOpenRequestIdRef.current'))
+      .toBeLessThan(ensureSource.indexOf('setAssistantRuntime(runtime);'));
+    expect(ensureSource).toContain('if (requestId === assistantOpenRequestIdRef.current) {\n                setAssistantChecking(false);');
   });
 
   it('keeps automatic assistant reopen failures from opening AI settings repeatedly', () => {
@@ -369,6 +441,30 @@ describe('useAssistantPanelController source', () => {
     expect(toggleSource).not.toContain("setAssistantPanelMode('general-ai');");
   });
 
+  it('switches a hidden pooled assistant to the current conversation store before showing it', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const toggleSource = source.slice(
+      source.indexOf('const handleToggleAssistant = useCallback(() => {'),
+      source.indexOf('const handleOpenAcpWebAgent = useCallback', source.indexOf('const handleToggleAssistant = useCallback(() => {')),
+    );
+    const restoreSource = source.slice(
+      source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {'),
+      source.indexOf('useEffect(() => {\n        const handleOpenAssistantUrl', source.indexOf('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {')),
+    );
+
+    expect(toggleSource).toContain('if (!assistantRuntimeReadyForCurrentProject) {');
+    expect(toggleSource).toContain("void ensureAssistantReadyThenOpen('button', undefined, getAssistantContextCurrentFilePath(assistantContextV1), 'iframe', null, {");
+    expect(toggleSource).toContain('const currentTargetPath = getAssistantContextCurrentFilePath(assistantContextV1);');
+    expect(toggleSource).toContain('const currentTargetDescriptor = buildGeneralAssistantIframeDescriptor(');
+    expect(toggleSource).toContain('if (assistantIframePool.activeKey !== currentTargetDescriptor.key) {');
+    expect(toggleSource).toContain("openAssistantWithUrl(undefined, currentTargetPath, assistantRuntime, { panelMode: 'general-ai' });");
+    expect(restoreSource).toContain('const nextGeneralIframeDescriptor = restoreMode === \'general-ai\'');
+    expect(restoreSource).toContain('assistantIframePool.activeKey !== nextGeneralIframeDescriptor.key');
+    expect(restoreSource).toContain("const canReuseMountedAssistant = restoreMode !== 'general-ai'");
+    expect(restoreSource).toContain('|| assistantRuntimeReadyForCurrentProject;');
+    expect(restoreSource).toContain('if (assistantPanelMounted && canReuseMountedAssistant) {');
+  });
+
   it('tracks mutually exclusive general and image AI panel modes in the shared iframe', () => {
     const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
@@ -399,8 +495,8 @@ describe('useAssistantPanelController source', () => {
       source.indexOf('const postAssistantContextToWindowWithRetry = useCallback'),
     );
     const iframeLoadSource = source.slice(
-      source.indexOf('const handleAssistantIframeLoad = useCallback(() => {'),
-      source.indexOf('const visibleAiPanelMode = assistantPanelMode', source.indexOf('const handleAssistantIframeLoad = useCallback(() => {')),
+      source.indexOf('const handleAssistantIframeLoad = useCallback((key: string) => {'),
+      source.indexOf('const visibleAiPanelMode = assistantPanelMode', source.indexOf('const handleAssistantIframeLoad = useCallback((key: string) => {')),
     );
 
     expect(contextAckSource).toContain('!assistantSupportsAcpContext');
@@ -425,8 +521,8 @@ describe('useAssistantPanelController source', () => {
       controllerSource.indexOf('const syncAssistantPreviewMcpConfigToIframe = useCallback'),
     );
     const iframeLoadSource = controllerSource.slice(
-      controllerSource.indexOf('const handleAssistantIframeLoad = useCallback(() => {'),
-      controllerSource.indexOf('const visibleAiPanelMode = assistantPanelMode', controllerSource.indexOf('const handleAssistantIframeLoad = useCallback(() => {')),
+      controllerSource.indexOf('const handleAssistantIframeLoad = useCallback((key: string) => {'),
+      controllerSource.indexOf('const visibleAiPanelMode = assistantPanelMode', controllerSource.indexOf('const handleAssistantIframeLoad = useCallback((key: string) => {')),
     );
 
     expect(indexPageSource).toContain('isDarkMode,');
@@ -462,12 +558,14 @@ describe('useAssistantPanelController source', () => {
     );
 
     expect(restoreSource).toContain("const restoreMode = panelMode === 'image-ai' || panelMode === 'general-ai'");
-    expect(restoreSource).toContain('if (assistantPanelMounted) {');
+    expect(restoreSource).toContain('if (assistantPanelMounted && canReuseMountedAssistant) {');
     expect(restoreSource).toContain("const nextTargetUrl = restoreMode === 'image-ai'");
     expect(restoreSource).toContain('? buildImagePlaygroundUrlForRuntime(assistantRuntime)');
     expect(restoreSource).toContain(': buildAssistantIframeUrlForRuntime(assistantRuntime);');
     expect(restoreSource).toContain('const shouldReloadForRestoreMode = restoreMode !== assistantPanelMode');
-    expect(restoreSource).toContain("|| (restoreMode === 'image-ai' && assistantIframeOverrideUrl !== nextTargetUrl);");
+    expect(restoreSource).toContain("|| (restoreMode === 'image-ai' && assistantIframeOverrideUrl !== nextTargetUrl)");
+    expect(restoreSource).toContain('|| (nextGeneralIframeDescriptor !== null');
+    expect(restoreSource).toContain('&& assistantIframePool.activeKey !== nextGeneralIframeDescriptor.key);');
     expect(restoreSource).toContain('if (shouldReloadForRestoreMode) {');
     expect(restoreSource).toContain('openAssistantWithUrl(nextTargetUrl, targetPath, assistantRuntime, {');
     expect(restoreSource).toContain('panelMode: restoreMode,');
@@ -637,6 +735,10 @@ describe('useAssistantPanelController source', () => {
     expect(bridgeSource).toContain("errorTypes: ['acp.runtime.error']");
     expect(bridgeSource).toContain("errorTypes: ['acp.context.error']");
     expect(bridgeSource).toContain('requestHostReadyWithRetry');
+    expect(bridgeSource).toContain('subscribeEventsWithRetry');
+    expect(bridgeSource).toContain("type: 'acp.subscribe',");
+    expect(bridgeSource).toContain("successTypes: ['acp.query.result'],");
+    expect(bridgeSource).toContain("ui: { closeButton: false },");
     expect(bridgeSource).toContain('syncContextWithAck');
     expect(bridgeSource).toContain('syncImageGenerationConfigWithAck');
     expect(bridgeSource).toContain('syncPreviewMcpConfigWithAck');
@@ -648,13 +750,18 @@ describe('useAssistantPanelController source', () => {
     expect(controllerSource).toContain("'thread.idle'");
     expect(controllerSource).toContain('const recoverAssistantIframeBridge = useCallback(async () => {');
     expect(controllerSource).toContain('assistantIframeBridgeRecoveringRef.current = true;');
-    expect(controllerSource).toContain('await requestHostReadyWithRetry({ events: ACP_HOST_READY_EVENTS });');
+    expect(controllerSource).toContain('await requestHostReadyWithRetry();');
+    expect(controllerSource).toContain('await subscribeAssistantEventsWithRetry(ACP_HOST_READY_EVENTS);');
     expect(controllerSource).toContain('await syncAssistantImageGenerationConfigToIframeWithAck({ requireLoaded: false, requireVisible: false, force: true });');
     expect(controllerSource).toContain('await syncAssistantPreviewMcpConfigToIframeWithAck({ requireLoaded: false, requireVisible: false, force: true });');
     expect(controllerSource).toContain("await syncAssistantContextToIframeWithAck(assistantContextV1, 'replace', {");
     expect(controllerSource).toContain("console.warn(`${ASSISTANT_RUNTIME_UI_LOG_PREFIX} iframe refresh recovery fell back to retry sync`, error);");
-    expect(controllerSource).toContain('} finally {\n            assistantIframeBridgeRecoveringRef.current = false;');
+    expect(controllerSource).toContain('} finally {\n            if (recoveryIsCurrent()) {');
+    expect(controllerSource).toContain('assistantIframeBridgeRecoveringRef.current = false;');
     expect(controllerSource).toContain('void recoverAssistantIframeBridge();');
+    expect(controllerSource).toContain('const previousAssistantActiveIframeKeyRef = useRef<string | null>(null);');
+    expect(controllerSource).toContain('const activeIframeChanged = previousAssistantActiveIframeKeyRef.current !== assistantActiveIframeKey;');
+    expect(controllerSource).toContain('if (!activeIframeChanged || !assistantIframePool.activeEntry?.loaded) {');
     expect(controllerSource.indexOf('setAssistantIframeLoaded(true);'))
       .toBeLessThan(controllerSource.indexOf('void recoverAssistantIframeBridge();'));
   });
@@ -699,7 +806,8 @@ describe('useAssistantPanelController source', () => {
     const controllerSource = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
 
     expect(bridgeSource).toContain('isRunning?: boolean;');
-    expect(bridgeSource).toContain('isRunning: Boolean(data.payload?.isRunning),');
+    expect(bridgeSource).toContain("...(typeof data.payload?.isRunning === 'boolean'");
+    expect(controllerSource).toContain("typeof submitResult.isRunning === 'boolean'");
     expect(controllerSource).toContain('if (submitResult.isRunning === true && submitResult.canSend === false) {');
     expect(controllerSource).toContain("messageApi.info('已填入输入框，等待当前回复结束后发送');");
     expect(controllerSource).toContain('return {');
@@ -772,7 +880,7 @@ describe('useAssistantPanelController source', () => {
     );
 
     expect(source).toContain('const restoreAssistantPanel = useCallback((targetPath?: string, panelMode: AssistantAiPanelMode = assistantPanelMode) => {');
-    expect(restoreSource).toContain('if (assistantPanelMounted) {');
+    expect(restoreSource).toContain('if (assistantPanelMounted && canReuseMountedAssistant) {');
     expect(restoreSource).toContain('if (shouldReloadForRestoreMode) {');
     expect(restoreSource).toContain('if (assistantVisible) {');
     expect(restoreSource).toContain('return true;');
@@ -819,11 +927,13 @@ describe('useAssistantPanelController source', () => {
     expect(source).toContain('onActiveThreadChanged: handleAssistantActiveThreadChange,');
     expect(source).toContain('function readAcpNavigationChangedMessage(');
     expect(source).toContain('function resolveAcpNavigationThreadId(');
-    expect(source).toContain("if (event.source !== assistantIframeRef.current?.contentWindow) {");
-    expect(source).toContain('const assistantOrigin = resolveAssistantMessageOrigin();');
-    expect(source).toContain('if (assistantOrigin && event.origin !== assistantOrigin) {');
+    expect(source).toContain('const iframeKey = assistantIframePool.findKeyByWindow(event.source);');
+    expect(source).toContain('if (event.origin !== expectedOrigin) {');
     expect(source).toContain('const navigation = readAcpNavigationChangedMessage(event.data);');
-    expect(source).toContain('const navigationUrl = resolveAssistantNavigationUrl(navigation.href);');
+    expect(source).toContain('const navigationUrl = resolveAssistantNavigationUrl(');
+    expect(source).toContain('iframeEntry.navigationUrl || iframeEntry.src,');
+    expect(source).toContain('assistantIframePool.markNavigation(');
+    expect(source).toContain('if (iframeKey !== assistantIframePool.activeKey) {');
     expect(source).toContain('assistantIframeCurrentUrlRef.current = navigationUrl;');
     expect(source).toContain('const navigationThreadId = navigation.threadId ?? resolveAcpNavigationThreadId(navigationUrl);');
     expect(source).toContain('latestAssistantNavigationThreadIdRef.current = navigationThreadId;');
@@ -831,6 +941,17 @@ describe('useAssistantPanelController source', () => {
     expect(source).not.toContain('setAssistantIframeOverrideUrl(navigationUrl);');
     expect(source).not.toContain('setAssistantVisible(Boolean(getAssistantResourceThreadId');
     expect(source).not.toContain('setAssistantPanelMounted(Boolean(getAssistantResourceThreadId');
+  });
+
+  it('routes hidden pooled navigation even when a non-general panel is active', () => {
+    const source = readFileSync(resolve(__dirname, './useAssistantPanelController.tsx'), 'utf8');
+    const navigationHandler = source.slice(
+      source.indexOf('const handleAssistantNavigationChanged = (event: MessageEvent) => {'),
+      source.indexOf("window.addEventListener('message', handleAssistantNavigationChanged);"),
+    );
+
+    expect(navigationHandler).not.toContain('assistantSupportsAcpContext');
+    expect(navigationHandler).toContain('assistantIframePool.findKeyByWindow(event.source)');
   });
 
   it('keeps resource-thread binding pointed at the current assistant resource', () => {

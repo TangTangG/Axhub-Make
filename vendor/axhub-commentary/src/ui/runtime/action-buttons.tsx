@@ -196,7 +196,14 @@ export function AgentToolbarIconButton(props: AgentToolbarIconButtonProps): Reac
 }
 
 export function AgentToolbarShell(props: AgentToolbarShellProps): React.ReactElement {
-  const { awake, children, dragHandleRef, fullWidth = false, style } = props;
+  const {
+    awake,
+    connected = awake,
+    children,
+    dragHandleRef,
+    fullWidth = false,
+    style,
+  } = props;
   const shellBorderColor = EDITOR_CHROME.toolbarShellBorder;
   const shellSurfaceShadow = EDITOR_CHROME.toolbarShellInset;
   const shellShadow = awake ? EDITOR_CHROME.toolbarGlow : EDITOR_CHROME.shadowCompact;
@@ -230,7 +237,7 @@ export function AgentToolbarShell(props: AgentToolbarShellProps): React.ReactEle
         }}
       />
       <AnimatePresence>
-        {awake ? (
+        {connected ? (
           <motion.div
             key="toolbar-ring"
             initial={{ opacity: 0 }}

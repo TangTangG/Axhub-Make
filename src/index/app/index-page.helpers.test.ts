@@ -103,7 +103,7 @@ describe('index page helpers', () => {
         const metadataOnlyTemplate = normalizeTemplateItem({
             name: 'prd-template.md',
             displayName: 'PRD Template',
-        });
+        }, 'client-project');
         expect(metadataOnlyTemplate.filePath).toBeUndefined();
         expect(metadataOnlyTemplate.absoluteFilePath).toBeUndefined();
 
@@ -112,7 +112,7 @@ describe('index page helpers', () => {
             displayName: 'PRD Template',
             path: 'content/templates/prd-template.md',
             absoluteFilePath: '/workspace/content/templates/prd-template.md',
-        });
+        }, 'client-project');
         expect(sourceBackedTemplate.filePath).toBe('content/templates/prd-template.md');
         expect(sourceBackedTemplate.absoluteFilePath).toBe('/workspace/content/templates/prd-template.md');
     });
@@ -123,29 +123,29 @@ describe('index page helpers', () => {
             displayName: 'Guide',
             path: 'content/docs/guide.md',
             absoluteFilePath: '/workspace/content/docs/guide.md',
-        });
+        }, 'client-project');
         const template = normalizeTemplateItem({
             name: 'prd-template.md',
             displayName: 'PRD Template',
             path: 'content/templates/prd-template.md',
             absoluteFilePath: '/workspace/content/templates/prd-template.md',
-        });
+        }, 'client-project');
 
-        expect(doc.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fguide.md');
-        expect(doc.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Fdocs%252Fguide.md');
-        expect(template.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Ftemplates%2Fprd-template.md');
-        expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Ftemplates%252Fprd-template.md');
+        expect(doc.specUrl).toBe('/api/docs/content%2Fdocs%2Fguide.md?projectId=client-project');
+        expect(doc.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fdocs%2Fcontent%252Fdocs%252Fguide.md%3FprojectId%3Dclient-project');
+        expect(template.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Ftemplates%2Fprd-template.md&projectId=client-project');
+        expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fmarkdown-file%3Fpath%3D%252Fworkspace%252Fcontent%252Ftemplates%252Fprd-template.md%26projectId%3Dclient-project');
     });
 
     it('builds rendered markdown previews for metadata-only templates', () => {
         const template = normalizeTemplateItem({
             name: 'write-prd.md',
             displayName: 'Write PRD',
-        });
+        }, 'client-project');
 
         expect(template.name).toBe('write-prd.md');
-        expect(template.specUrl).toBe('/api/docs/templates/write-prd.md');
-        expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fdocs%2Ftemplates%2Fwrite-prd.md');
+        expect(template.specUrl).toBe('/api/docs/templates/write-prd.md?projectId=client-project');
+        expect(template.previewUrl).toBe('/spec-template.html?url=%2Fapi%2Fdocs%2Ftemplates%2Fwrite-prd.md%3FprojectId%3Dclient-project');
         expect(template.filePath).toBeUndefined();
         expect(template.absoluteFilePath).toBeUndefined();
     });
@@ -161,7 +161,7 @@ describe('index page helpers', () => {
         const template = normalizeTemplateItem({
             name: 'templates/prd-template.md',
             displayName: 'templates/prd-template',
-        });
+        }, 'client-project');
 
         expect(template.displayName).toBe('prd-template');
     });
@@ -170,14 +170,14 @@ describe('index page helpers', () => {
         const image = normalizeDocItem({
             name: 'assets/logo.png',
             displayName: 'assets/logo',
-            path: 'content/docs/assets/logo.png',
+            path: 'assets/logo.png',
             absoluteFilePath: '/workspace/content/docs/assets/logo.png',
-        });
+        }, 'client-project');
 
         expect(image.name).toBe('assets/logo.png');
         expect(image.displayName).toBe('logo');
-        expect(image.specUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
-        expect(image.previewUrl).toBe('/api/markdown-file?path=%2Fworkspace%2Fcontent%2Fdocs%2Fassets%2Flogo.png');
+        expect(image.specUrl).toBe('/api/docs/assets%2Flogo.png?projectId=client-project');
+        expect(image.previewUrl).toBe('/api/docs/assets%2Flogo.png?projectId=client-project');
     });
 
     it('uses project-scoped docs file URLs for pasted image resources from the docs list', () => {

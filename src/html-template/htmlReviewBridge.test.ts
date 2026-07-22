@@ -157,6 +157,7 @@ describe('HTML review bridge', () => {
   it('normalizes Make resource ids and absolute preview paths to project-relative HTML paths', () => {
     expect(normalizeHtmlReviewDocumentPath('examples/demo.html')).toBe('src/resources/examples/demo.html');
     expect(normalizeHtmlReviewDocumentPath('src/resources/examples/demo.html')).toBe('src/resources/examples/demo.html');
+    expect(normalizeHtmlReviewDocumentPath('src/prototypes/order/.spec/spec.html')).toBe('src/prototypes/order/.spec/spec.html');
     expect(normalizeHtmlReviewDocumentPath('/workspace/client/src/resources/examples/demo.html')).toBe('src/resources/examples/demo.html');
     expect(normalizeHtmlReviewDocumentPath('/api/markdown-file')).toBe('');
     expect(normalizeHtmlReviewDocumentPath('../demo.html')).toBe('');

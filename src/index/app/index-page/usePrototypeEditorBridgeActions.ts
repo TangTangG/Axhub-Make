@@ -26,6 +26,7 @@ import {
 } from './previewActions.helpers';
 
 type UsePrototypeEditorBridgeActionsParams = {
+    projectId?: string;
     getPrimaryPreviewIframe: () => HTMLIFrameElement | null;
     getSecondaryPreviewIframe: () => HTMLIFrameElement | null;
     getPreviewIframes: () => HTMLIFrameElement[];
@@ -165,6 +166,7 @@ async function ensureHtmlDocumentPreviewEditorApi(iframe: HTMLIFrameElement): Pr
 }
 
 export function usePrototypeEditorBridgeActions({
+    projectId,
     getPrimaryPreviewIframe,
     getSecondaryPreviewIframe,
     getPreviewIframes,
@@ -221,8 +223,10 @@ export function usePrototypeEditorBridgeActions({
     const buildPrototypeEditorContext = useCallback((iframe: HTMLIFrameElement): PrototypeEditorContext => {
         const pane: PreviewPane = iframe === getSecondaryPreviewIframe() ? 'secondary' : 'primary';
         return {
-            projectId: selectedEditablePreviewResource?.projectId,
+            projectId: selectedEditablePreviewResource?.projectId || projectId,
             resourceId: selectedEditablePreviewResource?.resourceId || selectedEditablePreviewResource?.name,
+            documentPath: selectedEditablePreviewResource?.projectDocumentPath
+                || selectedEditablePreviewResource?.filePath,
             resourceType,
             pane,
             pageId: normalizePrototypeEditorPageId(selectedPageId) || readPrototypeEditorPageIdFromIframe(iframe),
@@ -235,6 +239,7 @@ export function usePrototypeEditorBridgeActions({
         resourceType,
         selectedEditablePreviewResource,
         selectedPageId,
+        projectId,
     ]);
 
     const buildPrototypeEditorEnableOptions = useCallback((context: PrototypeEditorContext): PrototypeEditorEnableOptions => {

@@ -174,7 +174,7 @@ describe('prototype spec API', () => {
     const server = await startActivatedProjectServer(projectRoot);
 
     try {
-      const response = await fetch(specUrl(server.origin, projectRoot), {
+      const response = await fetch(`${specUrl(server.origin, projectRoot)}?projectId=${encodeURIComponent(path.basename(projectRoot))}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ format: 'html' }),

@@ -6,6 +6,10 @@ function readSource() {
   return readFileSync(resolve(__dirname, './SettingsDialog.tsx'), 'utf8');
 }
 
+function readIndexDialogsSource() {
+  return readFileSync(resolve(__dirname, './app/IndexDialogs.tsx'), 'utf8');
+}
+
 function readVersionCollaborationPanelSource() {
   return readFileSync(resolve(__dirname, './VersionCollaborationPanel.tsx'), 'utf8');
 }
@@ -24,9 +28,26 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('initialAcpFailureSource?: string;');
     expect(source).toContain('initialAcpFailureMessage?: string;');
     expect(source).toContain('export interface SettingsDialogAIContext');
-    expect(source).toContain("export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps)");
+    expect(source).toContain("export default function SettingsDialog({ open, projectId, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps)");
     expect(source).toContain("const [activeTab, setActiveTab] = useState<SettingsDialogInitialTab>(initialTab);");
     expect(source).toContain('setActiveTab(initialTab);');
+  });
+
+  it('receives the workspace project id and scopes project-owned settings requests', () => {
+    const source = readSource();
+    const dialogsSource = readIndexDialogsSource();
+
+    expect(source).toContain('projectId: string;');
+    expect(source).toContain('withProjectScope(url, requireProjectScope(projectId))');
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config'))");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/themes'))");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config'), {");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config/ai-image/test'), {");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/themes/sync-design'), {");
+    expect(source).not.toContain("fetch('/api/config')");
+    expect(source).not.toContain("fetch('/api/themes')");
+    expect(dialogsSource).toContain('settingsDialogProjectId: string;');
+    expect(dialogsSource).toContain('projectId={settingsDialogProjectId}');
   });
 
   it('uses the tab switcher as the drawer title control', () => {
@@ -261,12 +282,14 @@ describe('SettingsDialog source', () => {
     expect(drawerSource).not.toContain('在线版本');
     expect(drawerSource).toContain('<TabsTrigger value="skills"');
     expect(drawerSource).toContain('管理技能');
-    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="local" />');
-    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="online" />');
-    expect(drawerSource).toContain('<VersionCollaborationPanel activeTab="skills" />');
+    expect(drawerSource).toContain('<VersionCollaborationPanel projectId={projectId} activeTab="local" />');
+    expect(drawerSource).toContain('<VersionCollaborationPanel projectId={projectId} activeTab="online" />');
+    expect(drawerSource).toContain('<VersionCollaborationPanel projectId={projectId} activeTab="skills" />');
 
-    expect(panelSource).toContain('export function VersionCollaborationPanel({ activeTab = \'all\' }');
-    expect(panelSource).toContain('{ activeTab?: VersionCollaborationTab }');
+    expect(panelSource).toContain('export function VersionCollaborationPanel({');
+    expect(panelSource).toContain('projectId,');
+    expect(panelSource).toContain('projectId: string;');
+    expect(panelSource).toContain('activeTab?: VersionCollaborationTab;');
     expect(panelSource).toContain('apiService.getGitWorkspaceStatus');
     expect(panelSource).toContain('apiService.initGitWorkspace');
     expect(panelSource).toContain('apiService.commitGitWorkspace');
@@ -274,7 +297,7 @@ describe('SettingsDialog source', () => {
     expect(panelSource).toContain('apiService.fetchGitWorkspace');
     expect(panelSource).toContain('apiService.syncDownGitWorkspace');
     expect(panelSource).toContain('apiService.pushGitWorkspace');
-    expect(panelSource).toContain('apiService.switchGitWorkspaceBranch');
+    expect(panelSource).not.toContain('apiService.switchGitWorkspaceBranch');
     expect(panelSource).toContain('apiService.createGitWorkspaceRemoteRepository');
     expect(panelSource).not.toContain('apiService.getGitWorkspacePrompt');
     expect(panelSource).toContain('信息');
@@ -282,11 +305,12 @@ describe('SettingsDialog source', () => {
     expect(panelSource).toContain('提交版本');
     expect(panelSource).not.toContain('<h3 className="text-base font-semibold text-foreground">本地仓库</h3>');
     expect(panelSource).not.toContain('<h3 className="text-base font-semibold text-foreground">在线仓库</h3>');
-    expect(panelSource).toContain('当前分支');
+    expect(panelSource).toContain('工作区分支');
+    expect(panelSource).toContain('查看分支');
     expect(panelSource).toContain('localBranchOptions');
-    expect(panelSource).toContain('handleSwitchBranch');
+    expect(panelSource).not.toContain('handleSwitchBranch');
     expect(panelSource).toContain('<SelectValue placeholder="选择分支" />');
-    expect(panelSource).toContain('切换分支失败');
+    expect(panelSource).not.toContain('切换分支失败');
     expect(panelSource).not.toContain('项目路径');
     expect(panelSource).toContain('flattenChangeGroups');
     expect(panelSource).toContain('groupLabel');
@@ -360,9 +384,10 @@ describe('SettingsDialog source', () => {
     expect(apiSource).toContain('export interface GitWorkspaceRemoteConfig');
     expect(apiSource).toContain('url?: string;');
     expect(apiSource).toContain('defaultBranch?: string;');
-    expect(apiSource).toContain("async getGitWorkspaceStatus(options: { gitVersion?: string; path?: string } = {})");
-    expect(apiSource).toContain("async switchGitWorkspaceBranch(branch: string)");
-    expect(apiSource).toContain("async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest)");
+    expect(apiSource).toContain('branch?: string;');
+    expect(apiSource).toContain('remoteBranch?: string;');
+    expect(apiSource).not.toContain('async switchGitWorkspaceBranch(branch: string)');
+    expect(apiSource).toContain("async createGitWorkspaceRemoteRepository(payload: CreateGitWorkspaceRemoteRepositoryRequest, scope: ProjectScope)");
     expect(apiSource).not.toContain('remote.provider');
   });
 
@@ -467,6 +492,8 @@ describe('SettingsDialog source', () => {
     expect(aiTabSource).toContain("onClear={() => updateField('annotationPromptClient', null)}");
     expect(aiTabSource).toContain('<SelectValue placeholder="默认供应商" />');
     expect(aiTabSource).toContain('批注执行模型');
+    expect(aiTabSource).toContain('placeholder="例如输入自定义模型 ID"');
+    expect(aiTabSource).not.toContain('placeholder="例如 gpt-5.5 / sonnet / auto"');
     expect(aiTabSource).toContain('AI 并发数');
     expect(aiTabSource).toContain('批量批注执行时同时发送的 AI 任务数量，默认 5。');
     expect(aiTabSource).toContain('min={1}');
@@ -497,7 +524,7 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('handleLocalAcpRuntimeRestart');
     expect(source).toContain('apiService.getAssistantRuntime({ autoStart: false');
     expect(source).toContain('apiService.getAssistantRuntime({ autoStart: true');
-    expect(source).toContain("apiService.bootstrapAssistant({ mode: 'restart_existing', projectId: activeProjectId || undefined })");
+    expect(source).toContain("apiService.bootstrapAssistant({ mode: 'restart_existing', projectId: activeProjectId || projectId })");
     expect(aiTabSource).toContain('本地 ACP 服务');
     expect(aiTabSource).toContain('已链接');
     expect(aiTabSource).toContain('未链接');
@@ -765,7 +792,7 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('AiImageConfigTestState');
     expect(source).toContain('AiImageConfigLastTest');
     expect(source).toContain('handleAiImageConfigTest');
-    expect(source).toContain("fetch('/api/config/ai-image/test'");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config/ai-image/test')");
     expect(source).toContain('body: JSON.stringify({');
     expect(source).toContain('prompt: AI_IMAGE_CONFIG_TEST_PROMPT');
     expect(source).toContain('baseUrl: formState.aiBaseUrl.trim()');
@@ -798,7 +825,7 @@ describe('SettingsDialog source', () => {
   it('saves AI image generation config through /api/config', () => {
     const source = readSource();
 
-    expect(source).toContain("fetch('/api/config'");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config')");
     expect(source).toContain('ai: {');
     expect(source).toContain('imageGeneration: {');
     expect(source).toContain('baseUrl: formState.aiBaseUrl.trim()');
@@ -827,7 +854,7 @@ describe('SettingsDialog source', () => {
     const footerSource = source.slice(source.indexOf('<SheetFooter'));
 
     expect(source).toContain('handleImportCodexConfig');
-    expect(source).toContain("fetch('/api/config/ai-image/codex-local'");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/config/ai-image/codex-local')");
     expect(source).toContain("toast.success('已读取本地 Codex 配置')");
     expect(source).toContain('读取本地 Codex 配置');
     expect(imageSectionSource).toContain('data-ai-image-config-actions');
@@ -912,11 +939,11 @@ describe('SettingsDialog source', () => {
     expect(source).toContain('defaultTheme: string;');
     expect(source).toContain("defaultTheme: config.projectDefaults?.defaultTheme || ''");
     expect(source).toContain('const [availableThemes, setAvailableThemes] = useState<ThemeResourceItem[]>([]);');
-    expect(source).toContain("const response = await fetch('/api/themes');");
+    expect(source).toContain("const response = await fetch(buildSettingsUrl('/api/themes'));");
     expect(source).toContain('setAvailableThemes(Array.isArray(themes) ? themes : []);');
     expect(source).toContain('projectDefaults: {');
     expect(source).toContain('defaultTheme: formState.defaultTheme.trim() || null,');
-    expect(source).toContain("fetch('/api/themes/sync-design', {");
+    expect(source).toContain("fetch(buildSettingsUrl('/api/themes/sync-design'), {");
     expect(source).toContain("body: JSON.stringify({ themeName: formState.defaultTheme.trim() })");
     expect(source).toContain('默认设计');
     expect(source).toContain('从“资产管理-设计”中选择一个作为项目默认设计');

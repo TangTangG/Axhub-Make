@@ -7,6 +7,14 @@ function readDialogSource() {
 }
 
 describe('CreateThemeDialogView theme import upload source', () => {
+    it('requires a project for uploads and direct library imports', () => {
+        const source = readDialogSource();
+
+        expect(source).toContain('activeProjectId: string;');
+        expect(source).toContain("formData.append('projectId', requireProjectScope(activeProjectId).projectId)");
+        expect(source).toContain("fetch(withProjectScope('/api/theme-library/import', requireProjectScope(activeProjectId)), {");
+    });
+
     it('opens the design-system import drawer from the right-side action area', () => {
         const source = readDialogSource();
 
@@ -56,7 +64,7 @@ describe('CreateThemeDialogView theme import upload source', () => {
 
     it('does not cancel the online theme library request when marking it as loading', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/useEffect\(\(\) => \{[\s\S]*?fetch\('\/api\/theme-library'\)[\s\S]*?\}, \[([^\]]+)\]\);/);
+        const effectMatch = source.match(/useEffect\(\(\) => \{[\s\S]*?fetch\(withProjectScope\('\/api\/theme-library', requireProjectScope\(activeProjectId\)\)\)[\s\S]*?\}, \[([^\]]+)\]\);/);
 
         expect(effectMatch).not.toBeNull();
         const dependencies = effectMatch?.[1] || '';
@@ -66,7 +74,7 @@ describe('CreateThemeDialogView theme import upload source', () => {
 
     it('treats ok false theme library payloads as failed loads', () => {
         const source = readDialogSource();
-        const effectMatch = source.match(/fetch\('\/api\/theme-library'\)[\s\S]*?setThemeLibrary\(\{/);
+        const effectMatch = source.match(/fetch\(withProjectScope\('\/api\/theme-library', requireProjectScope\(activeProjectId\)\)\)[\s\S]*?setThemeLibrary\(\{/);
 
         expect(effectMatch).not.toBeNull();
         expect(effectMatch?.[0] || '').toContain('result?.ok === false');

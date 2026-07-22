@@ -1,6 +1,6 @@
 # 原型开发与验收指南
 
-用于 `src/prototypes/<name>/` 下的原型实现、局部修改、多页面组织和预览验收。主题创建、派生和主题页验收优先看 `rules/theme-guide.md`。
+用于 `src/prototypes/<name>/` 下的原型实现、局部修改、多页面组织和预览验收。主题创建、派生和主题页验收优先使用 `$build-design-system`。
 
 开发流程：
 

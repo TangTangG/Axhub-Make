@@ -23,13 +23,13 @@ describe('screenshot persistence helpers', () => {
   it('derives screenshot URLs beside resource canvas files', () => {
     vi.stubGlobal('window', { location: { origin: 'http://admin.local' } });
 
-    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw')).toBe(
-      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/screenshot.png',
+    expect(deriveResourceCanvasScreenshotUrl('project-b', 'src/resources/flows/app.excalidraw')).toBe(
+      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/screenshot.png?projectId=project-b',
     );
-    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw', 'page-settings.png')).toBe(
-      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png',
+    expect(deriveResourceCanvasScreenshotUrl('project-b', 'src/resources/flows/app.excalidraw', 'page-settings.png')).toBe(
+      'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png?projectId=project-b',
     );
-    expect(deriveResourceCanvasScreenshotUrl('src/resources/flows/app.excalidraw', '../settings.png')).toBeUndefined();
+    expect(deriveResourceCanvasScreenshotUrl('project-b', 'src/resources/flows/app.excalidraw', '../settings.png')).toBeUndefined();
   });
 
   it('persists page screenshots to the current resource canvas assets folder', async () => {
@@ -46,6 +46,7 @@ describe('screenshot persistence helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await persistPrototypeScreenshot({
+      projectId: 'project-b',
       previewUrl: '/prototypes/home#page=settings',
       canvasFilePath: 'src/resources/flows/app.excalidraw',
       pageId: 'settings',
@@ -56,7 +57,7 @@ describe('screenshot persistence helpers', () => {
     });
 
     expect(createElementScreenshotFileName('embed-1')).toBe('embed-embed-1.png');
-    expect(fetchMock).toHaveBeenCalledWith('/api/canvas/resources/flows/app.excalidraw/screenshot', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('/api/canvas/resources/flows/app.excalidraw/screenshot?projectId=project-b', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -69,7 +70,7 @@ describe('screenshot persistence helpers', () => {
       }),
     }));
     expect(result).toMatchObject({
-      screenshotUrl: 'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png?v=123',
+      screenshotUrl: 'http://admin.local/api/canvas/resources/flows/app.excalidraw/app.assets/page-settings.png?v=123&projectId=project-b',
       path: 'src/resources/flows/app.assets/page-settings.png',
       width: 393,
       height: 852,
@@ -81,6 +82,7 @@ describe('screenshot persistence helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(persistPrototypeScreenshot({
+      projectId: 'project-b',
       previewUrl: '/prototypes/home#page=settings',
       pageId: 'settings',
       dataUrl: 'data:image/png;base64,abc',

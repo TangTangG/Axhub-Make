@@ -336,9 +336,9 @@ describe('make-server project APIs', () => {
       expect(resources.capabilities).toMatchObject({ quickEdit: true, axureExport: false });
 
       for (const url of [
-        `${server.origin}/api/projects/client-a/context`,
-        `${server.origin}/api/projects/client-a/navigation?tab=prototypes`,
-        `${server.origin}/api/projects/client-a/orders?type=themes`,
+        `${server.origin}/api/projects/client-a/context?projectId=client-a`,
+        `${server.origin}/api/projects/client-a/navigation?tab=prototypes&projectId=client-a`,
+        `${server.origin}/api/projects/client-a/orders?type=themes&projectId=client-a`,
       ]) {
         const response = await fetch(url);
         expect(response.status).toBe(404);
@@ -372,6 +372,12 @@ describe('make-server project APIs', () => {
     fs.mkdirSync(path.join(docsDir, 'nested'), { recursive: true });
     fs.mkdirSync(path.join(docsDir, 'templates'), { recursive: true });
     fs.mkdirSync(path.join(themesDir, 'fresh-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, 'pathless-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, 'explicit-source-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, 'explicit-path-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, 'explicit-file-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, 'explicit-absolute-theme'), { recursive: true });
+    fs.mkdirSync(path.join(themesDir, '..', 'outside-theme'), { recursive: true });
     fs.writeFileSync(path.join(docsDir, 'nested', 'guide.md'), '# Guide Title\n\nUseful notes.\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, 'templates', 'prd-template.md'), '# PRD Template\n\nDefault template body.\n', 'utf8');
     fs.writeFileSync(path.join(docsDir, 'readme.md'), '# Ignored Readme\n', 'utf8');
@@ -435,10 +441,26 @@ describe('make-server project APIs', () => {
         ],
         themes: [
           { id: 'missing-theme', name: 'missing-theme' },
+          { id: 'pathless-theme', name: 'pathless-theme', title: 'Pathless Theme' },
+          { id: '../outside-theme', name: '../outside-theme', title: 'Outside Theme' },
+          { id: 'explicit-source-theme', sourcePath: 'custom/themes/source' },
+          { id: 'explicit-path-theme', path: 'custom/themes/path' },
+          { id: 'explicit-file-theme', filePath: 'custom/themes/file/index.tsx' },
+          { id: 'explicit-absolute-theme', absoluteFilePath: path.join(projectRoot, 'custom/themes/absolute') },
         ],
       },
       navigation: { prototypes: ['draft', 'ghost'] },
-      orders: { themes: ['missing-theme'] },
+      orders: {
+        themes: [
+          'missing-theme',
+          'pathless-theme',
+          '../outside-theme',
+          'explicit-source-theme',
+          'explicit-path-theme',
+          'explicit-file-theme',
+          'explicit-absolute-theme',
+        ],
+      },
       resourceWriteTargets: {
         prototypes: { type: 'project-relative-path', path: 'content/prototypes' },
         themes: { type: 'project-relative-path', path: 'content/themes' },
@@ -539,11 +561,40 @@ describe('make-server project APIs', () => {
         expect.objectContaining({ id: 'stale' }),
         expect.objectContaining({ id: 'readme' }),
       ]));
-      expect(body.resources.themes).toEqual([
-        expect.objectContaining({ id: 'fresh-theme' }),
-      ]);
+      expect(body.resources.themes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'pathless-theme',
+          sourcePath: 'content/themes/pathless-theme',
+        }),
+        expect.objectContaining({
+          id: 'fresh-theme',
+          sourcePath: 'content/themes/fresh-theme',
+        }),
+      ]));
+      expect(body.resources.themes).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: '../outside-theme' }),
+      ]));
+      expect(body.resources.themes).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'explicit-source-theme', sourcePath: 'custom/themes/source' }),
+        expect.objectContaining({ id: 'explicit-path-theme', path: 'custom/themes/path' }),
+        expect.objectContaining({ id: 'explicit-file-theme', filePath: 'custom/themes/file/index.tsx' }),
+        expect.objectContaining({
+          id: 'explicit-absolute-theme',
+          absoluteFilePath: path.join(projectRoot, 'custom/themes/absolute'),
+        }),
+      ]));
+      for (const id of ['explicit-path-theme', 'explicit-file-theme', 'explicit-absolute-theme']) {
+        expect(body.resources.themes.find((theme: any) => theme.id === id)).not.toHaveProperty('sourcePath');
+      }
       expect(body.navigation).not.toHaveProperty('docs');
-      expect(body.orders.themes).toEqual(['fresh-theme']);
+      expect(body.orders.themes).toEqual([
+        'pathless-theme',
+        'explicit-source-theme',
+        'explicit-path-theme',
+        'explicit-file-theme',
+        'explicit-absolute-theme',
+        'fresh-theme',
+      ]);
 
       const stored = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
       expect(stored.resources.prototypes[0].placeholderGuide).toMatchObject({ kind: 'prototype-empty' });
@@ -592,9 +643,71 @@ describe('make-server project APIs', () => {
         title: 'Ready Prototype',
       });
       expect(storedReadyPrototype).not.toHaveProperty('generationStatus');
+      expect(stored.resources.themes).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          id: 'pathless-theme',
+          sourcePath: 'content/themes/pathless-theme',
+        }),
+        expect.objectContaining({
+          id: 'fresh-theme',
+          sourcePath: 'content/themes/fresh-theme',
+        }),
+      ]));
+      expect(stored.resources.themes).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: '../outside-theme' }),
+      ]));
       expect(stored.navigation.prototypes).toEqual(['draft', 'fresh']);
       expect(stored.navigation).not.toHaveProperty('docs');
       expect(stored.resources).not.toHaveProperty('docs');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not reconcile themes through a theme root symlink outside the project', async () => {
+    const projectRoot = createTempRoot();
+    writeMakeClientMarkerForProject(projectRoot, 'symlink-theme-root', 'Symlink Theme Root');
+    writeMakeClientPackageForProject(projectRoot);
+    const outsideRoot = createTempRoot('axhub-make-outside-themes-');
+    const outsideThemesDir = path.join(outsideRoot, 'themes');
+    fs.mkdirSync(path.join(outsideThemesDir, 'outside-theme'), { recursive: true });
+    const themesDir = path.join(projectRoot, 'content', 'themes');
+    fs.mkdirSync(path.dirname(themesDir), { recursive: true });
+    fs.symlinkSync(outsideThemesDir, themesDir, 'dir');
+    writeProjectMetadata(projectRoot, {
+      project: { id: 'symlink-theme-root', name: 'Symlink Theme Root' },
+      resources: {
+        prototypes: [],
+        themes: [{ id: 'outside-theme', name: 'outside-theme', title: 'Outside Theme' }],
+      },
+      navigation: { prototypes: [] },
+      orders: { themes: ['outside-theme'] },
+      resourceWriteTargets: {
+        themes: { type: 'project-relative-path', path: 'content/themes' },
+      },
+    });
+    const registryHome = createTempRoot('axhub-make-projects-api-home-');
+    const server = await startMakeServer({
+      projectRoot,
+      host: 'localhost',
+      port: 0,
+      adminRoot: path.join(projectRoot, 'missing-admin'),
+      registryPath: getProjectRegistryPath(registryHome),
+    });
+
+    try {
+      await registerExistingMakeProject(server.origin, projectRoot);
+      const response = await fetch(`${server.origin}/api/projects/symlink-theme-root/resources`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.resources.themes).toEqual([
+        expect.objectContaining({ id: 'outside-theme' }),
+      ]);
+      expect(body.resources.themes[0]).not.toHaveProperty('sourcePath');
+
+      const stored = JSON.parse(fs.readFileSync(getProjectMetadataPath(projectRoot), 'utf8'));
+      expect(stored.resources.themes[0]).not.toHaveProperty('sourcePath');
     } finally {
       await server.close();
     }
@@ -1220,7 +1333,7 @@ describe('make-server project APIs', () => {
       expect(fs.existsSync(getProjectExportsDir(otherProjectRoot))).toBe(false);
       expect(fs.existsSync(getProjectEditHistoryDir(otherProjectRoot))).toBe(false);
 
-      const artifactsResponse = await fetch(`${server.origin}/api/projects/client-a/artifacts/axure`);
+      const artifactsResponse = await fetch(`${server.origin}/api/projects/client-a/artifacts/axure?projectId=client-a`);
       expect(artifactsResponse.status).toBe(404);
     } finally {
       await server.close();

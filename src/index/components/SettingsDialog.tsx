@@ -29,6 +29,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { apiService, type AgentVersionsResponse, type AssistantRuntimeResponse, type LanAccessStatusResponse, type MakeClientUpdateApplyResult, type MakeClientUpdateBackupRecord, type MakeClientUpdateStatus } from '../services/api';
+import { requireProjectScope, withProjectScope } from '../services/projectScope';
 import { normalizePromptClientPreference } from '../../common/promptExecution';
 import { ACP_PROVIDER_OPTIONS, type AcpProviderKey } from '../../common/acpModelConfig';
 import { runAiText, type AiRunClientError } from '../domains/ai-generation/aiRunClient';
@@ -60,6 +61,7 @@ export interface SettingsDialogAIContext {
 
 interface SettingsDialogProps {
     open: boolean;
+    projectId: string;
     onClose: () => void;
     onSaved?: () => void;
     makeClientUpdateReminderVisible?: boolean;
@@ -432,7 +434,7 @@ function isAiRunAcpRuntimeUnavailable(error: unknown): error is AiRunClientError
     return record.code === 'ACP_RUNTIME_UNAVAILABLE' || record.action === 'open-ai-settings';
 }
 
-export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps) {
+export default function SettingsDialog({ open, projectId, onClose, onSaved, makeClientUpdateReminderVisible, onMakeClientUpdateReminderSeen, onMakeClientUpdateAvailabilityChange, onOpenVersionCollaboration, initialTab = 'project', initialAcpRuntime = null, initialAcpFailureSource = '', initialAcpFailureMessage = '' }: SettingsDialogProps) {
     const [loading, setLoading] = useState(false);
     const [formState, setFormState] = useState<SettingsFormState>(DEFAULT_FORM_STATE);
     const [activeTab, setActiveTab] = useState<SettingsDialogInitialTab>(initialTab);
@@ -451,7 +453,8 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const [lanAccessShareUrl, setLanAccessShareUrl] = useState('');
     const [lanAccessShareExpiresAt, setLanAccessShareExpiresAt] = useState('');
     const [lanAccessShareGenerating, setLanAccessShareGenerating] = useState(false);
-    const [activeProjectId, setActiveProjectId] = useState('');
+    const activeProjectId = projectId;
+    const buildSettingsUrl = (url: string) => withProjectScope(url, requireProjectScope(projectId));
     const [localAcpRuntime, setLocalAcpRuntime] = useState<AssistantRuntimeResponse | null>(null);
     const [localAcpFailureContext, setLocalAcpFailureContext] = useState<{ source: string; message: string } | null>(null);
     const [localAcpConnecting, setLocalAcpConnecting] = useState(false);
@@ -554,7 +557,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
 
     const loadConfig = async () => {
         try {
-            const response = await fetch('/api/config');
+            const response = await fetch(buildSettingsUrl('/api/config'));
             if (!response.ok) {
                 throw new Error('Failed to load config');
             }
@@ -562,10 +565,8 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
             setFormState(normalizeFormState(config));
             setAvailableLANHosts(Array.isArray(config.availableLANHosts) ? config.availableLANHosts : []);
             setAiImageConfigLastTest(normalizeAiImageConfigLastTest(config.ai?.imageGeneration?.lastTest));
-            const projectId = typeof config.projectId === 'string' ? config.projectId.trim() : '';
-            setActiveProjectId(projectId);
-            if (initialTab === 'update' && projectId) {
-                void loadMakeClientUpdateStatus(projectId);
+            if (initialTab === 'update' && activeProjectId) {
+                void loadMakeClientUpdateStatus(activeProjectId);
             }
             return config;
         } catch (error) {
@@ -577,7 +578,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
 
     const loadThemeOptions = async () => {
         try {
-            const response = await fetch('/api/themes');
+            const response = await fetch(buildSettingsUrl('/api/themes'));
             if (!response.ok) {
                 throw new Error('Failed to load themes');
             }
@@ -701,7 +702,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
 
     async function handleLocalAcpRuntimeCheck(options: { silent?: boolean } = {}) {
         try {
-            const runtime = await apiService.getAssistantRuntime({ autoStart: false, projectId: activeProjectId || undefined });
+            const runtime = await apiService.getAssistantRuntime({ autoStart: false, projectId: activeProjectId || projectId });
             setLocalAcpRuntime(runtime);
             setLocalAcpFailureContext(null);
             loadLocalAiAgentVersionsAfterAcpReady(runtime);
@@ -726,7 +727,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         return preserveSettingsDialogDuringLocalAcpAction(async () => {
             setLocalAcpConnecting(true);
             try {
-                const runtime = await apiService.getAssistantRuntime({ autoStart: true, projectId: activeProjectId || undefined });
+                const runtime = await apiService.getAssistantRuntime({ autoStart: true, projectId: activeProjectId || projectId });
                 setLocalAcpRuntime(runtime);
                 setLocalAcpFailureContext(null);
                 loadLocalAiAgentVersionsAfterAcpReady(runtime);
@@ -750,7 +751,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         return preserveSettingsDialogDuringLocalAcpAction(async () => {
             setLocalAcpRestarting(true);
             try {
-                const result = await apiService.bootstrapAssistant({ mode: 'restart_existing', projectId: activeProjectId || undefined });
+                const result = await apiService.bootstrapAssistant({ mode: 'restart_existing', projectId: activeProjectId || projectId });
                 setLocalAcpRuntime(result.runtime);
                 setLocalAcpFailureContext(null);
                 loadLocalAiAgentVersionsAfterAcpReady(result.runtime);
@@ -918,6 +919,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         const timeoutId = window.setTimeout(() => controller.abort(), AGENT_PROVIDER_TEST_TIMEOUT_MS);
         try {
             const result = await runAiText({
+                projectId: requireProjectScope(projectId).projectId,
                 scene: 'agent-provider-test',
                 client: option.value,
                 prompt: AGENT_PROVIDER_TEST_PROMPT,
@@ -949,7 +951,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const handleImportCodexConfig = async () => {
         try {
             setLoading(true);
-            const response = await fetch('/api/config/ai-image/codex-local', { cache: 'no-store' });
+            const response = await fetch(buildSettingsUrl('/api/config/ai-image/codex-local'), { cache: 'no-store' });
             const result = await response.json().catch(() => ({}));
             if (!response.ok || !result?.success) {
                 throw new Error(result?.error || '读取本地 Codex 配置失败');
@@ -973,7 +975,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
 
     const persistAiImageConfigLastTest = async (lastTest: AiImageConfigLastTest) => {
         setAiImageConfigLastTest(lastTest);
-        const response = await fetch('/api/config', {
+        const response = await fetch(buildSettingsUrl('/api/config'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -998,7 +1000,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
     const handleAiImageConfigTest = async () => {
         setAiImageConfigTest({ status: 'testing', message: '测试中' });
         try {
-            const response = await fetch('/api/config/ai-image/test', {
+            const response = await fetch(buildSettingsUrl('/api/config/ai-image/test'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1120,7 +1122,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
         try {
             setLoading(true);
 
-            const currentConfigResponse = await fetch('/api/config');
+            const currentConfigResponse = await fetch(buildSettingsUrl('/api/config'));
             const currentConfig: Config = currentConfigResponse.ok
                 ? await currentConfigResponse.json()
                 : { server: { host: 'localhost', port: 51720 } };
@@ -1160,7 +1162,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                 },
             };
 
-            const response = await fetch('/api/config', {
+            const response = await fetch(buildSettingsUrl('/api/config'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1173,7 +1175,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                 throw new Error((error as any)?.error || 'Failed to save config');
             }
 
-            const syncResponse = await fetch('/api/themes/sync-design', {
+            const syncResponse = await fetch(buildSettingsUrl('/api/themes/sync-design'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ themeName: formState.defaultTheme.trim() }),
@@ -1766,7 +1768,7 @@ export default function SettingsDialog({ open, onClose, onSaved, makeClientUpdat
                                             <Input
                                                 value={formState.annotationModel}
                                                 onChange={(event) => updateField('annotationModel', event.target.value)}
-                                                placeholder="例如 gpt-5.5 / sonnet / auto"
+                                                placeholder="例如输入自定义模型 ID"
                                             />
                                         </Field>
 

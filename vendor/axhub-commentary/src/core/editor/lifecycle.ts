@@ -92,16 +92,60 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     ? (deps.options as NonNullable<Parameters<typeof resolveWebEditorOptions>[0]>)
     : {};
   const options = resolveWebEditorOptions(rawOptions);
-  if (rawOptions.agentBridge && !Object.prototype.hasOwnProperty.call(rawOptions.agentBridge, 'enableContextAppend')) {
+  if (
+    rawOptions.agentBridge &&
+    !Object.prototype.hasOwnProperty.call(rawOptions.agentBridge, 'enableContextAppend')
+  ) {
     (options.agentBridge as { enableContextAppend?: boolean }).enableContextAppend = undefined;
   }
   let inlineTextEditingElement: HTMLElement | null = null;
   let pendingCommentContextSync = false;
   let routeChangeCleanup: (() => void) | null = null;
+  let interactionProfileRestartQueued = false;
+
+  function resolveActiveInteractionProfile(): 'design' | 'text-comment' {
+    return options.interactionProfile === 'text-comment' || state.uiSettings.documentCommentMode
+      ? 'text-comment'
+      : 'design';
+  }
+
+  function handleUiSettingsChange(settings: typeof state.uiSettings): void {
+    const documentCommentModeChanged =
+      settings.documentCommentMode !== state.uiSettings.documentCommentMode;
+    state.uiSettings = settings;
+    services.persistence.setUiSettings(settings);
+
+    if (
+      !documentCommentModeChanged ||
+      options.interactionProfile === 'text-comment' ||
+      !state.active ||
+      interactionProfileRestartQueued
+    ) {
+      return;
+    }
+
+    interactionProfileRestartQueued = true;
+    void Promise.resolve().then(() => {
+      interactionProfileRestartQueued = false;
+      if (!state.active || settings.documentCommentMode !== state.uiSettings.documentCommentMode) {
+        return;
+      }
+
+      if (state.panelOnlyMode) {
+        stopPanelOnly();
+        startPanelOnly();
+        return;
+      }
+
+      stop();
+      start();
+    });
+  }
 
   function shouldDelegateAiActionToHost(): boolean {
     return (
-      typeof rawOptions.ui?.onHostToolbarAction === 'function' && typeof options.ui.onHostToolbarAction === 'function'
+      typeof rawOptions.ui?.onHostToolbarAction === 'function' &&
+      typeof options.ui.onHostToolbarAction === 'function'
     );
   }
 
@@ -167,11 +211,16 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     taskRef: ReturnType<typeof createHostExternalEditingTaskRef>;
     targetRefs: ExternalEditingElementTarget[];
   } | null {
-    if (!services.agentBridge.setExternalEditingStateByElementKey && !services.agentBridge.setExternalEditingState) {
+    if (
+      !services.agentBridge.setExternalEditingStateByElementKey &&
+      !services.agentBridge.setExternalEditingState
+    ) {
       return null;
     }
 
-    const validTargets = targetRefs.filter((target) => String(target?.elementKey ?? '').trim() && target?.locator);
+    const validTargets = targetRefs.filter(
+      (target) => String(target?.elementKey ?? '').trim() && target?.locator,
+    );
     if (validTargets.length === 0) {
       return null;
     }
@@ -364,9 +413,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     const metas = Array.from(state.editMetaByKey.values())
       .filter(
         (meta) =>
-          meta.dirtySince !== null ||
-          String(meta.note ?? '').trim() ||
-          (Array.isArray(meta.images) && meta.images.length > 0),
+          services.persistence.getCommentTaskState?.(meta.elementKey) !== 'completed' &&
+          (meta.dirtySince !== null ||
+            String(meta.note ?? '').trim() ||
+            (Array.isArray(meta.images) && meta.images.length > 0)),
       )
       .sort((a, b) => Number(b.dirtySince ?? 0) - Number(a.dirtySince ?? 0));
     const elements: Element[] = [];
@@ -391,15 +441,18 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     return Array.from(state.editMetaByKey.values())
       .filter(
         (meta) =>
-          meta.dirtySince !== null ||
-          String(meta.note ?? '').trim() ||
-          (Array.isArray(meta.images) && meta.images.length > 0),
+          services.persistence.getCommentTaskState?.(meta.elementKey) !== 'completed' &&
+          (meta.dirtySince !== null ||
+            String(meta.note ?? '').trim() ||
+            (Array.isArray(meta.images) && meta.images.length > 0)),
       )
       .sort((a, b) => Number(b.dirtySince ?? 0) - Number(a.dirtySince ?? 0))
       .map(toExternalEditingTarget);
   }
 
-  function resolvePromptTargetRefs(preferredElement?: Element | null): ExternalEditingElementTarget[] {
+  function resolvePromptTargetRefs(
+    preferredElement?: Element | null,
+  ): ExternalEditingElementTarget[] {
     const recoveredTargets = resolvePromptTargetRefsFromEditHistory();
     if (recoveredTargets.length > 0) {
       return recoveredTargets;
@@ -409,17 +462,23 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       : state.selectedElement?.isConnected
         ? state.selectedElement
         : null;
-    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
+    const fallbackMeta = fallbackElement
+      ? services.changes.getMetaForElement(fallbackElement)
+      : null;
     return fallbackMeta ? [toExternalEditingTarget(fallbackMeta)] : [];
   }
 
-  function resolvePromptTargetRef(preferredElement?: Element | null): ExternalEditingElementTarget | null {
+  function resolvePromptTargetRef(
+    preferredElement?: Element | null,
+  ): ExternalEditingElementTarget | null {
     const fallbackElement = preferredElement?.isConnected
       ? preferredElement
       : state.selectedElement?.isConnected
         ? state.selectedElement
         : null;
-    const fallbackMeta = fallbackElement ? services.changes.getMetaForElement(fallbackElement) : null;
+    const fallbackMeta = fallbackElement
+      ? services.changes.getMetaForElement(fallbackElement)
+      : null;
     if (fallbackMeta) {
       return toExternalEditingTarget(fallbackMeta);
     }
@@ -482,9 +541,14 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Transaction apply error:`, error);
   }
 
-  function dismissVisibleElementAgentTaskStates(): void {
+  function dismissVisibleElementAgentTaskStates(
+    target: 'completed' | 'all' = 'all',
+  ): void {
     const tasks = services.agentBridge.getVisibleTaskStates();
     for (const task of tasks) {
+      if (target === 'completed' && task.status !== 'completed') {
+        continue;
+      }
       try {
         const element = locateElement(task.locator);
         if (!element?.isConnected) {
@@ -519,11 +583,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     const document = services.persistence.getPersistedPrototypeCommentsDocument?.() ?? null;
     return Boolean(
       document &&
-      (
-        document.comments.length > 0 ||
-        document.images.length > 0 ||
-        Object.keys(document.tasks).length > 0
-      ),
+        (document.comments.length > 0 ||
+          document.images.length > 0),
     );
   }
 
@@ -649,7 +710,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     return null;
   }
 
-  const PARENT_SELECT_EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+  const PARENT_SELECT_EDITABLE_SELECTOR =
+    'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
   const PARENT_SELECT_INPUT_TOUCHED_ATTR = 'data-we-parent-select-input-touched';
 
   function isTextualInputType(type: string | null | undefined): boolean {
@@ -691,7 +753,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     if (typeof node.matches === 'function' && node.matches(PARENT_SELECT_EDITABLE_SELECTOR)) {
       return node;
     }
-    const nearestControl = typeof node.closest === 'function' ? node.closest(PARENT_SELECT_EDITABLE_SELECTOR) : null;
+    const nearestControl =
+      typeof node.closest === 'function' ? node.closest(PARENT_SELECT_EDITABLE_SELECTOR) : null;
     if (!(nearestControl instanceof HTMLElement)) {
       return null;
     }
@@ -758,7 +821,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     return `${tagName}${id}${className}${role ? `[role="${role}"]` : ''}`;
   }
 
-  function cloneSelectionModeHotkeyDebug(debug: SelectionModeHotkeyDebugApi): SelectionModeHotkeyDebugSnapshot {
+  function cloneSelectionModeHotkeyDebug(
+    debug: SelectionModeHotkeyDebugApi,
+  ): SelectionModeHotkeyDebugSnapshot {
     return {
       installed: debug.installed,
       installCount: debug.installCount,
@@ -934,12 +999,24 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       passive: true,
     };
     window.addEventListener('keydown', handler, hotkeyOptions);
-    window.addEventListener('focusin', markParentSelectTextEntryControlUntouched, inputStateOptions);
+    window.addEventListener(
+      'focusin',
+      markParentSelectTextEntryControlUntouched,
+      inputStateOptions,
+    );
     window.addEventListener('input', markParentSelectTextEntryControlTouched, inputStateOptions);
     state.parentSelectHotkeyCleanup = () => {
       window.removeEventListener('keydown', handler, hotkeyOptions);
-      window.removeEventListener('focusin', markParentSelectTextEntryControlUntouched, inputStateOptions);
-      window.removeEventListener('input', markParentSelectTextEntryControlTouched, inputStateOptions);
+      window.removeEventListener(
+        'focusin',
+        markParentSelectTextEntryControlUntouched,
+        inputStateOptions,
+      );
+      window.removeEventListener(
+        'input',
+        markParentSelectTextEntryControlTouched,
+        inputStateOptions,
+      );
     };
   }
 
@@ -1024,13 +1101,17 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         state.selectionAnchor = null;
         state.pendingMarkerAnchors.clear();
         void Promise.resolve(services.persistence.restoreCachedChanges())
-          .then(() => {
+          .then((deletedElementKeys) => {
+            services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
             services.changes.renderChangeMarkers();
             state.propertyPanel?.refresh();
             onStatusChange?.();
           })
           .catch((error) => {
-            console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`, error);
+            console.warn(
+              `${WEB_EDITOR_V2_LOG_PREFIX} Failed to refresh comments after route change:`,
+              error,
+            );
             services.changes.renderChangeMarkers();
           });
       });
@@ -1041,7 +1122,12 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
     };
 
     if (historyRef && typeof originalPushState === 'function') {
-      wrappedPushState = function pushState(this: History, data: unknown, unused: string, url?: string | URL | null) {
+      wrappedPushState = function pushState(
+        this: History,
+        data: unknown,
+        unused: string,
+        url?: string | URL | null,
+      ) {
         const result = originalPushState.call(this, data, unused, url);
         dispatchRouteChange();
         return result;
@@ -1145,7 +1231,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       });
       installPerfHotkey();
 
-      const isTextComment = options.interactionProfile === 'text-comment';
+      const interactionProfile = resolveActiveInteractionProfile();
+      const isTextComment = interactionProfile === 'text-comment';
 
       if (isTextComment) {
         const textCommentTarget = document.createElement('div');
@@ -1192,10 +1279,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       });
 
       void Promise.resolve(services.persistence.restoreCachedChanges())
-        .then(() => {
+        .then((deletedElementKeys) => {
+          services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
           services.agentBridge.rehydratePersistedAgentState();
           ensureMarkersVisible();
-          services.persistence.persistFromTransactions();
           state.propertyPanel?.refresh();
           onStatusChange?.();
         })
@@ -1203,7 +1290,6 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           console.warn(`${WEB_EDITOR_V2_LOG_PREFIX} Failed to restore cached changes:`, error);
           services.agentBridge.rehydratePersistedAgentState();
           ensureMarkersVisible();
-          services.persistence.persistFromTransactions();
         });
 
       state.handlesController = createHandlesController({
@@ -1241,7 +1327,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
       state.eventController = createEventController({
         isOverlayElement: state.shadowHost.isOverlayElement,
         shouldAllowPageEvent: (event) =>
-          Boolean(options.host.shouldAllowPageEvent?.(event)) || shouldAllowInlineEditingPageEvent(event),
+          Boolean(options.host.shouldAllowPageEvent?.(event)) ||
+          shouldAllowInlineEditingPageEvent(event),
         allowNativeTextSelection: isTextComment,
         onHover: isTextComment ? () => {} : services.interaction.handleHover,
         onSelect: (event) => {
@@ -1267,11 +1354,13 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         findTargetForSelect: isTextComment
           ? undefined
           : (_x, _y, modifiers, event) => {
-              const target = state.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
+              const target =
+                state.selectionEngine?.findBestTargetFromEvent(event, modifiers) ?? null;
               return services.agentBridge.resolveSelectableElement(target);
             },
         getSelectedElement: () => state.selectedElement,
-        isElementInteractionLocked: (element) => services.agentBridge.isElementInteractionLocked(element),
+        isElementInteractionLocked: (element) =>
+          services.agentBridge.isElementInteractionLocked(element),
       });
       if (!options.ui.initialSelectionModeActive) {
         state.eventController.setMode('interaction', {
@@ -1299,7 +1388,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             state.activeTextComment = comment;
 
             const usedNativeHighlight = textCommentManager.setActiveHighlight(comment);
-            state.canvasOverlay?.setTextHighlightRects(usedNativeHighlight ? null : comment.clientRects);
+            state.canvasOverlay?.setTextHighlightRects(
+              usedNativeHighlight ? null : comment.clientRects,
+            );
             state.canvasOverlay?.render();
 
             // Compute an anchor for the bubble card from the bounding rect
@@ -1384,11 +1475,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state.uiSettings,
-          interactionProfile: options.interactionProfile,
-          onUiSettingsChange: (settings) => {
-            state.uiSettings = settings;
-            services.persistence.setUiSettings(settings);
-          },
+          interactionProfile,
+          documentCommentModeAvailable: options.interactionProfile !== 'text-comment',
+          onUiSettingsChange: handleUiSettingsChange,
           onLocateElement: (element) => {
             const target = services.agentBridge.resolveSelectableElement(element) ?? element;
             if (!target?.isConnected) return;
@@ -1474,7 +1563,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           },
           onAbortAgentPrompt: async (element) => {
             if (shouldDelegateAiActionToHost()) {
-              const locallyInterrupted = element === null ? await interruptVisibleTasksLocally() : false;
+              const locallyInterrupted =
+                element === null ? await interruptVisibleTasksLocally() : false;
               const handled = await runHostAiAction({
                 type: 'interrupt-agent',
               });
@@ -1504,9 +1594,13 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           onRequestClose: services.interaction.clearSelection,
           onRequestFullExit: options.ui.onRequestFullExit,
           onClearEdits: async (clearOptions) => {
-            await services.localActions.handleClearEdits(clearOptions);
-            services.agentBridge.invalidateCurrentConversation?.();
-            dismissVisibleElementAgentTaskStates();
+            const clearedTarget = await services.localActions.handleClearEdits(clearOptions);
+            if (!clearedTarget) return null;
+            if (clearedTarget === 'all') {
+              services.agentBridge.invalidateCurrentConversation?.();
+            }
+            dismissVisibleElementAgentTaskStates(clearedTarget);
+            return clearedTarget;
           },
           hasPrototypeComments,
           onClearCurrentElementEdits: async (element) => {
@@ -1532,6 +1626,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          htmlFileSaveEnabled: options.ui.htmlFileSaveEnabled,
+          getAcpUiConnected: options.ui.getAcpUiConnected,
           onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
@@ -1540,6 +1636,31 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
           onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
           onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          onCommentarySkillSettingsLoad: options.ui.onCommentarySkillSettingsLoad
+            ? async () => {
+                const settings = await options.ui.onCommentarySkillSettingsLoad?.();
+                if (!settings) {
+                  return {
+                    selectedSkillIds: options.ui.commentarySelectedSkillIds,
+                    skillOptions: options.ui.commentarySkillOptions,
+                  };
+                }
+                options.ui.commentarySelectedSkillIds = settings.selectedSkillIds;
+                options.ui.commentarySkillOptions = settings.skillOptions;
+                options.ui.commentarySkillSettingsConfigured = true;
+                return settings;
+              }
+            : undefined,
+          onCommentarySkillSettingsChange: options.ui.onCommentarySkillSettingsChange
+            ? async (settings) => {
+                const saved = await options.ui.onCommentarySkillSettingsChange?.(settings);
+                const nextSettings = saved ?? settings;
+                options.ui.commentarySelectedSkillIds = nextSettings.selectedSkillIds;
+                options.ui.commentarySkillOptions = nextSettings.skillOptions;
+                options.ui.commentarySkillSettingsConfigured = true;
+                return nextSettings;
+              }
+            : undefined,
           getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
           getAgentBridgeConnected: () => services.agentBridge.isConnected(),
           getCanAbortAgentPrompt: (element) => {
@@ -1552,16 +1673,19 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             return services.agentBridge.canInterruptElementTask(resolveInterruptTarget(element));
           },
           getHasReusableAgentConversation: () => services.agentBridge.hasReusableConversation(),
-          getCurrentAgentConversationState: () => services.agentBridge.getCurrentConversationState(),
+          getCurrentAgentConversationState: () =>
+            services.agentBridge.getCurrentConversationState(),
           getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
           getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
-          getAgentProviderAvailability: (provider) => services.agentBridge.getProviderAvailability(provider),
+          getAgentProviderAvailability: (provider) =>
+            services.agentBridge.getProviderAvailability(provider),
           getAgentProviderAvailabilities: () => services.agentBridge.getProviderAvailabilities(),
           refreshAgentProviderAvailabilities: (providers) =>
             services.agentBridge.refreshProviderAvailabilities(providers),
           subscribeSessionActivity: (target, listener) =>
             services.agentBridge.subscribeSessionActivity(target, listener),
-          dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
+          dismissElementAgentTaskState: (element) =>
+            services.agentBridge.dismissElementTaskState(element),
           dismissVisibleElementAgentTaskStates,
           getSendPromptToAgentBlockReason: (element) => {
             const targetElements = resolvePromptTargets(element);
@@ -1633,9 +1757,11 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             state.positionTracker?.forceUpdate(true);
             onStatusChange?.();
           },
-          subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
+          subscribeTweak: (listener) =>
+            getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
           getAiNote: (element) => services.changes.getMetaForElement(element)?.note ?? '',
-          getAiNoteSkillIds: (element) => services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
+          getAiNoteSkillIds: (element) =>
+            services.changes.getMetaForElement(element)?.skillIds?.slice() ?? [],
           enableImageAttachments: options.ui.enableImageAttachments,
           onPrepareAiNoteImages: options.ui.onPrepareImageAttachments,
           getAiNoteImages: (element) => services.changes.getImagesForElement(element),
@@ -1717,9 +1843,11 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
                 getAgentBridgeAvailable: () => services.agentBridge.isAvailable(),
                 hideExecutionControls: options.ui.hideExecutionControls,
                 getCommentShortcutSettings: () => state.commentShortcutSettings,
-                getElementAgentTaskState: (element) => services.agentBridge.getElementTaskState(element),
+                getElementAgentTaskState: (element) =>
+                  services.agentBridge.getElementTaskState(element),
                 getVisibleElementAgentTaskStates: () => services.agentBridge.getVisibleTaskStates(),
-                dismissElementAgentTaskState: (element) => services.agentBridge.dismissElementTaskState(element),
+                dismissElementAgentTaskState: (element) =>
+                  services.agentBridge.dismissElementTaskState(element),
                 externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
                 onAppendElementToAgentContext: options.agentBridge.enableContextAppend
                   ? (element) => {
@@ -1878,7 +2006,10 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         console.log(`${WEB_EDITOR_V2_LOG_PREFIX} Downgraded to panel-only mode`);
         return;
       } catch (error) {
-        console.error(`${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`, error);
+        console.error(
+          `${WEB_EDITOR_V2_LOG_PREFIX} Downgrade to panel-only failed, performing full stop:`,
+          error,
+        );
         // Fall through to full stop below.
       }
     }
@@ -1926,6 +2057,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         ...services.persistence.readUiSettings(),
         darkMode: options.ui.initialDarkMode,
       };
+      const interactionProfile = resolveActiveInteractionProfile();
 
       if (options.ui.propertyPanel) {
         state.tokensService = createDesignTokensService();
@@ -1949,11 +2081,9 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             services.persistence.setCommentShortcutSettings(settings);
           },
           getUiSettings: () => state.uiSettings,
-          interactionProfile: options.interactionProfile,
-          onUiSettingsChange: (settings) => {
-            state.uiSettings = settings;
-            services.persistence.setUiSettings(settings);
-          },
+          interactionProfile,
+          documentCommentModeAvailable: options.interactionProfile !== 'text-comment',
+          onUiSettingsChange: handleUiSettingsChange,
           onLocateElement: () => {},
           onCommentShortcutDialogOpenChange: (open) => {
             state.commentShortcutDialogOpen = open;
@@ -1983,6 +2113,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           aiExecutionWorkspacePath: options.ui.aiExecutionWorkspacePath,
           aiExecutionRunConcurrency: options.ui.aiExecutionRunConcurrency,
           aiExecutionProviderOptions: options.ui.aiExecutionProviderOptions,
+          htmlFileSaveEnabled: options.ui.htmlFileSaveEnabled,
+          getAcpUiConnected: options.ui.getAcpUiConnected,
           onHostToolbarAction: options.ui.onHostToolbarAction,
           externalEditingStatusDescription: options.ui.externalEditingStatusDescription,
           skillInstallSource: options.ui.skillInstallSource,
@@ -1991,6 +2123,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           commentarySkillSettingsConfigured: options.ui.commentarySkillSettingsConfigured,
           onCommentarySkillSelectionLoad: options.ui.onCommentarySkillSelectionLoad,
           onCommentarySkillSelectionChange: options.ui.onCommentarySkillSelectionChange,
+          onCommentarySkillSettingsLoad: options.ui.onCommentarySkillSettingsLoad,
+          onCommentarySkillSettingsChange: options.ui.onCommentarySkillSettingsChange,
           getAgentBridgeAvailable: () => false,
           getAgentBridgeConnected: () => false,
           getCanAbortAgentPrompt: () => false,
@@ -2024,7 +2158,8 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
             await protocol.update(element, patch);
             onStatusChange?.();
           },
-          subscribeTweak: (listener) => getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
+          subscribeTweak: (listener) =>
+            getTweakProtocol()?.subscribe(listener) ?? (() => undefined),
           getAiNote: () => '',
           getAiNoteSkillIds: () => [],
           getAiNoteImages: () => [],
