@@ -70,6 +70,7 @@
     "release:make:prepare": "node scripts/release-make.mjs --prepare-only",
     "release:make:test-local": "node scripts/release-make.mjs --test-local",
     "release:make:dry-run": "node scripts/release-make.mjs --dry-run",
+    "release:make:npm:prepare": "node scripts/release-make.mjs --skip-github --prepare-only",
     "release:make:npm:beta": "node scripts/release-make.mjs --skip-github --npm-tag beta",
     "release:make-client-template:prepare": "node scripts/release-make.mjs --template-only --prepare-only",
     "release:make-client-template": "node scripts/release-make.mjs --template-only",

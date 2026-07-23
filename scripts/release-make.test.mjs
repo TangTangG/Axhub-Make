@@ -822,6 +822,10 @@ describe('release make artifact helpers', () => {
     assert.equal(rootPackageJson.version, '0.6.8');
     assert.equal(rootPackageJson.scripts['release:make:npm:latest'], undefined);
     assert.equal(
+      rootPackageJson.scripts['release:make:npm:prepare'],
+      'node scripts/release-make.mjs --skip-github --prepare-only',
+    );
+    assert.equal(
       rootPackageJson.scripts['release:make:npm:beta'],
       'node scripts/release-make.mjs --skip-github --npm-tag beta',
     );
