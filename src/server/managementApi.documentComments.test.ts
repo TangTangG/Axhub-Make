@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -14,6 +15,23 @@ import {
 } from './__tests__/projects-api.helpers';
 
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+
+function documentCommentStorage(projectRoot: string): {
+  filePath: string;
+  assetDir: string;
+  relativeAssetRoot: string;
+} {
+  const documentPath = 'src/resources/prd/order.md';
+  const hash = crypto.createHash('sha256')
+    .update(`document-comments:v1\0${documentPath}`)
+    .digest('hex');
+  const relativeAssetRoot = `.axhub/make/comment-assets/${hash}`;
+  return {
+    filePath: path.join(projectRoot, `.axhub/make/comments/${hash}.json`),
+    assetDir: path.join(projectRoot, relativeAssetRoot),
+    relativeAssetRoot,
+  };
+}
 
 function writeDocumentProject(projectRoot: string): void {
   writeProjectMetadata(projectRoot, {});
@@ -161,6 +179,98 @@ describe('document comments API', () => {
       });
 
       expect(fs.existsSync(absoluteAssetPath)).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not overwrite an outside file through a child asset symlink', async () => {
+    const projectRoot = createTempRoot('axhub-document-comments-');
+    writeDocumentProject(projectRoot);
+    const { assetDir } = documentCommentStorage(projectRoot);
+    const outsideFile = path.join(projectRoot, 'outside-document-asset.png');
+    fs.mkdirSync(assetDir, { recursive: true });
+    fs.writeFileSync(outsideFile, 'outside', 'utf8');
+    try {
+      fs.symlinkSync(outsideFile, path.join(assetDir, 'escape.png'), 'file');
+    } catch {
+      return;
+    }
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const response = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/document-comments?path=${encodeURIComponent('src/resources/prd/order.md')}`,
+      ), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: 'changes',
+          document: {
+            schemaVersion: 3,
+            kind: 'document-edit-comments',
+            documentPath: 'src/resources/prd/order.md',
+            comments: [],
+            images: [{ id: 'escape', data: PNG_DATA_URL }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(fs.readFileSync(outsideFile, 'utf8')).toBe('outside');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not hydrate or serve an outside file through a child asset symlink', async () => {
+    const projectRoot = createTempRoot('axhub-document-comments-');
+    writeDocumentProject(projectRoot);
+    const { assetDir, filePath, relativeAssetRoot } = documentCommentStorage(projectRoot);
+    const outsideFile = path.join(projectRoot, 'outside-document-secret.txt');
+    fs.mkdirSync(assetDir, { recursive: true });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(outsideFile, 'outside-secret', 'utf8');
+    try {
+      fs.symlinkSync(outsideFile, path.join(assetDir, 'escape.png'), 'file');
+    } catch {
+      return;
+    }
+    fs.writeFileSync(filePath, `${JSON.stringify({
+      schemaVersion: 3,
+      kind: 'document-edit-comments',
+      documentPath: 'src/resources/prd/order.md',
+      resource: {
+        id: path.basename(relativeAssetRoot),
+        targetPath: 'src/resources/prd/order.md',
+        filePath: path.relative(projectRoot, filePath).replace(/\\/gu, '/'),
+      },
+      comments: [],
+      images: [{
+        id: 'escape',
+        assetPath: `${relativeAssetRoot}/escape.png`,
+        mimeType: 'image/png',
+      }],
+    }, null, 2)}\n`, 'utf8');
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const commentsUrl = scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/document-comments?path=${encodeURIComponent('src/resources/prd/order.md')}`,
+      );
+      const hydratedResponse = await fetch(`${commentsUrl}&hydrateImages=1`);
+      const hydratedBody = await hydratedResponse.json();
+      expect(hydratedResponse.status).toBe(200);
+      expect(hydratedBody.document.images[0]).not.toHaveProperty('data');
+
+      const assetResponse = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/document-comments/asset?path=${encodeURIComponent('src/resources/prd/order.md')}&asset=${encodeURIComponent(`${relativeAssetRoot}/escape.png`)}`,
+      ));
+      expect(assetResponse.status).toBe(404);
+      expect(await assetResponse.text()).not.toContain('outside-secret');
     } finally {
       await server.close();
     }

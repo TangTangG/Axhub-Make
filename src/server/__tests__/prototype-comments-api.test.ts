@@ -739,6 +739,46 @@ describe('prototype comments API', () => {
     }
   });
 
+  it('does not overwrite an outside file through a child asset symlink', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
+    writePrototypeProject(projectRoot);
+    const { assetDir } = prototypeCommentStorage(projectRoot);
+    const outsideFile = path.join(projectRoot, 'outside-prototype-asset.png');
+    fs.mkdirSync(assetDir, { recursive: true });
+    fs.writeFileSync(outsideFile, 'outside', 'utf8');
+    try {
+      fs.symlinkSync(outsideFile, path.join(assetDir, 'escape.png'), 'file');
+    } catch {
+      return;
+    }
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const response = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/prototype-comments?targetPath=prototypes/home`,
+      ), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: 'changes',
+          document: {
+            schemaVersion: 3,
+            kind: 'prototype-edit-comments',
+            resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
+            comments: [],
+            images: [{ id: 'escape', data: PNG_DATA_URL }],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(fs.readFileSync(outsideFile, 'utf8')).toBe('outside');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects a prototype directory symlink that escapes the project root', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writeProjectMetadata(projectRoot, {
