@@ -7,108 +7,205 @@ export type ReadCommentAsset = {
   filePath: string;
 };
 
+export type CommentAssetWrite = {
+  relativePath: string;
+  data: Buffer;
+};
+
 type SafeAssetDirectory = {
   absoluteAssetDir: string;
   realAssetDir: string;
 };
 
-const COMMENT_ASSET_MUTATION_SCRIPT = String.raw`
+type MutationPayload = {
+  writes?: Array<{ segments: string[]; data: string }>;
+  removes?: Array<{ index: number; segments: string[] }>;
+};
+
+const COMMENT_ASSET_WORKER_SCRIPT = String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
 
-const [operation, expectedRealAssetDir, fileName] = process.argv.slice(1);
+const [operation, expectedRoot] = process.argv.slice(1);
 const noFollow = Number(fs.constants.O_NOFOLLOW || 0);
+const nonBlocking = Number(fs.constants.O_NONBLOCK || 0);
 
-function fail(message, status = 1) {
-  process.stderr.write(String(message || 'Comment asset mutation failed'));
-  process.exit(status);
-}
-
-function isSamePath(left, right) {
+function samePath(left, right) {
   return path.relative(left, right) === '';
 }
 
-function isDirectFileName(value) {
+function validSegment(value) {
   return Boolean(
     value
     && value !== '.'
     && value !== '..'
     && !value.includes('\0')
     && !value.includes('/')
-    && !value.includes('\\\\')
+    && !value.includes('\\')
     && !path.isAbsolute(value)
   );
 }
 
-function sameFileIdentity(left, right) {
+function sameFile(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-function validateOpenFile(descriptor, realAssetDir, targetPath) {
-  const openedStats = fs.fstatSync(descriptor);
-  if (!openedStats.isFile() || openedStats.nlink !== 1) {
-    fail('Comment asset must be a regular file with one link');
+function assertAnchored(expectedPath) {
+  const actualPath = fs.realpathSync.native(process.cwd());
+  if (!samePath(actualPath, expectedPath)) {
+    throw new Error('Comment asset directory identity changed');
   }
-  const realTargetPath = fs.realpathSync.native(targetPath);
-  if (!isSamePath(path.dirname(realTargetPath), realAssetDir)) {
-    fail('Comment asset escaped the anchored directory');
-  }
-  const currentStats = fs.statSync(realTargetPath);
-  if (!sameFileIdentity(openedStats, currentStats) || currentStats.nlink !== 1) {
-    fail('Comment asset identity changed');
+  return actualPath;
+}
+
+function descend(segments, create) {
+  const startingRealPath = fs.realpathSync.native(process.cwd());
+  let currentRealPath = startingRealPath;
+  let depth = 0;
+  try {
+    for (const segment of segments) {
+      if (!validSegment(segment)) throw new Error('Invalid comment asset path segment');
+      let stats;
+      try {
+        stats = fs.lstatSync(segment);
+      } catch (error) {
+        if (!create || error.code !== 'ENOENT') throw error;
+        fs.mkdirSync(segment);
+        stats = fs.lstatSync(segment);
+      }
+      if (stats.isSymbolicLink() || !stats.isDirectory()) {
+        throw new Error('Comment asset path crosses a symbolic link boundary');
+      }
+      const expectedChild = path.join(currentRealPath, segment);
+      process.chdir(segment);
+      depth += 1;
+      currentRealPath = assertAnchored(expectedChild);
+    }
+    return { currentRealPath, depth };
+  } catch (error) {
+    returnToRoot(depth, startingRealPath);
+    throw error;
   }
 }
 
-if (!isDirectFileName(fileName)) fail('Invalid comment asset file name');
-
-const realAssetDir = fs.realpathSync.native(process.cwd());
-if (!isSamePath(realAssetDir, expectedRealAssetDir)) {
-  fail('Comment asset directory identity changed');
+function returnToRoot(depth, expectedPath) {
+  for (let index = 0; index < depth; index += 1) process.chdir('..');
+  assertAnchored(expectedPath);
 }
 
-if (operation === 'write') {
+function assertExistingDestination(fileName) {
+  try {
+    const stats = fs.lstatSync(fileName);
+    if (stats.isSymbolicLink() || !stats.isFile() || stats.nlink !== 1) {
+      throw new Error('Comment asset must be a regular file with one link');
+    }
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function writeOne(segments, encodedData, assetRoot) {
+  const parentSegments = segments.slice(0, -1);
+  const fileName = segments.at(-1);
+  if (!validSegment(fileName)) throw new Error('Invalid comment asset file name');
+  const { currentRealPath, depth } = descend(parentSegments, false);
+  const temporaryName = '.write-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
   let descriptor;
   try {
+    assertExistingDestination(fileName);
     descriptor = fs.openSync(
-      fileName,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollow,
+      temporaryName,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollow | nonBlocking,
       0o600,
     );
-    validateOpenFile(descriptor, realAssetDir, fileName);
-    const data = fs.readFileSync(0);
-    fs.ftruncateSync(descriptor, 0);
-    fs.writeFileSync(descriptor, data);
+    const openedStats = fs.fstatSync(descriptor);
+    if (!openedStats.isFile() || openedStats.nlink !== 1) {
+      throw new Error('Invalid comment asset temporary file');
+    }
+    const temporaryRealPath = fs.realpathSync.native(temporaryName);
+    if (!samePath(path.dirname(temporaryRealPath), currentRealPath)) {
+      throw new Error('Comment asset temporary file escaped its parent');
+    }
+    const temporaryStats = fs.statSync(temporaryRealPath);
+    if (!sameFile(openedStats, temporaryStats) || temporaryStats.nlink !== 1) {
+      throw new Error('Comment asset temporary file identity changed');
+    }
+    fs.writeFileSync(descriptor, Buffer.from(encodedData, 'base64'));
     fs.fsyncSync(descriptor);
-  } catch (error) {
-    fail(error && error.message ? error.message : error);
+    const writtenStats = fs.fstatSync(descriptor);
+    if (!sameFile(openedStats, writtenStats) || writtenStats.nlink !== 1) {
+      throw new Error('Comment asset temporary file link count changed');
+    }
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    assertExistingDestination(fileName);
+    fs.renameSync(temporaryName, fileName);
   } finally {
     if (typeof descriptor === 'number') fs.closeSync(descriptor);
+    try {
+      if (fs.existsSync(temporaryName)) fs.unlinkSync(temporaryName);
+    } catch {
+      // The worker is already failing closed; leave cleanup to project tooling.
+    }
+    returnToRoot(depth, assetRoot);
   }
-} else if (operation === 'remove') {
-  if (!fs.existsSync(fileName)) process.exit(2);
+}
+
+function removeOne(segments, assetRoot) {
+  const parentSegments = segments.slice(0, -1);
+  const fileName = segments.at(-1);
+  if (!validSegment(fileName)) return false;
+  let depth = 0;
   let descriptor;
   try {
-    const entryStats = fs.lstatSync(fileName);
-    if (entryStats.isSymbolicLink() || !entryStats.isFile() || entryStats.nlink !== 1) {
-      fail('Comment asset must be a regular file with one link');
-    }
-    descriptor = fs.openSync(fileName, fs.constants.O_RDONLY | noFollow);
-    validateOpenFile(descriptor, realAssetDir, fileName);
+    ({ depth } = descend(parentSegments, false));
+    if (!assertExistingDestination(fileName)) return false;
+    descriptor = fs.openSync(fileName, fs.constants.O_RDONLY | noFollow | nonBlocking);
+    const openedStats = fs.fstatSync(descriptor);
+    if (!openedStats.isFile() || openedStats.nlink !== 1) return false;
+    const realTargetPath = fs.realpathSync.native(fileName);
+    const currentRealPath = fs.realpathSync.native(process.cwd());
+    if (!samePath(path.dirname(realTargetPath), currentRealPath)) return false;
+    const currentStats = fs.statSync(realTargetPath);
+    if (!sameFile(openedStats, currentStats) || currentStats.nlink !== 1) return false;
     const quarantineName = '.delete-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(16).slice(2);
     fs.renameSync(fileName, quarantineName);
     const quarantinedStats = fs.lstatSync(quarantineName);
-    const openedStats = fs.fstatSync(descriptor);
-    if (!sameFileIdentity(openedStats, quarantinedStats) || quarantinedStats.nlink !== 1) {
-      fail('Comment asset identity changed before removal');
-    }
+    if (!sameFile(openedStats, quarantinedStats) || quarantinedStats.nlink !== 1) return false;
     fs.unlinkSync(quarantineName);
-  } catch (error) {
-    fail(error && error.message ? error.message : error);
+    return true;
+  } catch {
+    return false;
   } finally {
     if (typeof descriptor === 'number') fs.closeSync(descriptor);
+    returnToRoot(depth, assetRoot);
   }
-} else {
-  fail('Unsupported comment asset mutation');
+}
+
+try {
+  const rootRealPath = assertAnchored(expectedRoot);
+  const payloadText = fs.readFileSync(0, 'utf8');
+  const payload = payloadText ? JSON.parse(payloadText) : {};
+  if (operation === 'ensure-directory') {
+    descend(Array.isArray(payload.segments) ? payload.segments : [], true);
+    process.stdout.write('{}');
+  } else if (operation === 'mutate') {
+    for (const write of Array.isArray(payload.writes) ? payload.writes : []) {
+      writeOne(write.segments, write.data, rootRealPath);
+    }
+    const removed = [];
+    for (const removal of Array.isArray(payload.removes) ? payload.removes : []) {
+      if (removeOne(removal.segments, rootRealPath)) removed.push(removal.index);
+    }
+    process.stdout.write(JSON.stringify({ removed }));
+  } else {
+    throw new Error('Unsupported comment asset worker operation');
+  }
+} catch (error) {
+  process.stderr.write(String(error && error.message ? error.message : error));
+  process.exitCode = 1;
 }
 `;
 
@@ -121,20 +218,50 @@ function isPathInside(root: string, candidate: string): boolean {
   );
 }
 
-function normalizeRelativeAssetName(value: string): string | null {
-  const normalized = String(value || '').trim();
-  if (
-    !normalized
-    || normalized === '.'
-    || normalized === '..'
-    || normalized.includes('\0')
-    || normalized.includes('/')
-    || normalized.includes('\\')
-    || path.isAbsolute(normalized)
-  ) {
-    return null;
-  }
-  return normalized;
+function normalizeRelativeAssetPath(value: string): string[] | null {
+  const normalized = String(value || '').trim().replace(/\\/gu, '/');
+  if (!normalized || normalized.includes('\0') || normalized.startsWith('/')) return null;
+  const segments = normalized.split('/');
+  return segments.some((segment) => !segment || segment === '.' || segment === '..')
+    ? null
+    : segments;
+}
+
+function noFollowFlag(): number {
+  return Number((fs.constants as Record<string, number>).O_NOFOLLOW || 0);
+}
+
+function nonBlockingFlag(): number {
+  return Number((fs.constants as Record<string, number>).O_NONBLOCK || 0);
+}
+
+function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function workerError(result: childProcess.SpawnSyncReturns<string>, fallback: string): Error {
+  const detail = result.error?.message || String(result.stderr || '').trim();
+  return new Error(detail || fallback);
+}
+
+function runWorker(
+  operation: 'ensure-directory' | 'mutate',
+  cwd: string,
+  expectedRoot: string,
+  payload: unknown,
+): childProcess.SpawnSyncReturns<string> {
+  return childProcess.spawnSync(
+    process.execPath,
+    ['--eval', COMMENT_ASSET_WORKER_SCRIPT, operation, expectedRoot],
+    {
+      cwd,
+      encoding: 'utf8',
+      input: JSON.stringify(payload),
+      maxBuffer: 1024 * 1024,
+      timeout: 30_000,
+      windowsHide: true,
+    },
+  );
 }
 
 function assertSafeAssetDirectory(
@@ -148,48 +275,68 @@ function assertSafeAssetDirectory(
     throw new Error('Invalid comment asset directory');
   }
 
-  const relative = path.relative(absoluteProjectRoot, absoluteAssetDir);
-  let current = absoluteProjectRoot;
-  for (const segment of relative.split(path.sep).filter(Boolean)) {
+  const relativeSegments = path.relative(absoluteProjectRoot, absoluteAssetDir)
+    .split(path.sep)
+    .filter(Boolean);
+  const realProjectRoot = fs.realpathSync.native(absoluteProjectRoot);
+  if (create && !fs.existsSync(absoluteAssetDir)) {
+    const result = runWorker(
+      'ensure-directory',
+      absoluteProjectRoot,
+      realProjectRoot,
+      { segments: relativeSegments },
+    );
+    if (result.error || result.status !== 0) {
+      throw workerError(result, 'Failed to create comment asset directory');
+    }
+  }
+
+  let current = realProjectRoot;
+  for (const segment of relativeSegments) {
     current = path.join(current, segment);
-    if (!fs.existsSync(current)) break;
     const stats = fs.lstatSync(current);
     if (stats.isSymbolicLink() || !stats.isDirectory()) {
       throw new Error('Comment asset directory crosses a symbolic link boundary');
     }
   }
-
-  if (create) fs.mkdirSync(absoluteAssetDir, { recursive: true });
-  if (!fs.existsSync(absoluteAssetDir)) throw new Error('Comment asset directory does not exist');
-
-  const assetStats = fs.lstatSync(absoluteAssetDir);
-  if (assetStats.isSymbolicLink() || !assetStats.isDirectory()) {
-    throw new Error('Invalid comment asset directory');
-  }
-  const realProjectRoot = fs.realpathSync.native(absoluteProjectRoot);
-  const realAssetDir = fs.realpathSync.native(absoluteAssetDir);
-  if (!isPathInside(realProjectRoot, realAssetDir)) {
+  if (!fs.existsSync(current)) throw new Error('Comment asset directory does not exist');
+  const realAssetDir = fs.realpathSync.native(current);
+  if (!isPathInside(realProjectRoot, realAssetDir) || path.relative(current, realAssetDir) !== '') {
     throw new Error('Comment asset directory escapes project root');
   }
-  return { absoluteAssetDir, realAssetDir };
+  return { absoluteAssetDir: current, realAssetDir };
 }
 
-function noFollowFlag(): number {
-  return Number((fs.constants as Record<string, number>).O_NOFOLLOW || 0);
-}
-
-function sameFileIdentity(left: fs.Stats, right: fs.Stats): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+function validateExistingAssetPath(
+  directory: SafeAssetDirectory,
+  segments: string[],
+): string | null {
+  let current = directory.realAssetDir;
+  try {
+    for (const [index, segment] of segments.entries()) {
+      current = path.join(current, segment);
+      const stats = fs.lstatSync(current);
+      if (stats.isSymbolicLink()) return null;
+      if (index < segments.length - 1 ? !stats.isDirectory() : !stats.isFile()) return null;
+    }
+    return current;
+  } catch {
+    return null;
+  }
 }
 
 function openVerifiedCommentAsset(
   directory: SafeAssetDirectory,
-  fileName: string,
+  segments: string[],
 ): { descriptor: number; filePath: string } | null {
-  const filePath = path.join(directory.absoluteAssetDir, fileName);
+  const expectedFilePath = validateExistingAssetPath(directory, segments);
+  if (!expectedFilePath) return null;
   let descriptor: number;
   try {
-    descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | noFollowFlag());
+    descriptor = fs.openSync(
+      expectedFilePath,
+      fs.constants.O_RDONLY | noFollowFlag() | nonBlockingFlag(),
+    );
   } catch {
     return null;
   }
@@ -198,8 +345,8 @@ function openVerifiedCommentAsset(
   try {
     const openedStats = fs.fstatSync(descriptor);
     if (!openedStats.isFile() || openedStats.nlink !== 1) return null;
-    const realFilePath = fs.realpathSync.native(filePath);
-    if (!isPathInside(directory.realAssetDir, realFilePath)) return null;
+    const realFilePath = fs.realpathSync.native(expectedFilePath);
+    if (path.relative(expectedFilePath, realFilePath) !== '') return null;
     const currentStats = fs.statSync(realFilePath);
     if (!sameFileIdentity(openedStats, currentStats) || currentStats.nlink !== 1) return null;
     verified = true;
@@ -211,23 +358,24 @@ function openVerifiedCommentAsset(
   }
 }
 
-function runCommentAssetMutation(
-  operation: 'write' | 'remove',
-  directory: SafeAssetDirectory,
-  fileName: string,
-  data?: Buffer,
-): childProcess.SpawnSyncReturns<string> {
-  return childProcess.spawnSync(
-    process.execPath,
-    ['--eval', COMMENT_ASSET_MUTATION_SCRIPT, operation, directory.realAssetDir, fileName],
-    {
-      cwd: directory.absoluteAssetDir,
-      encoding: 'utf8',
-      input: data,
-      maxBuffer: 1024 * 1024,
-      windowsHide: true,
-    },
-  );
+export function writeCommentAssets(
+  projectRoot: string,
+  assetDir: string,
+  writes: CommentAssetWrite[],
+): void {
+  if (writes.length === 0) return;
+  const normalizedWrites = writes.map((write) => {
+    const segments = normalizeRelativeAssetPath(write.relativePath);
+    if (!segments) throw new Error('Invalid comment asset path');
+    return { segments, data: write.data.toString('base64') };
+  });
+  const directory = assertSafeAssetDirectory(projectRoot, assetDir, true);
+  const result = runWorker('mutate', directory.absoluteAssetDir, directory.realAssetDir, {
+    writes: normalizedWrites,
+  } satisfies MutationPayload);
+  if (result.error || result.status !== 0) {
+    throw workerError(result, 'Failed to write comment assets');
+  }
 }
 
 export function writeCommentAsset(
@@ -236,14 +384,7 @@ export function writeCommentAsset(
   relativePath: string,
   data: Buffer,
 ): void {
-  const fileName = normalizeRelativeAssetName(relativePath);
-  if (!fileName) throw new Error('Invalid comment asset path');
-  const directory = assertSafeAssetDirectory(projectRoot, assetDir, true);
-  const result = runCommentAssetMutation('write', directory, fileName, data);
-  if (result.error || result.status !== 0) {
-    const detail = result.error?.message || String(result.stderr || '').trim();
-    throw new Error(detail || 'Failed to write comment asset');
-  }
+  writeCommentAssets(projectRoot, assetDir, [{ relativePath, data }]);
 }
 
 export function readCommentAsset(
@@ -251,8 +392,8 @@ export function readCommentAsset(
   assetDir: string,
   relativePath: string,
 ): ReadCommentAsset | null {
-  const fileName = normalizeRelativeAssetName(relativePath);
-  if (!fileName) return null;
+  const segments = normalizeRelativeAssetPath(relativePath);
+  if (!segments) return null;
 
   let directory: SafeAssetDirectory;
   try {
@@ -260,7 +401,7 @@ export function readCommentAsset(
   } catch {
     return null;
   }
-  const opened = openVerifiedCommentAsset(directory, fileName);
+  const opened = openVerifiedCommentAsset(directory, segments);
   if (!opened) return null;
   try {
     return { data: fs.readFileSync(opened.descriptor), filePath: opened.filePath };
@@ -269,20 +410,43 @@ export function readCommentAsset(
   }
 }
 
-export function removeCommentAsset(
+export function removeCommentAssets(
   projectRoot: string,
   assetDir: string,
-  relativePath: string,
-): boolean {
-  const fileName = normalizeRelativeAssetName(relativePath);
-  if (!fileName) return false;
+  relativePaths: string[],
+): boolean[] {
+  if (relativePaths.length === 0) return [];
+  const normalized = relativePaths.map((relativePath, index) => ({
+    index,
+    segments: normalizeRelativeAssetPath(relativePath),
+  }));
+  const validRemovals = normalized.flatMap((entry) => (
+    entry.segments ? [{ index: entry.index, segments: entry.segments }] : []
+  ));
+  if (validRemovals.length === 0) return relativePaths.map(() => false);
 
   let directory: SafeAssetDirectory;
   try {
     directory = assertSafeAssetDirectory(projectRoot, assetDir, false);
   } catch {
-    return false;
+    return relativePaths.map(() => false);
   }
-  const result = runCommentAssetMutation('remove', directory, fileName);
-  return !result.error && result.status === 0;
+  const result = runWorker('mutate', directory.absoluteAssetDir, directory.realAssetDir, {
+    removes: validRemovals,
+  } satisfies MutationPayload);
+  if (result.error || result.status !== 0) return relativePaths.map(() => false);
+  try {
+    const removed = new Set<number>(JSON.parse(String(result.stdout || '{}')).removed || []);
+    return relativePaths.map((_, index) => removed.has(index));
+  } catch {
+    return relativePaths.map(() => false);
+  }
+}
+
+export function removeCommentAsset(
+  projectRoot: string,
+  assetDir: string,
+  relativePath: string,
+): boolean {
+  return removeCommentAssets(projectRoot, assetDir, [relativePath])[0] || false;
 }

@@ -870,6 +870,18 @@ describe('release make artifact helpers', () => {
     assert.equal(releaseMake.shouldBuildPlatformArtifacts({ skipGithub: true }), false);
     assert.equal(releaseMake.shouldBuildPlatformArtifacts({ skipGithub: false }), true);
     assert.equal(releaseMake.shouldBuildPlatformArtifacts({}), true);
+    assert.deepEqual(
+      releaseMake.releaseToolsForOptions({ skipGithub: true }),
+      ['pnpm', 'npm', 'bun'],
+    );
+    assert.deepEqual(
+      releaseMake.releaseToolsForOptions({ skipGithub: false }),
+      ['pnpm', 'npm', 'bun', 'zip'],
+    );
+    assert.deepEqual(releaseMake.releaseToolCheckArgs('pnpm'), ['--version']);
+    assert.deepEqual(releaseMake.releaseToolCheckArgs('npm'), ['--version']);
+    assert.deepEqual(releaseMake.releaseToolCheckArgs('bun'), ['--version']);
+    assert.deepEqual(releaseMake.releaseToolCheckArgs('zip'), ['-v']);
   });
 
   it('keeps make publish source independent from the project-core workspace package', () => {
@@ -1271,6 +1283,16 @@ describe('release make artifact helpers', () => {
         '--help',
       ],
     );
+  });
+
+  it('exercises comment asset persistence from the installed npm CLI smoke', () => {
+    const releaseSource = fs.readFileSync(path.resolve('scripts/release-make.mjs'), 'utf8');
+
+    assert.match(releaseSource, /async function exerciseCommentAssetLifecycle\(/u);
+    assert.match(releaseSource, /\/api\/document-comments/u);
+    assert.match(releaseSource, /hydrateImages=1/u);
+    assert.match(releaseSource, /reason: 'clear'/u);
+    assert.match(releaseSource, /Comment asset smoke cleanup did not remove/u);
   });
 
   it('omits OpenCode WebUI static assets from release packaging while disabled', () => {

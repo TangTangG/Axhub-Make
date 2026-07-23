@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { readCommentAsset, removeCommentAsset, writeCommentAsset } from './commentAssetFiles.ts';
+import { readCommentAsset, removeCommentAssets, writeCommentAssets } from './commentAssetFiles.ts';
 import { readJsonBody, sendCorsJson, sendCorsPreflight } from './http.ts';
 import {
   resolveDocumentCommentStorage,
@@ -89,6 +89,7 @@ function persistImageAssets(
   resolved: DocumentCommentStorage,
   projectRoot: string,
 ): Record<string, unknown> {
+  const writes: Array<{ relativePath: string; data: Buffer }> = [];
   const images = (Array.isArray(document.images) ? document.images : []).map((rawImage, index) => {
     const image = isRecord(rawImage) ? { ...rawImage } : {};
     const parsed = parseImageDataUrl(image.data);
@@ -97,7 +98,7 @@ function persistImageAssets(
       const fileName = assetFileName(image.id, index, extension);
       const fullPath = path.join(resolved.assetDir, fileName);
       if (!fullPath.startsWith(resolved.assetDir + path.sep)) throw new Error('Invalid document comment asset path');
-      writeCommentAsset(projectRoot, resolved.assetDir, fileName, parsed.buffer);
+      writes.push({ relativePath: fileName, data: parsed.buffer });
       image.assetPath = `.axhub/make/comment-assets/${resolved.documentHash}/${fileName}`;
       image.mimeType = image.mimeType || parsed.mimeType;
       image.size = Number(image.size ?? parsed.buffer.length);
@@ -105,6 +106,7 @@ function persistImageAssets(
     delete image.data;
     return image;
   });
+  writeCommentAssets(projectRoot, resolved.assetDir, writes);
   return { ...document, images };
 }
 
@@ -131,16 +133,17 @@ function removeUnreferencedImageAssets(
 ): void {
   const nextPaths = collectAssetPaths(next, resolved);
   const previousPaths = collectAssetPaths(previous, resolved);
+  const relativePaths: string[] = [];
   for (const assetPath of previousPaths) {
     if (nextPaths.has(assetPath)) continue;
     const filePath = path.resolve(resolved.commentFilePath, '..', '..', '..', '..', assetPath);
     if (!filePath.startsWith(resolved.assetDir + path.sep)) continue;
-    try {
-      const relativePath = path.relative(resolved.assetDir, filePath);
-      removeCommentAsset(projectRoot, resolved.assetDir, relativePath);
-    } catch (error) {
-      console.warn('[Make] Failed to remove document comment asset:', error);
-    }
+    relativePaths.push(path.relative(resolved.assetDir, filePath));
+  }
+  try {
+    removeCommentAssets(projectRoot, resolved.assetDir, relativePaths);
+  } catch (error) {
+    console.warn('[Make] Failed to remove document comment assets:', error);
   }
 }
 

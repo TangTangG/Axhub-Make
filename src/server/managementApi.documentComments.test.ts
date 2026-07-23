@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cleanupProjectApiTestRoots,
@@ -49,6 +50,7 @@ async function startActivatedProjectServer(projectRoot: string): Promise<Awaited
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanupProjectApiTestRoots();
 });
 
@@ -179,6 +181,44 @@ describe('document comments API', () => {
       });
 
       expect(fs.existsSync(absoluteAssetPath)).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('writes multiple document images through one mutation worker', async () => {
+    const projectRoot = createTempRoot('axhub-document-comments-');
+    writeDocumentProject(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
+    const spawn = vi.spyOn(childProcess, 'spawnSync');
+
+    try {
+      const response = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/document-comments?path=${encodeURIComponent('src/resources/prd/order.md')}`,
+      ), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: 'changes',
+          document: {
+            schemaVersion: 3,
+            kind: 'document-edit-comments',
+            documentPath: 'src/resources/prd/order.md',
+            comments: [],
+            images: [
+              { id: 'hero', data: PNG_DATA_URL },
+              { id: 'detail', data: PNG_DATA_URL },
+            ],
+          },
+        }),
+      });
+
+      expect(response.status, await response.clone().text()).toBe(200);
+      const mutationCalls = spawn.mock.calls.filter(([, args]) => (
+        Array.isArray(args) && args[0] === '--eval' && args[2] === 'mutate'
+      ));
+      expect(mutationCalls).toHaveLength(1);
     } finally {
       await server.close();
     }

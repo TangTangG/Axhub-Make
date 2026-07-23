@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { isPathInside, resolveProjectPath, type ProjectMetadata } from './projectCore/index.ts';
 
-import { readCommentAsset, removeCommentAsset, writeCommentAsset } from './commentAssetFiles.ts';
+import { readCommentAsset, removeCommentAssets, writeCommentAssets } from './commentAssetFiles.ts';
 import { readJsonBody, sendCorsJson, sendCorsPreflight, sendJson } from './http.ts';
 import {
   normalizePrototypeCommentTargetPath,
@@ -360,6 +360,7 @@ function persistImageAssets(
   projectRoot: string,
 ): Record<string, unknown> {
   const rawImages = Array.isArray(document.images) ? document.images : [];
+  const writes: Array<{ relativePath: string; data: Buffer }> = [];
   const images = rawImages.map((rawImage, index) => {
     const image = rawImage && typeof rawImage === 'object' && !Array.isArray(rawImage)
       ? { ...(rawImage as Record<string, unknown>) }
@@ -373,7 +374,7 @@ function persistImageAssets(
       if (!isPathInside(resolved.assetDir, assetPath)) {
         throw new Error('Invalid comment asset path');
       }
-      writeCommentAsset(projectRoot, resolved.assetDir, fileName, parsed.buffer);
+      writes.push({ relativePath: fileName, data: parsed.buffer });
       image.assetPath = `${resolved.projectRelativeAssetRoot}/${fileName}`;
       image.mimeType = image.mimeType || parsed.mimeType;
       image.size = Number(image.size ?? parsed.buffer.length);
@@ -381,6 +382,7 @@ function persistImageAssets(
     delete image.data;
     return image;
   });
+  writeCommentAssets(projectRoot, resolved.assetDir, writes);
   return {
     ...document,
     images,
@@ -427,14 +429,16 @@ function removeUnreferencedImageAssets(
 ): void {
   const previousPaths = collectImageAssetPaths(previous, resolved);
   const nextPaths = collectImageAssetPaths(next, resolved);
+  const relativePaths: string[] = [];
   for (const assetPath of previousPaths) {
     if (nextPaths.has(assetPath)) continue;
     const relativeAssetPath = assetPath.slice(`${resolved.projectRelativeAssetRoot}/`.length);
-    try {
-      removeCommentAsset(projectRoot, resolved.assetDir, relativeAssetPath);
-    } catch (error) {
-      console.warn('[Make] Failed to remove prototype comment asset:', error);
-    }
+    relativePaths.push(relativeAssetPath);
+  }
+  try {
+    removeCommentAssets(projectRoot, resolved.assetDir, relativePaths);
+  } catch (error) {
+    console.warn('[Make] Failed to remove prototype comment assets:', error);
   }
 }
 

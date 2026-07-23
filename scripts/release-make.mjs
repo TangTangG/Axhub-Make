@@ -1525,6 +1525,19 @@ export function shouldBuildPlatformArtifacts(options = {}) {
   return !options.skipGithub;
 }
 
+export function releaseToolsForOptions(options = {}) {
+  return [
+    'pnpm',
+    'npm',
+    'bun',
+    ...(shouldBuildPlatformArtifacts(options) ? ['zip'] : []),
+  ];
+}
+
+export function releaseToolCheckArgs(tool) {
+  return tool === 'zip' ? ['-v'] : ['--version'];
+}
+
 function prepareRelease(options = {}) {
   const sourcePackage = readJson(makePackageJsonPath);
   if (sourcePackage.name !== '@axhub/make') {
@@ -1535,10 +1548,9 @@ function prepareRelease(options = {}) {
   }
 
   logStep('Checking release tools');
-  assertTool('pnpm');
-  assertTool('npm');
-  assertTool('bun');
-  assertTool('zip', ['-v']);
+  for (const tool of releaseToolsForOptions(options)) {
+    assertTool(tool, releaseToolCheckArgs(tool));
+  }
 
   fs.rmSync(releaseRoot, { recursive: true, force: true });
   fs.mkdirSync(releaseRoot, { recursive: true });
@@ -1761,9 +1773,107 @@ async function waitForHttpOk(url, child, label) {
   throw new Error(`${label} did not become ready: ${lastError?.message || 'timeout'}`);
 }
 
+async function exerciseCommentAssetLifecycle(origin, projectRoot) {
+  const projectId = 'release-comment-smoke';
+  const documentPath = 'src/resources/prd/order.md';
+  const pngDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
+  writeJson(path.join(projectRoot, '.axhub/make/client.json'), {
+    schemaVersion: 1,
+    kind: 'axhub-make-client',
+    repository: 'https://github.com/lintendo/Axhub-Make/tree/main/client',
+    project: { id: projectId, name: 'Release Comment Smoke' },
+  });
+  writeJson(path.join(projectRoot, '.axhub/make/project.json'), {
+    schemaVersion: 1,
+    project: { id: projectId, name: 'Release Comment Smoke' },
+    resources: { prototypes: [], themes: [] },
+    navigation: { prototypes: [] },
+    orders: { themes: [] },
+  });
+  writeJson(path.join(projectRoot, 'package.json'), {
+    name: projectId,
+    private: true,
+    scripts: {
+      dev: 'vite',
+      'metadata:sync': 'node scripts/sync-project-metadata.mjs',
+    },
+  });
+  fs.mkdirSync(path.dirname(path.join(projectRoot, documentPath)), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, documentPath), '# Order\n', 'utf8');
+
+  const assertOk = async (response, action) => {
+    if (!response.ok) {
+      throw new Error(`${action} failed with ${response.status}: ${await response.text()}`);
+    }
+    return response;
+  };
+  await assertOk(await fetch(`${origin}/api/projects/make/register-existing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root: projectRoot }),
+  }), 'Comment asset smoke project registration');
+  await assertOk(await fetch(`${origin}/api/projects/active`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectId }),
+  }), 'Comment asset smoke project activation');
+
+  const commentsUrl = `${origin}/api/document-comments?path=${encodeURIComponent(documentPath)}&projectId=${encodeURIComponent(projectId)}`;
+  const storedResponse = await assertOk(await fetch(commentsUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reason: 'changes',
+      document: {
+        schemaVersion: 3,
+        kind: 'document-edit-comments',
+        documentPath,
+        comments: [],
+        images: [{ id: 'smoke-image', elementKey: 'smoke-image', data: pngDataUrl }],
+      },
+    }),
+  }), 'Comment asset smoke write');
+  const storedBody = await storedResponse.json();
+  const assetPath = String(storedBody?.document?.images?.[0]?.assetPath || '');
+  if (!assetPath) {
+    throw new Error('Comment asset smoke write did not return an asset path');
+  }
+
+  const hydratedResponse = await assertOk(
+    await fetch(`${commentsUrl}&hydrateImages=1`),
+    'Comment asset smoke hydration',
+  );
+  const hydratedBody = await hydratedResponse.json();
+  if (hydratedBody?.document?.images?.[0]?.data !== pngDataUrl) {
+    throw new Error('Comment asset smoke hydration did not return the stored image');
+  }
+
+  await assertOk(await fetch(commentsUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      reason: 'clear',
+      document: {
+        schemaVersion: 3,
+        kind: 'document-edit-comments',
+        documentPath,
+        comments: [],
+        images: [],
+      },
+    }),
+  }), 'Comment asset smoke clear');
+  const absoluteAssetPath = path.join(projectRoot, assetPath);
+  if (fs.existsSync(absoluteAssetPath)) {
+    throw new Error(`Comment asset smoke cleanup did not remove ${absoluteAssetPath}`);
+  }
+}
+
 async function startAndProbeServer(params) {
   const port = await findFreePort();
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-release-project-'));
+  const homeDir = params.exerciseCommentAssets
+    ? fs.mkdtempSync(path.join(os.tmpdir(), 'axhub-make-release-home-'))
+    : null;
   const args = [
     projectRoot,
     '--host',
@@ -1778,6 +1888,7 @@ async function startAndProbeServer(params) {
     env: {
       ...process.env,
       AXHUB_MAKE_CANVAS_FIG_SYNC: params.canvasFigSyncPath,
+      ...(homeDir ? { AXHUB_MAKE_HOME_DIR: homeDir } : {}),
       ...(params.env || {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1804,6 +1915,9 @@ async function startAndProbeServer(params) {
         throw new Error(`${params.label} did not serve OpenCode WebUI HTML from /opencode/`);
       }
     }
+    if (params.exerciseCommentAssets) {
+      await exerciseCommentAssetLifecycle(`http://127.0.0.1:${port}`, projectRoot);
+    }
   } finally {
     child.kill();
     await new Promise((resolve) => {
@@ -1811,6 +1925,7 @@ async function startAndProbeServer(params) {
       setTimeout(resolve, 1000);
     });
     fs.rmSync(projectRoot, { recursive: true, force: true });
+    if (homeDir) fs.rmSync(homeDir, { recursive: true, force: true });
   }
 
   if (output.trim()) {
@@ -1839,6 +1954,7 @@ async function testPreparedArtifacts() {
       cwd: tempInstallDir,
       adminRoot: manifest.adminDir,
       canvasFigSyncPath: path.join(npmPackageScriptsDir, 'canvas-fig-sync.mjs'),
+      exerciseCommentAssets: true,
     });
   } finally {
     fs.rmSync(tempInstallDir, { recursive: true, force: true });

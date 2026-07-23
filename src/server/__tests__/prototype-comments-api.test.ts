@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
+import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cleanupProjectApiTestRoots,
@@ -64,6 +65,7 @@ async function startActivatedProjectServer(projectRoot: string): Promise<Awaited
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   cleanupProjectApiTestRoots();
 });
 
@@ -888,6 +890,7 @@ describe('prototype comments API', () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
     const server = await startActivatedProjectServer(projectRoot);
+    const spawn = vi.spyOn(childProcess, 'spawnSync');
 
     try {
       const response = await fetch(scopeProjectApiUrl(
@@ -973,6 +976,10 @@ describe('prototype comments API', () => {
         assetPath: prototypeCommentAssetPath('hero-detail.png'),
         data: expect.stringMatching(/^data:image\/png;base64,/u),
       });
+      const mutationCalls = spawn.mock.calls.filter(([, args]) => (
+        Array.isArray(args) && args[0] === '--eval' && args[2] === 'mutate'
+      ));
+      expect(mutationCalls).toHaveLength(1);
     } finally {
       await server.close();
     }

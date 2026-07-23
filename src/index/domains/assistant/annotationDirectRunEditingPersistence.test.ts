@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AnnotationDirectRunEvent } from './annotationDirectRunManager';
+import {
+  createAnnotationDirectRunRegistry,
+  type AnnotationDirectRunEvent,
+  type AnnotationDirectRunSubmitRequest,
+} from './annotationDirectRunManager';
 import { persistAcceptedAnnotationEditingState } from './annotationDirectRunEditingPersistence';
 
 const taskRef = {
@@ -42,5 +46,49 @@ describe('accepted annotation editing persistence', () => {
 
     expect(persist).toHaveBeenCalledTimes(1);
     expect(persist).toHaveBeenCalledWith(editingTargets, 'editing', taskRef);
+  });
+
+  it('persists once when the real run registry emits an accepted lifecycle', async () => {
+    const persist = vi.fn(async () => {});
+    const registry = createAnnotationDirectRunRegistry({
+      createRequestId: () => 'draft-card-a',
+    });
+    const submit = vi.fn(async (request: AnnotationDirectRunSubmitRequest<Record<string, unknown>>) => {
+      await request.onPrepared?.({
+        provider: 'codex',
+        threadId: 'thread-card-a',
+        runId: 'run-card-a',
+      });
+      await request.onAccepted?.({
+        provider: 'codex',
+        threadId: 'thread-card-a',
+        runId: 'run-card-a',
+        conversationId: 'thread-card-a',
+      });
+      return { provider: 'codex', threadId: 'thread-card-a', runId: 'run-card-a' };
+    });
+
+    const started = registry.startRun({
+      context: { page: 'home' },
+      prompt: 'Update card A',
+      editingTargets,
+      maxActiveRuns: 1,
+      submit,
+      onEvent: (event) => persistAcceptedAnnotationEditingState(event, persist),
+    });
+    expect(started.started).toBe(true);
+    if (!started.started) return;
+
+    await expect(started.promise).resolves.toBe(true);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith(
+      editingTargets,
+      'editing',
+      expect.objectContaining({
+        provider: 'codex',
+        sessionId: 'thread-card-a',
+        requestId: 'run-card-a',
+      }),
+    );
   });
 });
