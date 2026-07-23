@@ -1016,6 +1016,16 @@ describe('useIndexPagePreviewActions source', () => {
       'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
       'const abortAnnotationDirectRun = useCallback',
     );
+    const preAcceptedRunSource = getSourceSegment(
+      directRunSource,
+      "case 'started':",
+      "case 'accepted':",
+    );
+    const acceptedRunSource = getSourceSegment(
+      directRunSource,
+      "case 'accepted':",
+      "case 'completed':",
+    );
     const runHostToolbarActionSource = getSourceSegment(
       source,
       'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
@@ -1062,7 +1072,9 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("case 'completed':");
     expect(source).toContain("case 'aborted':");
     expect(source).toContain("case 'error':");
-    expect(directRunSource).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
+    expect(preAcceptedRunSource).not.toContain('applyAnnotationEditingTaskState');
+    expect(preAcceptedRunSource).toContain('break;');
+    expect(acceptedRunSource).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'completed'");
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'idle'");
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error'");

@@ -1283,6 +1283,7 @@ export function useIndexPagePreviewActions(params: any) {
             switch (event.type) {
                 case 'started':
                 case 'prepared':
+                    break;
                 case 'accepted':
                     await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);
                     break;
