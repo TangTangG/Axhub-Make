@@ -37,6 +37,7 @@ import {
     type AnnotationDirectRunEvent,
     type AnnotationDirectRunTaskRef,
 } from '../../domains/assistant/annotationDirectRunManager';
+import { persistAcceptedAnnotationEditingState } from '../../domains/assistant/annotationDirectRunEditingPersistence';
 import type {
     CommentaryHostToolbarAction,
     CommentaryHostToolbarState,
@@ -1285,7 +1286,7 @@ export function useIndexPagePreviewActions(params: any) {
                 case 'prepared':
                     break;
                 case 'accepted':
-                    await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);
+                    await persistAcceptedAnnotationEditingState(event, applyAnnotationEditingTaskState);
                     break;
                 case 'completed':
                     messageApi.success('AI 已执行');

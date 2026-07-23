@@ -1074,7 +1074,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("case 'error':");
     expect(preAcceptedRunSource).not.toContain('applyAnnotationEditingTaskState');
     expect(preAcceptedRunSource).toContain('break;');
-    expect(acceptedRunSource).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
+    expect(acceptedRunSource).toContain('await persistAcceptedAnnotationEditingState(event, applyAnnotationEditingTaskState);');
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'completed'");
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'idle'");
     expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error'");
