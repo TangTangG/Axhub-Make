@@ -216,7 +216,7 @@ describe('document comments API', () => {
 
       expect(response.status, await response.clone().text()).toBe(200);
       const mutationCalls = spawn.mock.calls.filter(([, args]) => (
-        Array.isArray(args) && args[0] === '--eval' && args[2] === 'mutate'
+        Array.isArray(args) && args[1] === '--eval' && args[3] === 'mutate'
       ));
       expect(mutationCalls).toHaveLength(1);
     } finally {

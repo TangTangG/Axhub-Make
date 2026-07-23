@@ -977,7 +977,7 @@ describe('prototype comments API', () => {
         data: expect.stringMatching(/^data:image\/png;base64,/u),
       });
       const mutationCalls = spawn.mock.calls.filter(([, args]) => (
-        Array.isArray(args) && args[0] === '--eval' && args[2] === 'mutate'
+        Array.isArray(args) && args[1] === '--eval' && args[3] === 'mutate'
       ));
       expect(mutationCalls).toHaveLength(1);
     } finally {

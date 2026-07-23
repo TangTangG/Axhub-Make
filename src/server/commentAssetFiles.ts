@@ -252,7 +252,7 @@ function runWorker(
 ): childProcess.SpawnSyncReturns<string> {
   return childProcess.spawnSync(
     process.execPath,
-    ['--eval', COMMENT_ASSET_WORKER_SCRIPT, operation, expectedRoot],
+    ['--input-type=commonjs', '--eval', COMMENT_ASSET_WORKER_SCRIPT, operation, expectedRoot],
     {
       cwd,
       encoding: 'utf8',

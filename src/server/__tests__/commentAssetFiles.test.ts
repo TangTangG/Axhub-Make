@@ -54,6 +54,7 @@ function replaceAssetDirectoryWithOutsideSymlink(fixture: ReturnType<typeof crea
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const root of temporaryRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -101,8 +102,8 @@ describe('comment asset filesystem boundary', () => {
     vi.spyOn(childProcess, 'spawnSync').mockImplementation(((...args: Parameters<typeof childProcess.spawnSync>) => {
       const workerArgs = args[1];
       const workerOptions = args[2];
-      if (Array.isArray(workerArgs) && workerArgs[0] === '--eval') {
-        workerSource = String(workerArgs[1] || '');
+      if (Array.isArray(workerArgs) && workerArgs[1] === '--eval') {
+        workerSource = String(workerArgs[2] || '');
         workerTimeout = Number(workerOptions?.timeout || 0);
       }
       return originalSpawnSync(...args);
@@ -113,7 +114,7 @@ describe('comment asset filesystem boundary', () => {
     const invalidName = 'nested\\asset.png';
     const workerResult = originalSpawnSync(
       process.execPath,
-      ['--eval', workerSource, 'mutate', fs.realpathSync.native(fixture.assetDir)],
+      ['--input-type=commonjs', '--eval', workerSource, 'mutate', fs.realpathSync.native(fixture.assetDir)],
       {
         cwd: fixture.assetDir,
         encoding: 'utf8',
@@ -125,6 +126,23 @@ describe('comment asset filesystem boundary', () => {
     expect(workerResult.status).not.toBe(0);
     expect(workerResult.stderr).toContain('Invalid comment asset file name');
     expect(fs.existsSync(path.join(fixture.assetDir, invalidName))).toBe(false);
+  });
+
+  it('runs the CommonJS worker when NODE_OPTIONS defaults eval scripts to ESM', () => {
+    const projectRoot = createTemporaryRoot('axhub-comment-asset-project-');
+    const assetDir = path.join(projectRoot, '.axhub/make/comment-assets/hash');
+    vi.stubEnv('NODE_OPTIONS', [
+      process.env.NODE_OPTIONS,
+      '--experimental-default-type=module',
+    ].filter(Boolean).join(' '));
+
+    expect(() => writeCommentAsset(
+      projectRoot,
+      assetDir,
+      'asset.png',
+      Buffer.from('inside'),
+    )).not.toThrow();
+    expect(fs.readFileSync(path.join(assetDir, 'asset.png'), 'utf8')).toBe('inside');
   });
 
   it('does not create asset directories outside the project during an ancestor swap', () => {
@@ -142,11 +160,6 @@ describe('comment asset filesystem boundary', () => {
       fs.renameSync(makeDir, parkedMakeDir);
       fs.symlinkSync(outsideDir, makeDir, 'dir');
     };
-    const originalMkdirSync = fs.mkdirSync.bind(fs);
-    vi.spyOn(fs, 'mkdirSync').mockImplementation(((targetPath, options) => {
-      if (path.resolve(String(targetPath)) === path.resolve(assetDir)) swapAncestor();
-      return originalMkdirSync(targetPath, options);
-    }) as typeof fs.mkdirSync);
     const originalSpawnSync = childProcess.spawnSync.bind(childProcess);
     vi.spyOn(childProcess, 'spawnSync').mockImplementation(((...args: Parameters<typeof childProcess.spawnSync>) => {
       swapAncestor();

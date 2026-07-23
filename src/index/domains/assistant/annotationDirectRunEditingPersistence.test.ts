@@ -74,7 +74,9 @@ describe('accepted annotation editing persistence', () => {
       editingTargets,
       maxActiveRuns: 1,
       submit,
-      onEvent: (event) => persistAcceptedAnnotationEditingState(event, persist),
+      onEvent: async (event) => {
+        await persistAcceptedAnnotationEditingState(event, persist);
+      },
     });
     expect(started.started).toBe(true);
     if (!started.started) return;
