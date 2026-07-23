@@ -479,16 +479,38 @@ describe('useIndexPagePreviewActions source', () => {
       'const handleRequestScreenshot = useCallback((width?: number, height?: number) => {',
       'const handleDimensionChange = useCallback',
     );
+    const screenshotResultSegment = getSourceSegment(
+      source,
+      "if (event.data.type !== 'axhub.quickEdit.export.captureScreenshotResult') return;",
+      "if (event.data?.type === 'AXHUB_PROTOTYPE_PAGE_CHANGE')",
+    );
 
     expect(source).toContain("if (!isExportModalOpen || imageConfig.contentType !== 'screenshot') return;");
     expect(source).toContain("rawScreenshotUrl: ''");
     expect(source).toContain('handleRequestScreenshot();');
-    expect(requestScreenshotSegment).toContain('const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);');
-    expect(requestScreenshotSegment).toContain('payload.targetWidth = screenshotSize.width;');
-    expect(requestScreenshotSegment).toContain('payload.targetHeight = screenshotSize.height;');
+    expect(source).toContain('const currentPreviewScreenshotSize = useMemo(');
+    expect(requestScreenshotSegment).toContain('resolveExportScreenshotViewportSize({');
+    expect(requestScreenshotSegment).toContain('currentPreviewSize: currentPreviewScreenshotSize,');
+    expect(requestScreenshotSegment).toContain('if (screenshotViewport.shouldSyncConfig) {');
+    expect(requestScreenshotSegment).toContain('width: screenshotViewport.width,');
+    expect(requestScreenshotSegment).toContain('height: screenshotViewport.height,');
+    expect(requestScreenshotSegment).toContain('payload.targetWidth = screenshotViewport.width;');
+    expect(requestScreenshotSegment).toContain('payload.targetHeight = screenshotViewport.height;');
+    expect(source).toContain('currentPreviewScreenshotSize.width}x${currentPreviewScreenshotSize.height}');
+    expect(source).toContain('const previousExportContentTypeRef = useRef(DEFAULT_EXPORT_IMAGE_CONFIG.contentType);');
+    expect(source).toContain('const contentTypeChanged = previousExportContentTypeRef.current !== imageConfig.contentType;');
+    expect(source).toContain("if (imageConfig.contentType === 'screenshot' && !userSetDimensionsRef.current) {");
+    expect(source).toContain("if (imageConfig.contentType !== 'screenshot') {");
+    expect(source).toContain('screenshotModalRefreshKeyRef.current = \'\';');
+    expect(source).toContain('const selectedPrototypeContextKey = `${selectedPrototypeProjectKey}:${selectedPrototypeIdentity}`;');
+    expect(source).toContain('}, [selectedPrototypeContextKey]);');
     expect(source).not.toContain('width: imageConfig.screenshotWidth');
     expect(source).not.toContain('height: imageConfig.screenshotHeight');
     expect(source).not.toContain('if (imageConfig.width === screenshotDefaultSize.width && imageConfig.height === screenshotDefaultSize.height)');
+    expect(screenshotResultSegment).toContain('screenshotWidth: event.data.width,');
+    expect(screenshotResultSegment).toContain('screenshotHeight: event.data.height,');
+    expect(screenshotResultSegment).not.toContain('\n                        width: event.data.width,');
+    expect(screenshotResultSegment).not.toContain('\n                        height: event.data.height,');
   });
 
   it('does not send obsolete screenshot style reset messages when closing the export modal', () => {
@@ -989,6 +1011,11 @@ describe('useIndexPagePreviewActions source', () => {
 
   it('maps annotation host toolbar AI actions to abortable API direct ACP runs without opening the assistant panel', () => {
     const source = readPreviewRootSource();
+    const directRunSource = getSourceSegment(
+      source,
+      'const runAnnotationAcpChatPrompt = useCallback(async (input: string | null | undefined | AnnotationPromptRunRequest) => {',
+      'const abortAnnotationDirectRun = useCallback',
+    );
     const runHostToolbarActionSource = getSourceSegment(
       source,
       'const runHostToolbarAction = useCallback(async (action: CommentaryHostToolbarAction) => {',
@@ -1035,9 +1062,10 @@ describe('useIndexPagePreviewActions source', () => {
     expect(source).toContain("case 'completed':");
     expect(source).toContain("case 'aborted':");
     expect(source).toContain("case 'error':");
-    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
-    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'completed', event.taskRef);");
-    expect(source).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'idle', event.taskRef);");
+    expect(directRunSource).toContain("await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);");
+    expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'completed'");
+    expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'idle'");
+    expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error'");
     expect(source).toContain('editors.setNodeEditingState(target.elementKey, nextState, taskRef, target.targetRef ?? null)');
     expect(source).toContain('target.targetRef ?? null');
     expect(source).toContain('getAnnotationActionPromptText(nextAction, editors)');
@@ -1218,7 +1246,7 @@ describe('useIndexPagePreviewActions source', () => {
     expect(directRunSource).not.toContain("messageApi.error(error?.message || 'AI 执行失败');");
   });
 
-  it('passes structured direct annotation API run errors into external editing task refs', () => {
+  it('keeps direct annotation API errors out of Commentary terminal state writes', () => {
     const source = readPreviewRootSource();
     const directRunSource = getSourceSegment(
       source,
@@ -1226,12 +1254,9 @@ describe('useIndexPagePreviewActions source', () => {
       'const copyHostToolbarPromptText = useCallback',
     );
 
-    expect(source).toContain('function buildAnnotationEditingErrorTaskRef(');
-    expect(source).toContain('(error as { data?: Record<string, unknown> }).data');
-    expect(source).toContain('details: data');
-    expect(source).toContain('chunk }');
-    expect(directRunSource).toContain('const terminalTaskRef = buildAnnotationEditingErrorTaskRef(event.taskRef, event.error);');
-    expect(directRunSource).toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error', terminalTaskRef)");
+    expect(source).not.toContain('function buildAnnotationEditingErrorTaskRef(');
+    expect(directRunSource).toContain('formatThrownError(event.error)');
+    expect(directRunSource).not.toContain("applyAnnotationEditingTaskState(event.editingTargets, 'error'");
   });
 
   it('keeps explicit selection mode actions reflected in host toolbar state', () => {

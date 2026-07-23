@@ -14,6 +14,22 @@ import {
 
 const appRoot = path.resolve(__dirname, '..', '..');
 
+function collectFiles(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
+    const filePath = path.join(root, entry.name);
+    return entry.isDirectory() ? collectFiles(filePath) : [filePath];
+  });
+}
+
+function readAdminBundleJavaScript(): string {
+  const adminRoot = path.join(appRoot, 'dist', 'admin');
+  return collectFiles(adminRoot)
+    .filter((filePath) => filePath.endsWith('.js'))
+    .map((filePath) => fs.readFileSync(filePath, 'utf8'))
+    .join('\n');
+}
+
 describe('make-server vendor packages', () => {
   it('uses vendored packages from make-server config instead of workspace paths', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
@@ -99,6 +115,14 @@ describe('make-server vendor packages', () => {
     const importMap = buildVendorImportMap(appRoot, config);
     expect(importMap.paths).not.toHaveProperty('@axhub/annotation');
     expect(importMap.paths['tiptap-editor']).toEqual(['./vendor/tiptap-editor/dist/index.d.ts']);
+  });
+
+  it('ships demand annotation copy in the prebuilt admin bundle', () => {
+    const bundleSource = readAdminBundleJavaScript();
+
+    expect(bundleSource).toContain('输入需求标注，支持 Markdown 格式');
+    expect(bundleSource).not.toContain('标注 Markdown');
+    expect(bundleSource).not.toContain('输入需求标注 Markdown');
   });
 
   it('keeps vendored commentary from showing the AI note composer while annotation editing is open', () => {
@@ -229,7 +253,7 @@ describe('make-server vendor packages', () => {
     expect(installedBundle).not.toContain('\\u5F53\\u524D\\u6807\\u6CE8\\u8282\\u70B9\\u5B9A\\u4F4D\\u53EF\\u80FD\\u4E0D\\u7A33\\u5B9A');
   });
 
-  it('keeps the vendored commentary tombstone restore contract in source and runtime bundles', () => {
+  it('keeps the vendored commentary durable-id tombstone contract in source and runtime bundles', () => {
     const typesSource = fs.readFileSync(
       path.join(appRoot, 'vendor/axhub-commentary/src/web-editor-types.ts'),
       'utf8',
@@ -253,15 +277,18 @@ describe('make-server vendor packages', () => {
 
     expect(typesSource.match(/deletedAt\?: number \| null;/gu)).toHaveLength(2);
     expect(typesSource).not.toContain('PrototypeEditCommentTaskTombstone');
+    expect(typesSource).toContain('schemaVersion: 3;');
+    expect(typesSource).toContain('commentId: string;');
     expect(typesSource).toContain('export type PrototypeEditCommentTombstone =');
     expect(typesSource).toContain('observedTombstones?: PrototypeEditCommentTombstone[];');
-    expect(persistenceSource).toContain('function buildScopedElementIdentity(');
+    expect(persistenceSource).toContain('function normalizeCommentId(');
+    expect(persistenceSource).not.toContain('function buildScopedElementIdentity(');
     expect(persistenceSource).toContain('observedTombstones: adapterResult.observedTombstones');
     expect(persistenceSource).toContain('const refreshedResult = await readAdapterDocument();');
     expect(lifecycleSource.match(/discardDeletedElementStates\?\.\(deletedElementKeys\)/gu)).toHaveLength(2);
     for (const bundle of [esmBundle, cjsBundle]) {
       expect(bundle).toContain('observedTombstones');
-      expect(bundle).toContain('buildScopedElementIdentity');
+      expect(bundle).toContain('commentId');
       expect(bundle).toContain('Failed to compact restored prototype comments');
     }
   });

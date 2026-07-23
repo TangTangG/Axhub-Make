@@ -29,7 +29,7 @@ function readStoredDocument(filePath: string): Record<string, unknown> | null {
   if (!fs.existsSync(filePath)) return null;
   try {
     const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    return isRecord(value) && value.schemaVersion === 2 && value.kind === 'document-edit-comments'
+    return isRecord(value) && value.schemaVersion === 3 && value.kind === 'document-edit-comments'
       ? value
       : null;
   } catch {
@@ -40,11 +40,18 @@ function readStoredDocument(filePath: string): Record<string, unknown> | null {
 function normalizeDocument(input: unknown, resolved: DocumentCommentStorage): Record<string, unknown> {
   const raw = isRecord(input) && 'document' in input ? input.document : input;
   const record = isRecord(raw) ? { ...raw } : {};
+  if (
+    record.schemaVersion !== 3 ||
+    record.kind !== 'document-edit-comments' ||
+    !Array.isArray(record.comments) ||
+    !Array.isArray(record.images)
+  ) {
+    throw new Error('Document comments require schema version 3');
+  }
   const { tasks: _removedTasks, ...recordWithoutTasks } = record;
   return {
     ...recordWithoutTasks,
-    schemaVersion: 2,
-    version: 2,
+    schemaVersion: 3,
     kind: 'document-edit-comments',
     documentPath: resolved.documentPath,
     resource: {

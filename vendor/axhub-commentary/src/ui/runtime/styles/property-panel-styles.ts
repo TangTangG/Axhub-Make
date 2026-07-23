@@ -739,6 +739,24 @@ export const PROPERTY_PANEL_LOCAL_STYLES = `
     box-shadow: none !important;
   }
 
+  .we-runtime-feedback-modal,
+  .we-runtime-feedback-modal:focus,
+  .we-runtime-feedback-modal:focus-visible,
+  .we-runtime-feedback-modal:focus-within,
+  .we-runtime-feedback-modal .ant-modal-content,
+  .we-runtime-feedback-modal .ant-modal-content:focus,
+  .we-runtime-feedback-modal .ant-modal-content:focus-visible {
+    outline: none !important;
+  }
+
+  .we-runtime-feedback-modal:focus,
+  .we-runtime-feedback-modal:focus-visible,
+  .we-runtime-feedback-modal:focus-within,
+  .we-runtime-feedback-modal .ant-modal-content:focus,
+  .we-runtime-feedback-modal .ant-modal-content:focus-visible {
+    box-shadow: none !important;
+  }
+
   .we-runtime-directory-picker-modal .ant-modal-content {
     overflow: hidden;
   }

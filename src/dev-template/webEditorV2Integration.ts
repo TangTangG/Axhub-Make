@@ -14,6 +14,8 @@ import type {
 import {
   createCommentary,
   getGlobalCommentaryTweakProtocol,
+  subscribeAcpRuntimeStatuses,
+  type CommentaryConversationTaskTransport,
   type PrototypeEditCommentsDocument,
   type PrototypeEditCommentsPersistenceAdapter,
   type PrototypeEditCommentsPersistenceScope,
@@ -71,6 +73,54 @@ export interface WebEditorV2EnableOptions {
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function buildAcpRuntimeEventsProxyUrl(projectId: string, targetPath: string): string {
+  const params = new URLSearchParams();
+  const normalizedProjectId = normalizeString(projectId);
+  if (normalizedProjectId) params.set('projectId', normalizedProjectId);
+  const normalizedTargetPath = normalizeString(targetPath);
+  if (normalizedTargetPath) params.set('targetPath', normalizedTargetPath);
+  const query = params.toString();
+  return `/api/acp/conversations/runtime/events${query ? `?${query}` : ''}`;
+}
+
+function buildAcpRuntimeStatusProxyUrl(
+  projectId: string,
+  targetPath: string,
+  threadId: string,
+): string {
+  const params = new URLSearchParams();
+  const normalizedProjectId = normalizeString(projectId);
+  if (normalizedProjectId) params.set('projectId', normalizedProjectId);
+  const normalizedTargetPath = normalizeString(targetPath);
+  if (normalizedTargetPath) params.set('targetPath', normalizedTargetPath);
+  const normalizedThreadId = normalizeString(threadId);
+  if (normalizedThreadId) params.set('threadId', normalizedThreadId);
+  const query = params.toString();
+  return `/api/acp/conversations/runtime/status${query ? `?${query}` : ''}`;
+}
+
+function createMakeConversationTaskTransport(
+  getProjectId: () => string,
+  getTargetPath: () => string,
+): CommentaryConversationTaskTransport {
+  return {
+    watch(query, observer) {
+      const projectId = getProjectId();
+      const targetPath = getTargetPath();
+      const subscription = subscribeAcpRuntimeStatuses({
+        eventsUrl: buildAcpRuntimeEventsProxyUrl(projectId, targetPath),
+        runtimeUrl: buildAcpRuntimeStatusProxyUrl(projectId, targetPath, query.threadId),
+        threadId: query.threadId,
+        provider: query.provider,
+      }, observer.next);
+      return {
+        done: subscription.done.then(() => undefined),
+        abort: () => subscription.abort(),
+      };
+    },
+  };
 }
 
 function normalizeBooleanFlag(value: unknown): boolean | undefined {
@@ -1692,6 +1742,22 @@ export const createWebEditorV2Controller = (
             ?? createPrototypeCommentsPersistenceAdapter({
               getProjectId: () => runtimeAnnotationProjectId,
             }),
+          conversationTaskTransport:
+            options.host?.conversationTaskTransport
+            ?? createMakeConversationTaskTransport(
+              () => runtimeAnnotationProjectId,
+              () => {
+                const resource = options.host?.getResourceContext?.()
+                  ?? (typeof window !== 'undefined'
+                    ? resolveHostResourceContextFromLocation(
+                        window.location.pathname,
+                        window.location.href,
+                        { commentPageScope: runtimeCommentPageScope },
+                      )
+                    : null);
+                return normalizeString(resource?.path);
+              },
+            ),
           canEditAnnotationMarkdown: (element) => Boolean(
             annotationClient.isEnabled()
             && canEditLocalAnnotationMarkdown(element),

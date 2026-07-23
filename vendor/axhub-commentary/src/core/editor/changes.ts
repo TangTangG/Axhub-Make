@@ -7,12 +7,13 @@ import { aggregateTransactionsByElement } from '../transaction-aggregator';
 import { createElementLocator, locateElement } from '../locator';
 import { generateFullElementLabel, generateStableElementKey } from '../element-key';
 import type { EditorChangesService, ExternalEditingElementTarget } from './contracts';
-import type {
-  EditChangeKind,
-  EditorRuntimeState,
-  ElementEditMeta,
-  MarkerAnchor,
-  PromptImageAttachment,
+import {
+  ensureElementEditCommentId,
+  type EditChangeKind,
+  type EditorRuntimeState,
+  type ElementEditMeta,
+  type MarkerAnchor,
+  type PromptImageAttachment,
 } from './state';
 import {
   createMarkerAnchor,
@@ -281,6 +282,7 @@ export function createChangesService(options: {
     }
 
     const created: ElementEditMeta = {
+      commentId: null,
       elementKey,
       locator,
       label,
@@ -584,9 +586,12 @@ export function createChangesService(options: {
       return;
     }
 
-    const nodes = visibleMetas.map((meta, index) => {
+    const resolvedMetas = visibleMetas.flatMap((meta) => {
       const anchor = resolveLiveAnchor(meta.locator, meta.anchor);
-      if (!anchor) return null;
+      return anchor ? [{ meta, anchor }] : [];
+    });
+
+    const nodes = resolvedMetas.map(({ meta, anchor }, index) => {
       const position = getViewportMarkerPosition(anchor);
       const annotationNodeId = extractAnnotationPanelNodeId(meta.locator);
       const detailLines = buildMarkerDetailLines(meta);
@@ -671,7 +676,7 @@ export function createChangesService(options: {
       tooltip.append(label, details);
       marker.append(markerBody, ...(taskStatus ? [taskStatus] : []), tooltip);
       return marker;
-    }).filter((node): node is HTMLDivElement => node !== null);
+    });
 
     layer.hidden = nodes.length === 0;
     layer.replaceChildren(...nodes);
@@ -714,6 +719,9 @@ export function createChangesService(options: {
       if (summary.netEffect.styleChanges) nextKinds.push('style');
       if (summary.netEffect.classChanges) nextKinds.push('class');
       meta.changeKinds = nextKinds;
+      if (nextKinds.length > 0) {
+        ensureElementEditCommentId(meta);
+      }
       meta.styleSummaryLines = buildStyleSummaryLines(
         summary.netEffect.styleChanges?.before,
         summary.netEffect.styleChanges?.after,
@@ -889,6 +897,7 @@ export function createChangesService(options: {
     }
 
     if (normalizeNote(meta.note).trim() || (meta.skillIds?.length ?? 0) > 0) {
+      ensureElementEditCommentId(meta);
       if (meta.dirtySince === null) {
         meta.dirtySince = Date.now();
       }
@@ -929,6 +938,7 @@ export function createChangesService(options: {
     }
 
     if (meta.images.length > 0) {
+      ensureElementEditCommentId(meta);
       if (meta.dirtySince === null) {
         meta.dirtySince = Date.now();
       }
@@ -968,6 +978,7 @@ export function createChangesService(options: {
 
     meta.tweakSummaryLines = summaryLines;
     if (summaryLines.length > 0) {
+      ensureElementEditCommentId(meta);
       meta.tweakBaselineValues = baselineValues;
       meta.tweakCurrentValues = currentValues;
       meta.changeKinds = ['tweak', ...meta.changeKinds.filter((kind) => kind !== 'tweak')];

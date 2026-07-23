@@ -68,10 +68,10 @@ function scopedCommentUrl(projectRoot: string, origin: string, target: CommentTa
   return scopeProjectApiUrl(projectRoot, `${origin}${target.endpoint}`);
 }
 
-function scopedIdentity(index: number): { pageScope: string; elementKey: string } {
-  if (index === 0) return { pageScope: 'page-a', elementKey: 'shared-card' };
-  if (index === 1) return { pageScope: 'page-b', elementKey: 'shared-card' };
-  return { pageScope: `page-${index % 3}`, elementKey: `card-${index}` };
+function pageScopeFor(index: number): string {
+  if (index === 0) return 'page-a';
+  if (index === 1) return 'page-b';
+  return `page-${index % 3}`;
 }
 
 function buildSnapshot(
@@ -81,9 +81,9 @@ function buildSnapshot(
   commentState = 'editing',
 ): Record<string, any> {
   const comments = Array.from({ length: count }, (_, index) => {
-    const identity = scopedIdentity(index);
     return {
-      ...identity,
+      id: `comment-${index}`,
+      pageScope: pageScopeFor(index),
       locator: { selectors: [`[data-comment-index="${index}"]`] },
       comment: `${label}-comment-${index}`,
       state: commentState,
@@ -93,14 +93,14 @@ function buildSnapshot(
   const images = comments.map((comment, index) => ({
     id: `image-${index}`,
     pageScope: comment.pageScope,
-    elementKey: comment.elementKey,
+    commentId: comment.id,
     name: `${label}-image-${index}.png`,
     mimeType: 'image/png',
     data: PNG_DATA_URL,
   }));
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: target.kind,
     documentPath: target.kind === 'document-edit-comments' ? target.targetPath : undefined,
     resource: { id: 'comments', targetPath: target.targetPath, filePath: '' },
@@ -190,9 +190,9 @@ for (const target of targets) {
           expect(document.comments).toHaveLength(15);
           expect(document.images).toHaveLength(15);
           expect(document.comments).toEqual(expect.arrayContaining([
-            expect.objectContaining({ pageScope: 'page-a', elementKey: 'shared-card' }),
-            expect.objectContaining({ pageScope: 'page-b', elementKey: 'shared-card' }),
-            expect.objectContaining({ elementKey: 'card-14' }),
+            expect.objectContaining({ id: 'comment-0', pageScope: 'page-a' }),
+            expect.objectContaining({ id: 'comment-1', pageScope: 'page-b' }),
+            expect.objectContaining({ id: 'comment-14' }),
           ]));
           expect(document.images.every((image: Record<string, unknown>) => (
             typeof image.assetPath === 'string' && !('data' in image)
@@ -257,7 +257,7 @@ for (const target of targets) {
 
         const { fileDocument } = await readPersistedDocument(projectRoot, url);
         expect(fileDocument.comments).toEqual([
-          expect.objectContaining({ pageScope: 'page-a', elementKey: 'shared-card', deletedAt }),
+          expect.objectContaining({ id: 'comment-0', pageScope: 'page-a', deletedAt }),
         ]);
         expect(fileDocument.images).toEqual([
           expect.objectContaining({ id: 'image-0', deletedAt }),
@@ -277,8 +277,8 @@ for (const target of targets) {
         const deletedAt = 1784655000001;
         const seed = buildSnapshot(target, 10, 'seed', 'idle');
         seed.comments.push({
+          id: 'comment-removed',
           pageScope: 'page-z',
-          elementKey: 'removed-card',
           locator: { selectors: ['#removed'] },
           comment: 'remove me',
           state: 'completed',
@@ -286,8 +286,8 @@ for (const target of targets) {
         });
         seed.images.push({
           id: 'removed-image',
+          commentId: 'comment-removed',
           pageScope: 'page-z',
-          elementKey: 'removed-card',
           deletedAt,
         });
         const seeded = await fetch(url, {
@@ -305,8 +305,8 @@ for (const target of targets) {
           reason: 'restore',
           document: buildSnapshot(target, 10, 'browser-restored', 'idle'),
           observedTombstones: [
-            { kind: 'comment', pageScope: 'page-z', elementKey: 'removed-card', deletedAt },
-            { kind: 'image', id: 'removed-image', pageScope: 'page-z', elementKey: 'removed-card', deletedAt },
+            { kind: 'comment', commentId: 'comment-removed', deletedAt },
+            { kind: 'image', id: 'removed-image', commentId: 'comment-removed', deletedAt },
           ],
         });
 
@@ -318,7 +318,7 @@ for (const target of targets) {
         expect(fileDocument.images).toHaveLength(15);
         expect(fileDocument.comments.some((comment: Record<string, unknown>) => comment.deletedAt)).toBe(false);
         expect(fileDocument.comments).toEqual(expect.arrayContaining([
-          expect.objectContaining({ elementKey: 'card-14', comment: 'larger-save-comment-14' }),
+          expect.objectContaining({ id: 'comment-14', comment: 'larger-save-comment-14' }),
         ]));
       } finally {
         await server.close();

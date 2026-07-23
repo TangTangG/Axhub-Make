@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocked = vi.hoisted(() => ({
   createCommentary: vi.fn(),
   getGlobalCommentaryTweakProtocol: vi.fn(),
+  subscribeAcpRuntimeStatuses: vi.fn(),
 }));
 
 vi.mock('@axhub/commentary', () => ({
   createCommentary: mocked.createCommentary,
   getGlobalCommentaryTweakProtocol: mocked.getGlobalCommentaryTweakProtocol,
+  subscribeAcpRuntimeStatuses: mocked.subscribeAcpRuntimeStatuses,
 }));
 
 vi.mock('../index/components/dialogs/AppDialogProvider', () => ({
@@ -26,6 +28,7 @@ import {
 beforeEach(() => {
   mocked.createCommentary.mockReset();
   mocked.getGlobalCommentaryTweakProtocol.mockReset();
+  mocked.subscribeAcpRuntimeStatuses.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -151,6 +154,58 @@ describe('createWebEditorV2Controller launch options', () => {
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('agentBridge');
     expect(mocked.createCommentary.mock.calls[0]?.[0]).not.toHaveProperty('integrationWs');
     expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('supplies a project-scoped ACP conversation task transport', async () => {
+    const abort = vi.fn();
+    mocked.subscribeAcpRuntimeStatuses.mockReturnValue({
+      done: Promise.resolve({ threadId: 'thread-1', runState: 'completed' }),
+      abort,
+    });
+    mocked.createCommentary.mockReturnValue({
+      start: vi.fn(),
+      stop: vi.fn(),
+      getState: vi.fn(() => ({ active: false, version: 2 })),
+      getStatus: vi.fn(() => ({ active: false, undoCount: 0, redoCount: 0 })),
+      acknowledgeSavedTextChanges: vi.fn(),
+      acknowledgeSavedStyleChanges: vi.fn(),
+      getHostToolbarState: vi.fn(),
+      subscribeHostToolbarState: vi.fn(() => () => undefined),
+      runHostToolbarAction: vi.fn(async () => true),
+      destroy: vi.fn(),
+    });
+    vi.stubGlobal('window', {
+      location: {
+        search: '',
+        pathname: '/prototypes/home',
+        href: 'http://localhost:53817/prototypes/home',
+        protocol: 'http:',
+        hostname: 'localhost',
+      },
+      confirm: vi.fn(() => true),
+      alert: vi.fn(),
+    });
+
+    const controller = createWebEditorV2Controller();
+    await controller.enable({ annotationProjectId: 'project-a' });
+    const transport = mocked.createCommentary.mock.calls[0]?.[0]?.host?.conversationTaskTransport;
+    const next = vi.fn();
+    const subscription = transport.watch({
+      commentId: 'comment-1',
+      provider: 'codex',
+      threadId: 'thread-1',
+      requestId: 'request-1',
+    }, { next });
+    await subscription.done;
+
+    expect(mocked.subscribeAcpRuntimeStatuses).toHaveBeenCalledWith({
+      eventsUrl: '/api/acp/conversations/runtime/events?projectId=project-a&targetPath=prototypes%2Fhome',
+      runtimeUrl: '/api/acp/conversations/runtime/status?projectId=project-a&targetPath=prototypes%2Fhome&threadId=thread-1',
+      threadId: 'thread-1',
+      provider: 'codex',
+    }, next);
+    subscription.abort();
+    expect(abort).toHaveBeenCalledTimes(1);
   });
 });
 

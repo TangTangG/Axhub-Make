@@ -15,16 +15,14 @@ type PrototypeCommentsWriteReason = 'changes' | 'state' | 'restore' | 'clear';
 
 export type ObservedCommentTombstone = {
   kind: 'comment';
-  pageScope: string;
-  elementKey: string;
+  commentId: string;
   deletedAt: number;
 };
 
 export type ObservedImageTombstone = {
   kind: 'image';
   id: string;
-  pageScope: string;
-  elementKey: string;
+  commentId: string;
   deletedAt: number;
 };
 
@@ -152,7 +150,7 @@ function readStoredCommentDocument(filePath: string): Record<string, unknown> | 
   if (!fs.existsSync(filePath)) return null;
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    return isRecord(parsed) && parsed.schemaVersion === 2 && parsed.kind === 'prototype-edit-comments'
+    return isRecord(parsed) && parsed.schemaVersion === 3 && parsed.kind === 'prototype-edit-comments'
       ? parsed
       : null;
   } catch {
@@ -164,15 +162,12 @@ export function normalizeIdentityPart(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function buildScopedElementIdentity(pageScope: unknown, elementKey: unknown): string {
-  const key = normalizeIdentityPart(elementKey);
-  return key ? `${normalizeIdentityPart(pageScope)}\u0000${key}` : '';
+export function buildCommentIdentity(record: { id?: unknown }): string {
+  return normalizeIdentityPart(record.id);
 }
 
-export function buildImageIdentity(record: { pageScope?: unknown; elementKey?: unknown; id?: unknown }): string {
-  const elementIdentity = buildScopedElementIdentity(record.pageScope, record.elementKey);
-  const id = normalizeIdentityPart(record.id);
-  return elementIdentity && id ? `${elementIdentity}\u0000${id}` : '';
+export function buildImageIdentity(record: { id?: unknown }): string {
+  return normalizeIdentityPart(record.id);
 }
 
 export function normalizeObservedTombstones(value: unknown): ObservedTombstone[] {
@@ -180,16 +175,15 @@ export function normalizeObservedTombstones(value: unknown): ObservedTombstone[]
   return value.flatMap((candidate): ObservedTombstone[] => {
     if (!isRecord(candidate)) return [];
     const kind = candidate.kind;
-    const pageScope = normalizeIdentityPart(candidate.pageScope);
-    const elementKey = normalizeIdentityPart(candidate.elementKey);
+    const commentId = normalizeIdentityPart(candidate.commentId);
     const deletedAt = Number(candidate.deletedAt);
-    if (!elementKey || !Number.isFinite(deletedAt) || deletedAt <= 0) return [];
+    if (!commentId || !Number.isFinite(deletedAt) || deletedAt <= 0) return [];
     if (kind === 'comment') {
-      return [{ kind, pageScope, elementKey, deletedAt }];
+      return [{ kind, commentId, deletedAt }];
     }
     if (kind === 'image') {
       const id = normalizeIdentityPart(candidate.id);
-      return id ? [{ kind, id, pageScope, elementKey, deletedAt }] : [];
+      return id ? [{ kind, id, commentId, deletedAt }] : [];
     }
     return [];
   });
@@ -206,21 +200,21 @@ export function mergeStoredTombstones(
     (value): value is Record<string, unknown> => isRecord(value) && isDeletedRecord(value),
   );
   const commentBarriers = new Set(
-    commentTombstones.map((record) => buildScopedElementIdentity(record.pageScope, record.elementKey)).filter(Boolean),
+    commentTombstones.map(buildCommentIdentity).filter(Boolean),
   );
   const incomingActiveComments = incomingComments.filter((value) => {
     if (!isRecord(value)) return true;
-    return !commentBarriers.has(buildScopedElementIdentity(value.pageScope, value.elementKey));
+    return !commentBarriers.has(buildCommentIdentity(value));
   });
   const incomingCommentIdentities = new Set(
     incomingActiveComments
       .filter(isRecord)
-      .map((record) => buildScopedElementIdentity(record.pageScope, record.elementKey))
+      .map(buildCommentIdentity)
       .filter(Boolean),
   );
   const preservedActiveComments = previousComments.filter((value) => {
     if (!isRecord(value) || isDeletedRecord(value)) return false;
-    const identity = buildScopedElementIdentity(value.pageScope, value.elementKey);
+    const identity = buildCommentIdentity(value);
     return Boolean(
       identity
       && !commentBarriers.has(identity)
@@ -235,9 +229,9 @@ export function mergeStoredTombstones(
   const imageBarriers = new Set(imageTombstones.map(buildImageIdentity).filter(Boolean));
   const incomingActiveImages = incomingImages.filter((value) => {
     if (!isRecord(value)) return true;
-    const elementIdentity = buildScopedElementIdentity(value.pageScope, value.elementKey);
+    const commentIdentity = normalizeIdentityPart(value.commentId);
     const imageIdentity = buildImageIdentity(value);
-    return !commentBarriers.has(elementIdentity) && !imageBarriers.has(imageIdentity);
+    return !commentBarriers.has(commentIdentity) && !imageBarriers.has(imageIdentity);
   });
   const incomingImageIdentities = new Set(
     incomingActiveImages
@@ -247,11 +241,11 @@ export function mergeStoredTombstones(
   );
   const preservedActiveImages = previousImages.filter((value) => {
     if (!isRecord(value) || isDeletedRecord(value)) return false;
-    const elementIdentity = buildScopedElementIdentity(value.pageScope, value.elementKey);
+    const commentIdentity = normalizeIdentityPart(value.commentId);
     const imageIdentity = buildImageIdentity(value);
     return Boolean(
       imageIdentity
-      && !commentBarriers.has(elementIdentity)
+      && !commentBarriers.has(commentIdentity)
       && !imageBarriers.has(imageIdentity)
       && !incomingImageIdentities.has(imageIdentity),
     );
@@ -284,10 +278,10 @@ export function compactObservedTombstones(
   const matchedCommentIdentities = new Set<string>();
   for (const value of comments) {
     if (!isRecord(value) || !isDeletedRecord(value)) continue;
-    const identity = buildScopedElementIdentity(value.pageScope, value.elementKey);
+    const identity = buildCommentIdentity(value);
     if (!identity) continue;
     if (observedComments.some((tombstone) => (
-      identity === buildScopedElementIdentity(tombstone.pageScope, tombstone.elementKey)
+      identity === tombstone.commentId
       && Number(value.deletedAt) === tombstone.deletedAt
     ))) {
       matchedCommentIdentities.add(identity);
@@ -303,7 +297,7 @@ export function compactObservedTombstones(
     const identity = buildImageIdentity(value);
     if (!identity) continue;
     if (observedImages.some((tombstone) => (
-      identity === buildImageIdentity(tombstone)
+      identity === tombstone.id
       && Number(value.deletedAt) === tombstone.deletedAt
     ))) {
       matchedImageIdentities.add(identity);
@@ -314,15 +308,12 @@ export function compactObservedTombstones(
     ...previous,
     comments: comments.filter((value) => {
       if (!isRecord(value)) return true;
-      return !matchedCommentIdentities.has(
-        buildScopedElementIdentity(value.pageScope, value.elementKey),
-      );
+      return !matchedCommentIdentities.has(buildCommentIdentity(value));
     }),
     images: images.filter((value) => {
       if (!isRecord(value)) return true;
-      return !matchedCommentIdentities.has(
-        buildScopedElementIdentity(value.pageScope, value.elementKey),
-      ) && !matchedImageIdentities.has(buildImageIdentity(value));
+      return !matchedCommentIdentities.has(normalizeIdentityPart(value.commentId))
+        && !matchedImageIdentities.has(buildImageIdentity(value));
     }),
   };
 }
@@ -334,6 +325,14 @@ function normalizeCommentDocument(input: unknown, resolved: Extract<ResolveResul
   const record = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? { ...(raw as Record<string, unknown>) }
     : {};
+  if (
+    record.schemaVersion !== 3 ||
+    record.kind !== 'prototype-edit-comments' ||
+    !Array.isArray(record.comments) ||
+    !Array.isArray(record.images)
+  ) {
+    throw new Error('Prototype comments require schema version 3');
+  }
   const resource = record.resource && typeof record.resource === 'object' && !Array.isArray(record.resource)
     ? { ...(record.resource as Record<string, unknown>) }
     : {};
@@ -341,7 +340,7 @@ function normalizeCommentDocument(input: unknown, resolved: Extract<ResolveResul
 
   return {
     ...recordWithoutTasks,
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'prototype-edit-comments',
     resource: {
       ...resource,
@@ -349,8 +348,8 @@ function normalizeCommentDocument(input: unknown, resolved: Extract<ResolveResul
       targetPath: `prototypes/${resolved.prototypeId}`,
       filePath: resolved.projectRelativeCommentPath,
     },
-    comments: Array.isArray(record.comments) ? record.comments : [],
-    images: Array.isArray(record.images) ? record.images : [],
+    comments: record.comments,
+    images: record.images,
   };
 }
 

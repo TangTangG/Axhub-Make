@@ -1,6 +1,7 @@
 import type { PromptImageAttachment } from '../../core/editor/state';
 
 export const MAX_PROMPT_IMAGE_ATTACHMENTS = 3;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 function createAttachmentId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -52,6 +53,29 @@ export async function createPromptImageAttachment(
     size: Number(blob.size ?? 0),
     createdAt: Date.now(),
   };
+}
+
+export function isStandardSvgText(value: string): boolean {
+  const source = String(value ?? '').trim();
+  if (!source || typeof DOMParser === 'undefined') return false;
+
+  try {
+    const document = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const root = document.documentElement;
+    return root.localName === 'svg' && root.namespaceURI === SVG_NAMESPACE;
+  } catch {
+    return false;
+  }
+}
+
+export async function createPromptImageAttachmentFromSvgText(
+  value: string,
+): Promise<PromptImageAttachment | null> {
+  const source = String(value ?? '').trim();
+  if (!isStandardSvgText(source)) return null;
+
+  const blob = new Blob([source], { type: 'image/svg+xml' });
+  return createPromptImageAttachment(blob, 0, 'clipboard-image-1.svg');
 }
 
 export async function readPromptImageAttachmentsFromDataTransferItems(

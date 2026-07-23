@@ -1713,8 +1713,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
           };
 
     const showCopyPromptAction = options.showCopyPromptAction !== false;
-    const hasPrototypeClearableEdits =
-      isHostToolbarMode && Boolean(options.hasPrototypeComments?.());
+    const hasPrototypeClearableEdits = Boolean(options.hasPrototypeComments?.());
     const hasClearableEdits =
       modifiedCount + visibleTerminalTaskCount > 0 || hasPrototypeClearableEdits;
     const clearAllEditsDisabled = actionBusy || !hasClearableEdits || !options.onClearEdits;
@@ -1840,13 +1839,56 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
     const agentPrimaryMenuLabel = agentPromptToolbarAction.sendTitle.includes('追加')
       ? '追加'
       : '快速执行';
+    const clearEditsTitle = hasPrototypeClearableEdits ? '清空批注' : '清空全部编辑';
     const clearAllEditsToolbarButton = clearAllEditsDisabled ? (
       <AgentToolbarIconButton
-        title="清空全部编辑"
+        title={clearEditsTitle}
         icon={<DeleteOutlined />}
         awake={agentShellAwake}
         disabled
       />
+    ) : hasPrototypeClearableEdits ? (
+      <Popconfirm
+        title="清空当前原型批注"
+        description={
+          <>
+            请选择清空范围：已完成批注，或全部批注。
+            <br />
+            已保存的代码修改不受影响。
+          </>
+        }
+        arrow={{ pointAtCenter: true }}
+        overlayStyle={{ maxWidth: 420 }}
+        getPopupContainer={resolveRuntimePopupContainer}
+        okText="清空已完成批注"
+        cancelText="清空所有批注"
+        onConfirm={() =>
+          runAction(() =>
+            options.onClearEdits?.({
+              skipConfirm: true,
+              scope: 'prototype',
+              target: 'completed',
+            }),
+          )
+        }
+        onCancel={() => {
+          void runAction(() =>
+            options.onClearEdits?.({
+              skipConfirm: true,
+              scope: 'prototype',
+              target: 'all',
+            }),
+          );
+        }}
+      >
+        <span style={{ display: 'inline-flex' }}>
+          <AgentToolbarIconButton
+            title={clearEditsTitle}
+            icon={<DeleteOutlined />}
+            awake={agentShellAwake}
+          />
+        </span>
+      </Popconfirm>
     ) : (
       <Popconfirm
         title="清空全部编辑"
@@ -1860,7 +1902,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       >
         <span style={{ display: 'inline-flex' }}>
           <AgentToolbarIconButton
-            title="清空全部编辑"
+            title={clearEditsTitle}
             icon={<DeleteOutlined />}
             awake={agentShellAwake}
           />
@@ -3055,7 +3097,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
         copyPromptVisible: copyPromptVisible,
         copyPromptTitle: copyReason ?? '复制 Prompt',
         copyPromptDisabled,
-        clearEditsTitle: '清空全部编辑',
+        clearEditsTitle,
         clearEditsDisabled: clearAllEditsDisabled,
         propertyPanelVisible: showPropertyPanelToolbarButton,
         propertyPanelOpen,
@@ -3091,6 +3133,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
       actionBusy,
       annotationToolbarTick,
       clearAllEditsDisabled,
+      clearEditsTitle,
       copyBlocked,
       copyPromptDisabled,
       copyPromptVisible,
@@ -3169,6 +3212,7 @@ export const PropertyPanelView = React.forwardRef<PropertyPanelHandle, PropertyP
               options.onClearEdits?.({
                 ...(action.skipConfirm ? { skipConfirm: true } : {}),
                 ...(action.scope ? { scope: action.scope } : {}),
+                ...(action.target ? { target: action.target } : {}),
               }),
             );
             return Boolean(clearedTarget);

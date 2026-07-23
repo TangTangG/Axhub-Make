@@ -12,6 +12,7 @@ import {
   resolvePrototypeAnnotationTargetPath,
   resolveCurrentPublishResourcePath,
   resolveCurrentPreviewScreenshotSize,
+  resolveExportScreenshotViewportSize,
   resolveHostToolbarStateForDisplay,
   waitForHostToolbarActionState,
 } from './previewActions.helpers';
@@ -397,6 +398,22 @@ describe('previewActions.helpers', () => {
       splitHeights: { primary: 720, secondary: 846 },
       scaleMode: 'fit-screen',
     }, { width: 1920, height: 1080 })).toEqual({ width: 1280, height: 720 });
+  });
+
+  it('resolves automatic Axure screenshot viewports from the current preview size', () => {
+    expect(resolveExportScreenshotViewportSize({
+      currentPreviewSize: { width: 1366, height: 820 },
+      configuredSize: { width: 500, height: 300 },
+      userSetDimensions: false,
+    })).toEqual({ width: 1366, height: 820, shouldSyncConfig: true });
+  });
+
+  it('preserves manually configured Axure screenshot viewport dimensions', () => {
+    expect(resolveExportScreenshotViewportSize({
+      currentPreviewSize: { width: 1366, height: 820 },
+      configuredSize: { width: 1024, height: 768 },
+      userSetDimensions: true,
+    })).toEqual({ width: 1024, height: 768, shouldSyncConfig: false });
   });
 
   it('keeps a settled local AI connection visible after a wake action succeeds', () => {

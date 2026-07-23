@@ -1,5 +1,6 @@
 import type { WebEditorAgentProvider } from './core/editor/ui-settings';
 import type { CommentaryTweakValues } from './tweak/protocol';
+import type { AcpRuntimeEventStatus } from './acp-runtime-events';
 
 /**
  * Web Editor V2 - Shared Type Definitions
@@ -520,15 +521,16 @@ export interface PrototypeEditCommentMarkerEntry {
 }
 
 export interface PrototypeEditCommentEntry {
+  id: string;
   deletedAt?: number | null;
   pageScope?: string;
-  elementKey?: WebEditorElementKey;
   state: PrototypeEditCommentStatus;
   provider?: string | null;
   requestId?: string | null;
   sessionId?: string | null;
   updatedAt?: number | null;
   message?: string | null;
+  code?: string | null;
   label?: string;
   locator: ElementLocator;
   textChange?: { before: string; after: string };
@@ -544,9 +546,9 @@ export interface PrototypeEditCommentEntry {
 
 export interface PrototypeEditCommentImageEntry {
   id: string;
+  commentId: string;
   deletedAt?: number | null;
   pageScope?: string;
-  elementKey?: WebEditorElementKey;
   name?: string;
   mimeType?: string;
   size?: number;
@@ -556,7 +558,7 @@ export interface PrototypeEditCommentImageEntry {
 }
 
 export interface PrototypeEditCommentsDocument {
-  schemaVersion: 2;
+  schemaVersion: 3;
   kind: 'prototype-edit-comments' | 'document-edit-comments';
   resource: {
     id: string;
@@ -580,8 +582,7 @@ export interface PrototypeEditCommentsPersistenceScope {
 export type PrototypeEditCommentsWriteReason = 'changes' | 'restore' | 'clear' | 'state';
 
 interface PrototypeEditCommentTombstoneBase {
-  pageScope: string;
-  elementKey: WebEditorElementKey;
+  commentId: string;
   deletedAt: number;
 }
 
@@ -811,11 +812,33 @@ export interface CommentaryElementTool {
   disabled?: boolean;
 }
 
+export type { AcpRuntimeEventStatus } from './acp-runtime-events';
+
+export interface CommentaryConversationTaskQuery {
+  commentId: string;
+  provider: string;
+  threadId: string;
+  requestId: string;
+}
+
+export interface CommentaryConversationTaskTransport {
+  watch(
+    task: CommentaryConversationTaskQuery,
+    observer: {
+      next(status: AcpRuntimeEventStatus): void | Promise<void>;
+    },
+  ): {
+    done: Promise<void>;
+    abort(): void;
+  };
+}
+
 export interface CommentaryHostOptions {
   getResourceContext?: () => CommentaryHostResource | null;
   /** Optional host-owned scope for external persistence. Local storage remains host-independent. */
   getPersistenceScope?: () => PrototypeEditCommentsPersistenceScope | null;
   persistenceAdapter?: PrototypeEditCommentsPersistenceAdapter;
+  conversationTaskTransport?: CommentaryConversationTaskTransport;
   /** Disable the browser comment cache when the adapter is the shared source of truth. */
   commentPersistenceMode?: 'local' | 'adapter-only';
   /**
@@ -1028,8 +1051,8 @@ export interface CommentaryApi {
   clearElementEdits: (elementKey: WebEditorElementKey) => Promise<boolean>;
   /** Clear all current edits and local cache */
   clearAllEdits: (options?: CommentaryClearEditsOptions) => Promise<void>;
-  /** Reload host-persisted comments without reverting the current page DOM. */
-  refreshPersistedComments: (deletedElementKeys?: readonly WebEditorElementKey[]) => Promise<void>;
+  /** Reload host-persisted comments and discard runtime task state for deleted comment IDs. */
+  refreshPersistedComments: (deletedCommentIds?: readonly string[]) => Promise<void>;
   /** Read the host toolbar state used when `ui.toolbarMode` is `host` */
   getHostToolbarState: () => CommentaryHostToolbarState;
   /** Subscribe to host toolbar state changes */

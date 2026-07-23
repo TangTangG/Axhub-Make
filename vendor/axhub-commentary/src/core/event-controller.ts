@@ -739,15 +739,21 @@ export function createEventController(options: EventControllerOptions): EventCon
       return;
     }
 
-    blockPageEvent(event);
-
-    // In native text selection mode, skip all hover/drag logic
-    if (options.allowNativeTextSelection) return;
-
     // Update tracked position
     lastClientX = event.clientX;
     lastClientY = event.clientY;
     hasPointerPosition = true;
+
+    // Native text-comment mode must leave page events untouched so browser text
+    // selection still works, but it can still track the element under the pointer.
+    if (options.allowNativeTextSelection) {
+      if (mode === 'hover' || mode === 'selecting') {
+        scheduleHoverUpdate();
+      }
+      return;
+    }
+
+    blockPageEvent(event);
 
     // Dragging: forward pointer moves (only from matching event type)
     if (mode === 'dragging' && shouldProcessAsPrimaryPointer(event)) {

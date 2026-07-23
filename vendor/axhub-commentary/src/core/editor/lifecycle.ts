@@ -594,6 +594,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
 
   function cleanupMountedRuntime(): void {
     inlineTextEditingElement = null;
+    services.conversationTaskMonitor?.stop();
     services.integrationWs?.stop();
     services.agentBridge.stop();
 
@@ -1103,6 +1104,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         void Promise.resolve(services.persistence.restoreCachedChanges())
           .then((deletedElementKeys) => {
             services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
+            services.conversationTaskMonitor?.reconcile();
             services.changes.renderChangeMarkers();
             state.propertyPanel?.refresh();
             onStatusChange?.();
@@ -1282,6 +1284,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
         .then((deletedElementKeys) => {
           services.agentBridge.discardDeletedElementStates?.(deletedElementKeys);
           services.agentBridge.rehydratePersistedAgentState();
+          services.conversationTaskMonitor?.reconcile();
           ensureMarkersVisible();
           state.propertyPanel?.refresh();
           onStatusChange?.();
@@ -1330,7 +1333,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
           Boolean(options.host.shouldAllowPageEvent?.(event)) ||
           shouldAllowInlineEditingPageEvent(event),
         allowNativeTextSelection: isTextComment,
-        onHover: isTextComment ? () => {} : services.interaction.handleHover,
+        onHover: services.interaction.handleHover,
         onSelect: (event) => {
           const target = services.agentBridge.resolveSelectableElement(event.element);
           if (!target?.isConnected) return;
@@ -1921,6 +1924,7 @@ export function createLifecycleService(deps: EditorLifecycleDeps): EditorLifecyc
    */
   function cleanupInteractionComponents(): void {
     inlineTextEditingElement = null;
+    services.conversationTaskMonitor?.stop();
     services.integrationWs?.stop();
     services.agentBridge.stop();
 

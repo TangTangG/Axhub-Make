@@ -33,6 +33,7 @@ import {
 } from './http.ts';
 import { handleAiArtifactHistoryApi } from './managementApi.aiArtifactHistory.ts';
 import { handleAiRunsApi } from './managementApi.aiRuns.ts';
+import { handleAcpRuntimeEventsApi } from './managementApi.acpRuntimeEvents.ts';
 import { handleAxhubApi } from './managementApi.axhub.ts';
 import { handleAssistantPromptIde } from './managementApi.assistantIde.ts';
 import { handleBridgeAndImageProxy } from './managementApi.bridge.ts';
@@ -1452,6 +1453,15 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
     resolveProjectContext,
     getServerConfigStoreForRequest,
   })) return true;
+
+  if (handleAcpRuntimeEventsApi(
+    req,
+    res,
+    options,
+    requestContext,
+    pathname,
+    getServerConfigStoreForRequest,
+  )) return true;
 
   if (handleAiArtifactHistoryApi(req, res, requestContext, pathname)) return true;
 

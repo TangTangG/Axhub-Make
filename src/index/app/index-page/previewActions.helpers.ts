@@ -183,6 +183,32 @@ export function resolveCurrentPreviewScreenshotSize(
     return fallback;
 }
 
+export function resolveExportScreenshotViewportSize(options: {
+    currentPreviewSize: { width: number; height: number };
+    configuredSize: { width: number; height: number };
+    userSetDimensions: boolean;
+    explicitWidth?: number;
+    explicitHeight?: number;
+}): { width: number; height: number; shouldSyncConfig: boolean } {
+    const explicitWidth = Number.isFinite(options.explicitWidth) ? options.explicitWidth : undefined;
+    const explicitHeight = Number.isFinite(options.explicitHeight) ? options.explicitHeight : undefined;
+    const useConfiguredSize = options.userSetDimensions
+        || explicitWidth !== undefined
+        || explicitHeight !== undefined;
+    if (useConfiguredSize) {
+        return {
+            width: explicitWidth ?? options.configuredSize.width,
+            height: explicitHeight ?? options.configuredSize.height,
+            shouldSyncConfig: false,
+        };
+    }
+    return {
+        ...options.currentPreviewSize,
+        shouldSyncConfig: options.configuredSize.width !== options.currentPreviewSize.width
+            || options.configuredSize.height !== options.currentPreviewSize.height,
+    };
+}
+
 export const DEFAULT_AXURE_COPY_OPTIONS: AxureCopyOptions = {
     preserveHierarchy: false,
     preserveSvgIcons: true,

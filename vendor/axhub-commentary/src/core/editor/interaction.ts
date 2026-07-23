@@ -557,6 +557,7 @@ export function createInteractionService(options: {
     state.selectionAnchor = markerAnchor;
     state.hoveredElement = null;
     state.activeTextComment = comment;
+    state.positionTracker?.setHoverElement(null);
     state.positionTracker?.setSelectionElement(sourceElement);
     meta.anchor = markerAnchor;
     syncShadowHostMount(sourceElement);

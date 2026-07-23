@@ -161,6 +161,7 @@ export interface ResolvedWebEditorOptions {
       | 'shouldAllowPageEvent'
       | 'getPersistenceScope'
       | 'persistenceAdapter'
+      | 'conversationTaskTransport'
       | 'commentPersistenceMode'
       | 'canEditAnnotationMarkdown'
       | 'getAnnotationDocumentEditUrl'
@@ -274,6 +275,7 @@ export interface MarkerAnchor {
 }
 
 export interface ElementEditMeta {
+  commentId: string | null;
   elementKey: WebEditorElementKey;
   locator: ElementLocator;
   label: string;
@@ -289,6 +291,34 @@ export interface ElementEditMeta {
   styleSummaryLines: string[];
   textSummary: string | null;
   classSummaryLines: string[];
+}
+
+function generateCommentId(): string {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+
+  if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+    const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0'));
+    return [
+      hex.slice(0, 4).join(''),
+      hex.slice(4, 6).join(''),
+      hex.slice(6, 8).join(''),
+      hex.slice(8, 10).join(''),
+      hex.slice(10).join(''),
+    ].join('-');
+  }
+
+  return `comment-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+export function ensureElementEditCommentId(meta: ElementEditMeta): string {
+  meta.commentId ??= generateCommentId();
+  return meta.commentId;
 }
 
 export interface EditorRuntimeState {
@@ -405,6 +435,7 @@ export function resolveWebEditorOptions(
       shouldAllowPageEvent: options.host?.shouldAllowPageEvent ?? undefined,
       getPersistenceScope: options.host?.getPersistenceScope ?? undefined,
       persistenceAdapter: options.host?.persistenceAdapter ?? undefined,
+      conversationTaskTransport: options.host?.conversationTaskTransport ?? undefined,
       commentPersistenceMode: options.host?.commentPersistenceMode ?? 'local',
       canEditAnnotationMarkdown: options.host?.canEditAnnotationMarkdown ?? undefined,
       getAnnotationDocumentEditUrl: options.host?.getAnnotationDocumentEditUrl ?? undefined,

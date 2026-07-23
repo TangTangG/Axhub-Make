@@ -154,7 +154,7 @@ describe('prototype comments API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: {
               id: 'home',
@@ -182,7 +182,7 @@ describe('prototype comments API', () => {
         exists: true,
         path: prototypeCommentStorage(projectRoot).relativeFilePath,
         document: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           kind: 'prototype-edit-comments',
           resource: {
             id: 'home',
@@ -221,6 +221,89 @@ describe('prototype comments API', () => {
     }
   });
 
+  it('merges schema 3 comments by durable id instead of DOM lifecycle identity', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
+    writePrototypeProject(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const url = scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/prototype-comments?targetPath=prototypes/home`,
+      );
+      const write = async (comments: Array<Record<string, unknown>>) => {
+        const response = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reason: 'changes',
+            document: {
+              schemaVersion: 3,
+              kind: 'prototype-edit-comments',
+              resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
+              comments,
+              images: [],
+            },
+          }),
+        });
+        expect(response.status).toBe(200);
+        return (await response.json()).document;
+      };
+      const locator = {
+        selectors: ['#hero'],
+        fingerprint: 'hero',
+        path: [],
+        shadowHostChain: [],
+      };
+
+      await write([{ id: 'comment-1', locator, state: 'idle', comment: 'first' }]);
+      const updated = await write([
+        { id: 'comment-1', locator, state: 'editing', comment: 'updated' },
+      ]);
+      expect(updated.schemaVersion).toBe(3);
+      expect(updated.comments).toEqual([
+        expect.objectContaining({ id: 'comment-1', comment: 'updated' }),
+      ]);
+
+      const distinct = await write([
+        { id: 'comment-2', locator, state: 'idle', comment: 'second entity' },
+      ]);
+      expect(distinct.comments.map((comment: Record<string, unknown>) => comment.id).sort())
+        .toEqual(['comment-1', 'comment-2']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('rejects schema 2 comment writes instead of migrating them implicitly', async () => {
+    const projectRoot = createTempRoot('axhub-make-prototype-comments-');
+    writePrototypeProject(projectRoot);
+    const server = await startActivatedProjectServer(projectRoot);
+
+    try {
+      const response = await fetch(scopeProjectApiUrl(
+        projectRoot,
+        `${server.origin}/api/prototype-comments?targetPath=prototypes/home`,
+      ), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          document: {
+            schemaVersion: 2,
+            kind: 'prototype-edit-comments',
+            resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
+            comments: [],
+            images: [],
+          },
+        }),
+      });
+
+      expect(response.status).toBe(400);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('preserves stored tombstones across stale non-authoritative writes', async () => {
     const projectRoot = createTempRoot('axhub-make-prototype-comments-');
     writePrototypeProject(projectRoot);
@@ -228,7 +311,7 @@ describe('prototype comments API', () => {
     const deletedAt = 1784624000000;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -236,7 +319,7 @@ describe('prototype comments API', () => {
         filePath: prototypeCommentStorage(projectRoot).relativeFilePath,
       },
       comments: [{
-        elementKey: 'hero',
+        id: 'comment-hero',
         label: 'Hero',
         locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
         comment: 'delete me',
@@ -245,7 +328,7 @@ describe('prototype comments API', () => {
       }],
       images: [{
         id: 'hero-image',
-        elementKey: 'hero',
+        commentId: 'comment-hero',
         assetPath: prototypeCommentAssetPath('hero-image.png'),
         deletedAt,
       }],
@@ -263,11 +346,11 @@ describe('prototype comments API', () => {
           body: JSON.stringify({
             ...(reason ? { reason } : {}),
             document: {
-              schemaVersion: 2,
+              schemaVersion: 3,
               kind: 'prototype-edit-comments',
               resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
               comments: [{
-                elementKey: 'hero',
+                id: 'comment-hero',
                 label: 'Hero',
                 locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
                 comment: 'stale active comment',
@@ -275,7 +358,7 @@ describe('prototype comments API', () => {
               }],
               images: [{
                 id: 'hero-image',
-                elementKey: 'hero',
+                commentId: 'comment-hero',
                 assetPath: prototypeCommentAssetPath('hero-image.png'),
               }],
             },
@@ -285,7 +368,7 @@ describe('prototype comments API', () => {
         expect(response.status).toBe(200);
         const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         expect(persisted.comments).toEqual([
-          expect.objectContaining({ elementKey: 'hero', deletedAt }),
+          expect.objectContaining({ id: 'comment-hero', deletedAt }),
         ]);
         expect(persisted.images).toEqual([
           expect.objectContaining({ id: 'hero-image', deletedAt }),
@@ -302,7 +385,7 @@ describe('prototype comments API', () => {
     const { filePath } = prototypeCommentStorage(projectRoot);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -310,16 +393,16 @@ describe('prototype comments API', () => {
         filePath: prototypeCommentStorage(projectRoot).relativeFilePath,
       },
       comments: [{
+        id: 'comment-late',
         pageScope: 'page-b',
-        elementKey: 'late-card',
         locator: { selectors: ['#late'], fingerprint: 'late', path: [], shadowHostChain: [] },
         comment: 'added after browser read',
         state: 'idle',
       }],
       images: [{
         id: 'late-image',
+        commentId: 'comment-late',
         pageScope: 'page-b',
-        elementKey: 'late-card',
         assetPath: prototypeCommentAssetPath('late.png'),
       }],
     }, null, 2)}\n`, 'utf8');
@@ -335,20 +418,20 @@ describe('prototype comments API', () => {
         body: JSON.stringify({
           reason: 'changes',
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
             comments: [{
+              id: 'comment-live',
               pageScope: 'page-a',
-              elementKey: 'live-card',
               locator: { selectors: ['#live'], fingerprint: 'live', path: [], shadowHostChain: [] },
               comment: 'browser update',
               state: 'editing',
             }],
             images: [{
               id: 'live-image',
+              commentId: 'comment-live',
               pageScope: 'page-a',
-              elementKey: 'live-card',
               assetPath: prototypeCommentAssetPath('live.png'),
             }],
           },
@@ -357,13 +440,13 @@ describe('prototype comments API', () => {
 
       expect(response.status).toBe(200);
       const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      expect(persisted.comments.map((comment: any) => comment.elementKey)).toEqual([
-        'live-card',
-        'late-card',
+      expect(persisted.comments.map((comment: any) => comment.id)).toEqual([
+        'comment-live',
+        'comment-late',
       ]);
       expect(persisted.comments).toEqual(expect.arrayContaining([
-        expect.objectContaining({ elementKey: 'live-card', state: 'editing' }),
-        expect.objectContaining({ elementKey: 'late-card', state: 'idle' }),
+        expect.objectContaining({ id: 'comment-live', state: 'editing' }),
+        expect.objectContaining({ id: 'comment-late', state: 'idle' }),
       ]));
       expect(persisted.images.map((image: any) => image.id)).toEqual([
         'live-image',
@@ -381,7 +464,7 @@ describe('prototype comments API', () => {
     const deletedAt = 1784624000000;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -389,8 +472,8 @@ describe('prototype comments API', () => {
         filePath: prototypeCommentStorage(projectRoot).relativeFilePath,
       },
       comments: [{
+        id: 'comment-page-a',
         pageScope: 'page-a',
-        elementKey: 'hero',
         locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
         comment: 'delete page a',
         state: 'completed',
@@ -398,8 +481,8 @@ describe('prototype comments API', () => {
       }],
       images: [{
         id: 'old-page-a-image',
+        commentId: 'comment-page-a',
         pageScope: 'page-a',
-        elementKey: 'hero',
         assetPath: prototypeCommentAssetPath('old-page-a.png'),
         deletedAt,
       }],
@@ -416,20 +499,20 @@ describe('prototype comments API', () => {
         body: JSON.stringify({
           reason: 'changes',
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
             comments: [
               {
+                id: 'comment-page-a',
                 pageScope: 'page-a',
-                elementKey: 'hero',
                 locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
                 comment: 'stale page a',
                 state: 'editing',
               },
               {
+                id: 'comment-page-b',
                 pageScope: 'page-b',
-                elementKey: 'hero',
                 locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
                 comment: 'keep page b',
                 state: 'editing',
@@ -438,14 +521,14 @@ describe('prototype comments API', () => {
             images: [
               {
                 id: 'new-page-a-image',
+                commentId: 'comment-page-a',
                 pageScope: 'page-a',
-                elementKey: 'hero',
                 assetPath: prototypeCommentAssetPath('new-page-a.png'),
               },
               {
                 id: 'page-b-image',
+                commentId: 'comment-page-b',
                 pageScope: 'page-b',
-                elementKey: 'hero',
                 assetPath: prototypeCommentAssetPath('page-b.png'),
               },
             ],
@@ -486,7 +569,7 @@ describe('prototype comments API', () => {
     fs.writeFileSync(revivedHeroPath, 'revived-hero', 'utf8');
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -495,7 +578,7 @@ describe('prototype comments API', () => {
       },
       comments: [
         {
-          elementKey: 'hero',
+          id: 'comment-hero',
           label: 'Hero',
           locator: { selectors: ['#hero'], fingerprint: 'hero', path: [], shadowHostChain: [] },
           comment: 'delete me',
@@ -503,14 +586,14 @@ describe('prototype comments API', () => {
           deletedAt,
         },
         {
-          elementKey: 'live-card',
+          id: 'comment-live',
           label: 'Live Card',
           locator: { selectors: ['#live'], fingerprint: 'live', path: [], shadowHostChain: [] },
           comment: 'keep me',
           state: 'editing',
         },
         {
-          elementKey: 'late-card',
+          id: 'comment-late',
           label: 'Late Card',
           locator: { selectors: ['#late'], fingerprint: 'late', path: [], shadowHostChain: [] },
           comment: 'added after browser read',
@@ -518,12 +601,12 @@ describe('prototype comments API', () => {
         },
       ],
       images: [
-        { id: 'hero-only', elementKey: 'hero', assetPath: prototypeCommentAssetPath('hero-only.png'), deletedAt },
-        { id: 'hero-shared', elementKey: 'hero', assetPath: prototypeCommentAssetPath('shared.png'), deletedAt },
-        { id: 'live-shared', elementKey: 'live-card', assetPath: prototypeCommentAssetPath('shared.png') },
-        { id: 'live-only', elementKey: 'live-card', assetPath: prototypeCommentAssetPath('live-only.png') },
-        { id: 'late-only', elementKey: 'late-card', assetPath: prototypeCommentAssetPath('late-only.png') },
-        { id: 'revived-hero', elementKey: 'hero', assetPath: prototypeCommentAssetPath('revived-hero.png') },
+        { id: 'hero-only', commentId: 'comment-hero', assetPath: prototypeCommentAssetPath('hero-only.png'), deletedAt },
+        { id: 'hero-shared', commentId: 'comment-hero', assetPath: prototypeCommentAssetPath('shared.png'), deletedAt },
+        { id: 'live-shared', commentId: 'comment-live', assetPath: prototypeCommentAssetPath('shared.png') },
+        { id: 'live-only', commentId: 'comment-live', assetPath: prototypeCommentAssetPath('live-only.png') },
+        { id: 'late-only', commentId: 'comment-late', assetPath: prototypeCommentAssetPath('late-only.png') },
+        { id: 'revived-hero', commentId: 'comment-hero', assetPath: prototypeCommentAssetPath('revived-hero.png') },
       ],
     }, null, 2)}\n`, 'utf8');
     const server = await startActivatedProjectServer(projectRoot);
@@ -538,24 +621,24 @@ describe('prototype comments API', () => {
         body: JSON.stringify({
           reason: 'restore',
           observedTombstones: [
-            { kind: 'comment', pageScope: '', elementKey: 'hero', deletedAt },
-            { kind: 'image', id: 'hero-only', pageScope: '', elementKey: 'hero', deletedAt },
-            { kind: 'image', id: 'hero-shared', pageScope: '', elementKey: 'hero', deletedAt },
+            { kind: 'comment', commentId: 'comment-hero', deletedAt },
+            { kind: 'image', id: 'hero-only', commentId: 'comment-hero', deletedAt },
+            { kind: 'image', id: 'hero-shared', commentId: 'comment-hero', deletedAt },
           ],
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
             comments: [{
-              elementKey: 'live-card',
+              id: 'comment-live',
               label: 'Live Card',
               locator: { selectors: ['#live'], fingerprint: 'live', path: [], shadowHostChain: [] },
               comment: 'keep me',
               state: 'editing',
             }],
             images: [
-              { id: 'live-shared', elementKey: 'live-card', assetPath: prototypeCommentAssetPath('shared.png') },
-              { id: 'live-only', elementKey: 'live-card', assetPath: prototypeCommentAssetPath('live-only.png') },
+              { id: 'live-shared', commentId: 'comment-live', assetPath: prototypeCommentAssetPath('shared.png') },
+              { id: 'live-only', commentId: 'comment-live', assetPath: prototypeCommentAssetPath('live-only.png') },
             ],
           },
         }),
@@ -563,7 +646,7 @@ describe('prototype comments API', () => {
 
       expect(response.status, await response.clone().text()).toBe(200);
       const persisted = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      expect(persisted.comments.map((comment: any) => comment.elementKey)).toEqual(['live-card', 'late-card']);
+      expect(persisted.comments.map((comment: any) => comment.id)).toEqual(['comment-live', 'comment-late']);
       expect(persisted.images.map((image: any) => image.id)).toEqual([
         'live-shared',
         'live-only',
@@ -592,7 +675,7 @@ describe('prototype comments API', () => {
     fs.symlinkSync(outsideDir, path.join(assetDir, 'linked'));
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -602,7 +685,7 @@ describe('prototype comments API', () => {
       comments: [],
       images: [{
         id: 'escaped-image',
-        elementKey: 'hero',
+        commentId: 'comment-hero',
         assetPath: prototypeCommentAssetPath('linked/escape.png'),
         deletedAt,
       }],
@@ -634,12 +717,11 @@ describe('prototype comments API', () => {
           observedTombstones: [{
             kind: 'image',
             id: 'escaped-image',
-            pageScope: '',
-            elementKey: 'hero',
+            commentId: 'comment-hero',
             deletedAt,
           }],
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
             comments: [],
@@ -680,7 +762,7 @@ describe('prototype comments API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: { id: 'home', targetPath: 'prototypes/home', filePath: '' },
             comments: [],
@@ -704,7 +786,7 @@ describe('prototype comments API', () => {
     const legacyFilePath = path.join(projectRoot, 'src/prototypes/home/.spec/prototype-comments.json');
     fs.mkdirSync(path.dirname(legacyFilePath), { recursive: true });
     fs.writeFileSync(legacyFilePath, `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'prototype-edit-comments',
       resource: {
         id: 'home',
@@ -776,7 +858,7 @@ describe('prototype comments API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             kind: 'prototype-edit-comments',
             resource: {
               id: 'home',

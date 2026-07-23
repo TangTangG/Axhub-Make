@@ -1248,30 +1248,17 @@ export function createAgentBridgeService(options: {
   }
 
   function persistTaskStates(scopeKey: string): void {
-    const now = Date.now();
-    const TERMINAL_STATE_TTL_MS = 30 * 60 * 1000; // 30min
     const tasks = Array.from(state.agentTaskByElementKey.values())
       .filter(
         (task) => {
           if (task.scopeKey !== scopeKey || task.dismissed) return false;
+          if (task.origin === 'external-editing') return false;
           // Always persist running tasks with valid session info
           if (isTaskRunning(task)
             && typeof task.sessionId === 'string'
             && task.sessionId.trim().length > 0
             && typeof task.provider === 'string'
             && task.provider.trim().length > 0
-          ) {
-            return true;
-          }
-          // Persist external-editing running tasks (may not have sessionId/provider)
-          if (isTaskRunning(task) && task.origin === 'external-editing') {
-            return true;
-          }
-          // Persist recent errors so failures survive brief refreshes; completed tasks are cleanup-only.
-          if (
-            task.status === 'error'
-            && task.origin === 'external-editing'
-            && (now - task.updatedAt) < TERMINAL_STATE_TTL_MS
           ) {
             return true;
           }
@@ -2386,6 +2373,14 @@ export function createAgentBridgeService(options: {
     });
     for (const persistedTask of persistedTasks) {
       const isExternalEditing = persistedTask.origin === 'external-editing';
+
+      if (isExternalEditing) {
+        logInfo('Skipping legacy external-editing task restore', {
+          requestId: persistedTask.requestId,
+          elementKey: persistedTask.elementKey,
+        });
+        continue;
+      }
 
       // For non-external tasks, require running + sessionId + provider
       if (!isExternalEditing) {

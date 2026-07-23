@@ -141,6 +141,7 @@ function showPromptModal(
         Modal,
         {
           open: true,
+          className: 'we-runtime-feedback-modal',
           title: options.title,
           okText: options.confirmText,
           cancelText: options.cancelText,
@@ -225,6 +226,7 @@ export function createFeedbackService(options: {
 
       let modalRef: ReturnType<typeof Modal.confirm> | null = null;
       modalRef = Modal.confirm({
+        className: 'we-runtime-feedback-modal',
         title: dialog.title,
         content: dialog.content,
         okText: dialog.confirmText,
@@ -282,6 +284,7 @@ export function createFeedbackService(options: {
       }
 
       Modal.confirm({
+        className: 'we-runtime-feedback-modal',
         title: dialog.title,
         content: dialog.content,
         okText: dialog.confirmText,

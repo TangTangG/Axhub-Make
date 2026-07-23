@@ -112,6 +112,7 @@ export function useFeedbackBridge(): void {
       }) => {
         let modalRef: ReturnType<typeof app.modal.confirm> | null = null;
         modalRef = app.modal.confirm({
+          className: 'we-runtime-feedback-modal',
           title,
           content,
           okText,
@@ -146,6 +147,7 @@ export function useFeedbackBridge(): void {
       },
       alert: ({ title, content, okText, okType, getContainer, onOk }) => {
         app.modal.confirm({
+          className: 'we-runtime-feedback-modal',
           title,
           content,
           okText,
@@ -177,6 +179,7 @@ export function useFeedbackBridge(): void {
       }) => {
         const contentRef = React.createRef<PromptBridgeContentHandle>();
         const modalRef = app.modal.confirm({
+          className: 'we-runtime-feedback-modal',
           title,
           content: React.createElement(PromptBridgeContent, {
             ref: contentRef,

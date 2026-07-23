@@ -47,7 +47,7 @@
 
 ## 预览链接
 
-预览链接默认以 `http://localhost:53817/` 拼接；Make 服务使用其他 host 或端口时改用实际服务地址。
+Make 预览链接统一使用 `http://localhost:53817/`；链接需要项目上下文时，项目 id 从 `.axhub/make/client.json` 读取。
 
 ## 产品需求对齐
 
@@ -74,7 +74,7 @@
 
 整理候选时优先读取主题 `theme.json`，用 `tags.*`、`display.distributionTags`、`identity.title*/description*` 和 `display.variant` 做检索与候选说明；用 `identity.slug` 和 `assets.designMd.path` 校验目录与 `DESIGN.md` 路径。
 
-候选必须提供可打开的完整主题预览链接，并标出对应 `DESIGN.md` 路径，便于用户核对。
+候选必须提供完整的 Make 主题深链，格式为 `http://localhost:53817/?projectId=<project-id>&theme=<theme-key>`，并标出对应 `DESIGN.md` 路径。
 
 `DESIGN.md` 确定后，用户零散提出的颜色、字体、布局、动效、组件形态等需求，都作为基于该设计基底的调整处理，不另起一套视觉系统。
 

@@ -62,10 +62,10 @@ describe('document comments API', () => {
 
     try {
       const document = {
-        version: 2,
+        schemaVersion: 3,
         kind: 'document-edit-comments',
         documentPath: 'src/resources/prd/order.md',
-        comments: [{ elementKey: 'order-title', pageScope: 'document:order', locator: { selectors: ['h1'] }, comment: '更新标题', state: 'idle' }],
+        comments: [{ id: 'comment-order-title', pageScope: 'document:order', locator: { selectors: ['h1'] }, comment: '更新标题', state: 'idle' }],
         images: [],
       };
       const response = await fetch(scopeProjectApiUrl(
@@ -99,17 +99,17 @@ describe('document comments API', () => {
       );
       const deletedAt = 1784650000000;
       const base = {
-        version: 2,
+        schemaVersion: 3,
         kind: 'document-edit-comments',
         documentPath: 'src/resources/prd/order.md',
-        comments: [{ elementKey: 'order-title', pageScope: 'document:order', deletedAt, locator: { selectors: ['h1'] }, state: 'completed' }],
+        comments: [{ id: 'comment-order-title', pageScope: 'document:order', deletedAt, locator: { selectors: ['h1'] }, state: 'completed' }],
         images: [],
       };
       await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document: base, reason: 'changes' }) });
       const stale = {
         ...base,
         comments: [],
-        images: [{ id: 'new-image', pageScope: 'document:order', elementKey: 'order-title', data: PNG_DATA_URL }],
+        images: [{ id: 'new-image', commentId: 'comment-order-title', pageScope: 'document:order', data: PNG_DATA_URL }],
       };
       const response = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document: stale, reason: 'changes' }) });
       const body = await response.json();
@@ -137,7 +137,7 @@ describe('document comments API', () => {
       const initial = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document: { version: 2, kind: 'document-edit-comments', documentPath: 'src/resources/prd/order.md', comments: [], images: [{ id: 'hero', elementKey: 'hero', data: PNG_DATA_URL }] }, reason: 'changes' }),
+        body: JSON.stringify({ document: { schemaVersion: 3, kind: 'document-edit-comments', documentPath: 'src/resources/prd/order.md', comments: [], images: [{ id: 'hero', elementKey: 'hero', data: PNG_DATA_URL }] }, reason: 'changes' }),
       });
       const initialBody = await initial.json();
       const assetPath = initialBody.document.images[0].assetPath as string;
@@ -157,7 +157,7 @@ describe('document comments API', () => {
       await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document: { version: 2, kind: 'document-edit-comments', documentPath: 'src/resources/prd/order.md', comments: [], images: [] }, reason: 'clear' }),
+        body: JSON.stringify({ document: { schemaVersion: 3, kind: 'document-edit-comments', documentPath: 'src/resources/prd/order.md', comments: [], images: [] }, reason: 'clear' }),
       });
 
       expect(fs.existsSync(absoluteAssetPath)).toBe(false);

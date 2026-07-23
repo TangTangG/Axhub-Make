@@ -15,9 +15,15 @@ import { useClipboardCommentPaste } from './runtime-effects/use-clipboard-commen
 import { useOutsideClickSelectionRestore } from './runtime-effects/use-outside-click-selection-restore';
 import {
   MAX_PROMPT_IMAGE_ATTACHMENTS,
+  createPromptImageAttachmentFromSvgText,
+  isStandardSvgText,
   mergePromptImageAttachments,
   readPromptImageAttachmentsFromDataTransferItems,
 } from './image-attachments';
+import {
+  PROMPT_TEXT_LIMIT_MESSAGE,
+  isPromptTextChangeAllowed,
+} from './prompt-text-limit';
 import { notifyRuntimeMessage } from './runtime-feedback';
 import { insertPlainTextAtSelection } from './plain-text-selection';
 import type {
@@ -815,6 +821,10 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
 
   const handleDraftChange = React.useCallback((value: string) => {
     const prev = noteStateRef.current;
+    if (!isPromptTextChangeAllowed(prev.draftNote, value)) {
+      notifyRuntimeMessage('warning', PROMPT_TEXT_LIMIT_MESSAGE);
+      return;
+    }
     const nextState = {
       ...prev,
       draftNote: value,
@@ -977,39 +987,81 @@ export function WebEditorUiApp(props: WebEditorUiAppProps): React.ReactElement {
   const handleNotePasteCapture = React.useCallback(
     (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const element = currentTargetRef.current;
-      if (!imageAttachmentsEnabled) return;
-      if (!element || !propertyPanelOptions?.onAiNoteImagesChange) return;
-
       const clipboardItems = event.clipboardData?.items;
-      if (!clipboardItems?.length) return;
-      const hasImageItems = Array.from(clipboardItems).some(
+      const clipboardText = event.clipboardData?.getData('text/plain') ?? '';
+      const hasImageItems = Boolean(clipboardItems?.length) && Array.from(clipboardItems).some(
         (item) => item.kind === 'file' && String(item.type ?? '').startsWith('image/'),
       );
-      if (!hasImageItems) return;
-
-      const clipboardText = event.clipboardData?.getData('text/plain') ?? '';
       const target = event.target instanceof HTMLTextAreaElement ? event.target : null;
       const currentDraft = noteStateRef.current.draftNote;
+      const nextDraft = clipboardText
+        ? target
+          ? replaceTextInControl(target, currentDraft, clipboardText)
+          : currentDraft + clipboardText
+        : currentDraft;
+      const canAttachImages = Boolean(
+        imageAttachmentsEnabled && element && propertyPanelOptions?.onAiNoteImagesChange,
+      );
+
+      if (canAttachImages && !hasImageItems && isStandardSvgText(clipboardText)) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        void (async () => {
+          const svgImage = await createPromptImageAttachmentFromSvgText(clipboardText);
+          if (!svgImage) return;
+          await applyImagesToElement(element!, [svgImage]);
+        })();
+        return;
+      }
+
+      const plainTextAllowed =
+        !clipboardText || isPromptTextChangeAllowed(currentDraft, nextDraft);
+
+      if (!hasImageItems) {
+        if (!plainTextAllowed) {
+          event.preventDefault();
+          event.stopPropagation();
+          notifyRuntimeMessage('warning', PROMPT_TEXT_LIMIT_MESSAGE);
+        }
+        return;
+      }
+
+      if (!canAttachImages) {
+        if (!plainTextAllowed) {
+          event.preventDefault();
+          event.stopPropagation();
+          notifyRuntimeMessage('warning', PROMPT_TEXT_LIMIT_MESSAGE);
+        }
+        return;
+      }
+
+      const shouldInsertClipboardText = Boolean(
+        target && clipboardText && !isStandardSvgText(clipboardText),
+      );
+      const shouldRejectClipboardText = shouldInsertClipboardText && !plainTextAllowed;
       event.preventDefault();
       event.stopPropagation();
+      if (shouldRejectClipboardText) {
+        notifyRuntimeMessage('warning', PROMPT_TEXT_LIMIT_MESSAGE);
+      }
 
       void (async () => {
         const images = await readPromptImageAttachmentsFromDataTransferItems(clipboardItems);
         if (!images.length) return;
 
-        if (target && clipboardText) {
-          const nextValue = replaceTextInControl(target, currentDraft, clipboardText);
+        if (shouldInsertClipboardText && !shouldRejectClipboardText) {
           const prev = noteStateRef.current;
           const nextState = {
             ...prev,
-            draftNote: nextValue,
-            noteDirty: nextValue !== prev.savedNote,
+            draftNote: nextDraft,
+            noteDirty: nextDraft !== prev.savedNote,
           };
           noteStateRef.current = nextState;
           setNoteState(nextState);
         }
 
-        await applyImagesToElement(element, images);
+        await applyImagesToElement(element!, images);
       })();
     },
     [applyImagesToElement, imageAttachmentsEnabled, propertyPanelOptions],

@@ -1,4 +1,5 @@
 export * from './web-editor-types';
+export * from './acp-runtime-events';
 export * from './agent-bridge';
 export * from './tweak/protocol';
 export * from './review/comment-protocol';

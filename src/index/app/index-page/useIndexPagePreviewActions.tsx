@@ -91,6 +91,7 @@ import {
     readPreviewFrameEditorApi,
     resolveCurrentPublishResourcePath,
     resolveCurrentPreviewScreenshotSize,
+    resolveExportScreenshotViewportSize,
     resolveActiveAnnotationDirectRunToolbarState,
     resolveHostToolbarStateAfterClearEdits,
     resolveHostToolbarStateForDisplay,
@@ -129,49 +130,6 @@ function hasHostToolbarDecisionData(state: CommentaryHostToolbarState | null | u
             || Number(state.terminalTaskCount ?? 0) > 0
         ),
     );
-}
-
-function buildAnnotationEditingErrorTaskRef(
-    taskRef: AnnotationDirectRunTaskRef,
-    error: unknown,
-): AnnotationDirectRunTaskRef {
-    const data = error && typeof error === 'object'
-        ? (error as { data?: Record<string, unknown> }).data
-        : undefined;
-    const errorRecord = error && typeof error === 'object'
-        ? error as Record<string, unknown>
-        : {};
-    const errorMessage = typeof data?.error === 'string' && data.error.trim()
-        ? data.error.trim()
-        : typeof errorRecord.message === 'string' && errorRecord.message.trim()
-            ? errorRecord.message.trim()
-            : formatThrownError(error);
-    const code = typeof data?.code === 'string' && data.code.trim()
-        ? data.code.trim()
-        : typeof errorRecord.code === 'string' && errorRecord.code.trim()
-            ? errorRecord.code.trim()
-            : null;
-    const output = typeof data?.output === 'string' && data.output.trim()
-        ? data.output.trim()
-        : null;
-    const chunk = data && Object.prototype.hasOwnProperty.call(data, 'chunk')
-        ? data.chunk
-        : undefined;
-
-    return {
-        ...taskRef,
-        sessionId: typeof data?.threadId === 'string' && data.threadId.trim()
-            ? data.threadId.trim()
-            : taskRef.sessionId,
-        requestId: typeof data?.runId === 'string' && data.runId.trim()
-            ? data.runId.trim()
-            : taskRef.requestId,
-        error: errorMessage || null,
-        code,
-        output,
-        ...(chunk !== undefined ? { chunk } : {}),
-        ...(data ? { details: data } : {}),
-    };
 }
 
 function hasPrototypeDecisionData(
@@ -379,6 +337,7 @@ export function useIndexPagePreviewActions(params: any) {
     } = params;
 
     const userSetDimensionsRef = useRef(false);
+    const previousExportContentTypeRef = useRef(DEFAULT_EXPORT_IMAGE_CONFIG.contentType);
     const sidebarCollapsedBeforeWebEditorRef = useRef<boolean | null>(null);
     const standalonePanelBeforeQuickEditRef = useRef<boolean>(false);
     const decisionPanelAutoOpenSeqRef = useRef(0);
@@ -592,6 +551,8 @@ export function useIndexPagePreviewActions(params: any) {
     const currentRuntimeExportResource = contentMode === 'theme' ? selectedTheme : selectedItem;
     const currentRuntimeExportResourceType: 'prototype' | 'theme' = contentMode === 'theme' ? 'theme' : 'prototype';
     const selectedPrototypeIdentity = useMemo(() => resolveSelectedPrototypeIdentity(selectedItem), [selectedItem]);
+    const selectedPrototypeProjectKey = String(selectedItem?.projectId || projectId || '').trim();
+    const selectedPrototypeContextKey = `${selectedPrototypeProjectKey}:${selectedPrototypeIdentity}`;
     const selectedPrototypeIdentityRef = useRef(selectedPrototypeIdentity);
     activeReviewScopeKeyRef.current = `${projectId || ''}:${selectedPrototypeIdentity || ''}`;
     const currentPublishResourcePath = useMemo(() => resolveCurrentPublishResourcePath({
@@ -685,6 +646,10 @@ export function useIndexPagePreviewActions(params: any) {
     const screenshotDefaultSize = useMemo(
         () => getScreenshotExportDefaultSize(activeTab, getPreviewExportDeviceId(previewConfig)),
         [activeTab, previewConfig],
+    );
+    const currentPreviewScreenshotSize = useMemo(
+        () => resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize),
+        [previewConfig, screenshotDefaultSize],
     );
     const exportPreferencesStorageKey = useMemo(
         () => buildExportModalPreferencesStorageKey(assistantProjectPath),
@@ -1322,18 +1287,13 @@ export function useIndexPagePreviewActions(params: any) {
                     await applyAnnotationEditingTaskState(event.editingTargets, 'editing', event.taskRef);
                     break;
                 case 'completed':
-                    await applyAnnotationEditingTaskState(event.editingTargets, 'completed', event.taskRef);
                     messageApi.success('AI 已执行');
                     break;
                 case 'aborted':
-                    await applyAnnotationEditingTaskState(event.editingTargets, 'idle', event.taskRef);
                     break;
-                case 'error': {
-                    const terminalTaskRef = buildAnnotationEditingErrorTaskRef(event.taskRef, event.error);
-                    await applyAnnotationEditingTaskState(event.editingTargets, 'error', terminalTaskRef);
+                case 'error':
                     messageApi.error(`AI 执行失败：${formatThrownError(event.error)}`);
                     break;
-                }
                 case 'settled':
                     refreshAnnotationDirectRunToolbarState();
                     break;
@@ -2689,17 +2649,25 @@ export function useIndexPagePreviewActions(params: any) {
             return;
         }
         const payload: any = {};
-        const explicitWidth = typeof width === 'number' && Number.isFinite(width);
-        const explicitHeight = typeof height === 'number' && Number.isFinite(height);
-        const shouldForceBothDimensions = userSetDimensionsRef.current || explicitWidth || explicitHeight;
-        if (shouldForceBothDimensions) {
-            payload.targetWidth = width ?? imageConfig.width;
-            payload.targetHeight = height ?? imageConfig.height;
-        } else {
-            const screenshotSize = resolveCurrentPreviewScreenshotSize(previewConfig, screenshotDefaultSize);
-            payload.targetWidth = screenshotSize.width;
-            payload.targetHeight = screenshotSize.height;
+        const screenshotViewport = resolveExportScreenshotViewportSize({
+            currentPreviewSize: currentPreviewScreenshotSize,
+            configuredSize: { width: imageConfig.width, height: imageConfig.height },
+            userSetDimensions: userSetDimensionsRef.current,
+            explicitWidth: width,
+            explicitHeight: height,
+        });
+        if (screenshotViewport.shouldSyncConfig) {
+            setImageConfig((previous) => previous.width === screenshotViewport.width
+                && previous.height === screenshotViewport.height
+                ? previous
+                : {
+                    ...previous,
+                    width: screenshotViewport.width,
+                    height: screenshotViewport.height,
+                });
         }
+        payload.targetWidth = screenshotViewport.width;
+        payload.targetHeight = screenshotViewport.height;
         payload.format = 'jpeg';
         payload.quality = 0.92;
         payload.maxBytes = 8 * 1024 * 1024;
@@ -2714,14 +2682,14 @@ export function useIndexPagePreviewActions(params: any) {
             }), getIframeOrigin(targetIframe));
         }
     }, [
+        currentPreviewScreenshotSize.height,
+        currentPreviewScreenshotSize.width,
         exportAvailability.axureRuntimeDisabledReason,
         getIframeOrigin,
         getPreviewIframe,
         imageConfig.height,
         imageConfig.width,
         notifyPreviewMessage,
-        previewConfig,
-        screenshotDefaultSize,
         selectedItem,
     ]);
 
@@ -4212,7 +4180,7 @@ export function useIndexPagePreviewActions(params: any) {
         // For 'screenshot' mode, use the device-appropriate defaults; the actual screenshot
         // dimensions will be auto-synced once a capture returns.
         const resolvedDimensions = savedContentType === 'screenshot'
-            ? { width: screenshotDefaultSize.width, height: screenshotDefaultSize.height }
+            ? { width: currentPreviewScreenshotSize.width, height: currentPreviewScreenshotSize.height }
             : { width: TITLE_EXPORT_DEFAULT_SIZE.width, height: TITLE_EXPORT_DEFAULT_SIZE.height };
 
         const nextImageConfig = preferences.imageConfig
@@ -4235,7 +4203,11 @@ export function useIndexPagePreviewActions(params: any) {
         setImageConfig(nextImageConfig);
         setAxureCopyOptions(nextAxureCopyOptions);
         exportPreferencesReadyRef.current = true;
-    }, [exportPreferencesStorageKey, screenshotDefaultSize.height, screenshotDefaultSize.width]);
+    }, [
+        currentPreviewScreenshotSize.height,
+        currentPreviewScreenshotSize.width,
+        exportPreferencesStorageKey,
+    ]);
 
     useEffect(() => {
         if (!exportPreferencesReadyRef.current) return;
@@ -4267,28 +4239,39 @@ export function useIndexPagePreviewActions(params: any) {
     ]);
 
     useEffect(() => {
+        const contentTypeChanged = previousExportContentTypeRef.current !== imageConfig.contentType;
+        previousExportContentTypeRef.current = imageConfig.contentType;
         if (skipExportContentTypeResetRef.current) {
             skipExportContentTypeResetRef.current = false;
             return;
         }
-        userSetDimensionsRef.current = false;
-        if (imageConfig.contentType === 'screenshot') {
+        if (contentTypeChanged) {
+            userSetDimensionsRef.current = false;
+            if (imageConfig.contentType !== 'screenshot') {
+                screenshotModalRefreshKeyRef.current = '';
+            }
+        }
+        if (imageConfig.contentType === 'screenshot' && !userSetDimensionsRef.current) {
             setImageConfig((previous) => ({
                 ...previous,
-                width: screenshotDefaultSize.width,
-                height: screenshotDefaultSize.height,
+                width: currentPreviewScreenshotSize.width,
+                height: currentPreviewScreenshotSize.height,
                 screenshotWidth: 0,
                 screenshotHeight: 0,
                 rawScreenshotUrl: '',
             }));
-        } else {
+        } else if (contentTypeChanged) {
             setImageConfig((previous) => ({
                 ...previous,
                 width: 500,
                 height: 300,
             }));
         }
-    }, [imageConfig.contentType, screenshotDefaultSize.height, screenshotDefaultSize.width]);
+    }, [
+        currentPreviewScreenshotSize.height,
+        currentPreviewScreenshotSize.width,
+        imageConfig.contentType,
+    ]);
 
     useEffect(() => {
         userSetDimensionsRef.current = false;
@@ -4299,7 +4282,7 @@ export function useIndexPagePreviewActions(params: any) {
             screenshotHeight: 0,
             previewUrl: '',
         }));
-    }, [selectedItem]);
+    }, [selectedPrototypeContextKey]);
 
     useEffect(() => {
         const handleMessage = (event: MessageEvent) => {
@@ -4545,7 +4528,7 @@ export function useIndexPagePreviewActions(params: any) {
         const projectKey = String(selectedItem?.projectId || projectId || '').trim();
         const resourceKey = resolveSelectedPrototypeIdentity(selectedItem) || 'selected';
         const pageKey = String(selectedPageId || '').trim();
-        const refreshKey = `${projectKey}:${resourceKey}:${pageKey}:${screenshotDefaultSize.width}x${screenshotDefaultSize.height}`;
+        const refreshKey = `${projectKey}:${resourceKey}:${pageKey}:${currentPreviewScreenshotSize.width}x${currentPreviewScreenshotSize.height}`;
         if (screenshotModalRefreshKeyRef.current === refreshKey) return;
         screenshotModalRefreshKeyRef.current = refreshKey;
         setImageConfig((previous) => ({
@@ -4561,8 +4544,8 @@ export function useIndexPagePreviewActions(params: any) {
         imageConfig.contentType,
         isExportModalOpen,
         projectId,
-        screenshotDefaultSize.height,
-        screenshotDefaultSize.width,
+        currentPreviewScreenshotSize.height,
+        currentPreviewScreenshotSize.width,
         selectedItem,
         selectedPageId,
     ]);

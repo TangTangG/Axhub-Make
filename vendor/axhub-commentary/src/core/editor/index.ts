@@ -31,6 +31,7 @@ import { createInteractionService } from './interaction';
 import { createLifecycleService } from './lifecycle';
 import { createLocalActionsService } from './local-actions';
 import { createPersistenceService } from './persistence';
+import { createConversationTaskMonitor } from './conversation-task-monitor';
 import { captureElementScreenshot } from './screenshot';
 import {
   resolveAnnotationElementIdentity,
@@ -108,6 +109,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     getUiRoot: () => state.shadowHost?.getElements()?.uiRoot ?? null,
   });
   let persistence: ReturnType<typeof createPersistenceService> | null = null;
+  let conversationTaskMonitor: ReturnType<typeof createConversationTaskMonitor> | null = null;
   let interaction: ReturnType<typeof createInteractionService> | null = null;
   let agentBridge: ReturnType<typeof createAgentBridgeService> | null = null;
   let destroyed = false;
@@ -693,6 +695,11 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     targetRef?: CommentaryExternalEditingTargetRef | null,
   ): Promise<CommentaryExternalEditingStateResult> {
     const normalizedTaskRef = normalizeExternalTaskRef(taskRef);
+    const reconcilePersistedEditingTask = async (): Promise<void> => {
+      if (nextState !== 'editing') return;
+      await persistence?.waitForPendingWrites();
+      conversationTaskMonitor?.reconcile();
+    };
     const recordNodeTaskState = (targetElementKey: WebEditorElementKey): void => {
       if (nextState === 'completed') return;
       persistence?.recordCommentTaskState?.(targetElementKey, nextState, normalizedTaskRef);
@@ -727,6 +734,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       if (nextState === 'editing' && target && agentBridge?.setExternalEditingStateByElementKey) {
         const task = agentBridge.setExternalEditingStateByElementKey(target, taskRef);
         recordNodeTaskState(target.elementKey);
+        await reconcilePersistedEditingTask();
         notifyStatusChange();
         return {
           elementKey: target.elementKey,
@@ -858,6 +866,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     notifyStatusChange();
 
     recordNodeTaskState(elementKey);
+    await reconcilePersistedEditingTask();
     return {
       elementKey,
       state: nextState,
@@ -917,6 +926,14 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
       resolvedOptions.interactionProfile === 'text-comment' || state.uiSettings.documentCommentMode
         ? 'text-comment'
         : 'design',
+  });
+  conversationTaskMonitor = createConversationTaskMonitor({
+    persistence,
+    transport: resolvedOptions.host.conversationTaskTransport,
+    onTerminalPersisted: () => {
+      state.propertyPanel?.refresh();
+      notifyStatusChange();
+    },
   });
 
   let flushPendingCommentContextSync: (() => void) | null = null;
@@ -998,6 +1015,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     interaction,
     agentBridge,
     integrationWs,
+    conversationTaskMonitor,
     localActions,
   };
 
@@ -1113,10 +1131,17 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
   }
 
   async function refreshPersistedComments(
-    externallyDeletedElementKeys: readonly WebEditorElementKey[] = [],
+    externallyDeletedCommentIds: readonly string[] = [],
   ): Promise<void> {
     if (destroyed || !persistence) return;
+    const deletedCommentIds = new Set(
+      externallyDeletedCommentIds.map((id) => String(id ?? '').trim()).filter(Boolean),
+    );
+    const externallyDeletedElementKeys = Array.from(state.editMetaByKey.values())
+      .filter((meta) => Boolean(meta.commentId && deletedCommentIds.has(meta.commentId)))
+      .map((meta) => meta.elementKey);
     const persistedDeletedElementKeys = await persistence.restoreCachedChanges();
+    conversationTaskMonitor?.reconcile();
     agentBridge?.discardDeletedElementStates?.([
       ...externallyDeletedElementKeys,
       ...persistedDeletedElementKeys,
@@ -1148,6 +1173,7 @@ export function createCommentary(options: CommentaryInitOptions = {}): Commentar
     if (destroyed) return;
     destroyed = true;
     reviewCommentInstallation.dispose();
+    conversationTaskMonitor?.stop();
     lifecycle.stop();
     statusListeners.clear();
     cleanupMobileModeOverride();

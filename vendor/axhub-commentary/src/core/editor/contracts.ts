@@ -105,6 +105,19 @@ export interface AgentProviderAvailability {
 
 export type SessionActivityListener = (item: SessionActivityItem) => void;
 
+export interface PersistedConversationTask {
+  commentId: string;
+  provider: string;
+  sessionId: string;
+  requestId: string;
+}
+
+export interface ConversationTaskTerminalTransition extends PersistedConversationTask {
+  state: 'completed' | 'error';
+  error?: string | null;
+  code?: string | null;
+}
+
 export type MoveSummary = {
   label: string;
   locator: ElementLocator;
@@ -233,6 +246,11 @@ export interface EditorPersistenceService {
   getCommentTaskState?(
     elementKey: WebEditorElementKey,
   ): PrototypeEditCommentStatus | null;
+  waitForPendingWrites(): Promise<void>;
+  listEditingConversationTasks(): PersistedConversationTask[];
+  transitionConversationTaskTerminal(
+    input: ConversationTaskTerminalTransition,
+  ): Promise<boolean>;
   clearCommentRecord?(elementKey: WebEditorElementKey): void;
   scheduleWrite(): void;
   persistFromTransactions(): void;
@@ -378,6 +396,11 @@ export interface EditorLocalActionsService {
   handleClearElementEdits(element: Element): Promise<boolean>;
 }
 
+export interface EditorConversationTaskMonitor {
+  reconcile(): void;
+  stop(): void;
+}
+
 export interface EditorServices {
   feedback: EditorFeedbackService;
   summaries: EditorSummariesService;
@@ -387,6 +410,7 @@ export interface EditorServices {
   interaction: EditorInteractionService;
   agentBridge: EditorAgentBridgeService;
   integrationWs?: EditorIntegrationWsService;
+  conversationTaskMonitor?: EditorConversationTaskMonitor;
   localActions: EditorLocalActionsService;
 }
 

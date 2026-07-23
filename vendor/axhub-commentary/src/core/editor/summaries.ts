@@ -186,16 +186,16 @@ function collectPromptImageAssetPaths(
 
 function collectPersistedImageAssetPathsForComment(
   images: readonly PrototypeEditCommentImageEntry[],
-  comment: Pick<PrototypeEditCommentEntry, 'elementKey' | 'pageScope'>,
+  comment: Pick<PrototypeEditCommentEntry, 'id' | 'pageScope'>,
 ): string[] {
-  const elementKey = normalizePathValue(comment.elementKey);
+  const commentId = normalizePathValue(comment.id);
   const pageScope = normalizePathValue(comment.pageScope);
-  if (!elementKey) return [];
+  if (!commentId) return [];
 
   return dedupeStrings(
     images
       .filter((image) => {
-        if (normalizePathValue(image.elementKey) !== elementKey) return false;
+        if (normalizePathValue(image.commentId) !== commentId) return false;
         const imagePageScope = normalizePathValue(image.pageScope);
         return !pageScope || !imagePageScope || imagePageScope === pageScope;
       })
@@ -563,7 +563,13 @@ export function createEditorSummariesService(options: {
       if (comment.state !== 'completed') continue;
       const commentPageScope = normalizePathValue(comment.pageScope);
       if (commentPageScope && commentPageScope !== currentPageScope) continue;
-      const elementKey = normalizePathValue(comment.elementKey) || locatorKey(comment.locator);
+      const runtimeMeta = Array.from(state.editMetaByKey.values()).find(
+        (meta) => meta.commentId === comment.id,
+      );
+      const element = runtimeMeta ? null : locateElement(comment.locator);
+      const elementKey = runtimeMeta?.elementKey || (element?.isConnected
+        ? resolveElementKey(element)
+        : locatorKey(comment.locator));
       if (elementKey) {
         completedElementKeys.add(elementKey);
       }
@@ -1219,19 +1225,28 @@ export function createEditorSummariesService(options: {
 
     return document.comments
       .filter((comment) => comment.state !== 'completed')
-      .map((comment) => ({
-        elementKey: String(comment.elementKey ?? '').trim(),
-        label:
-          String(comment.label ?? '').trim() ||
-          String(comment.elementKey ?? '').trim() ||
-          'element',
-        locator: comment.locator,
-        pageScope: String(comment.pageScope ?? '').trim(),
-        note: buildPromptNote(comment.comment ?? '', comment),
-        skillIds: comment.skillIds?.slice(),
-        actions: buildPersistedCommentActionLines(comment),
-        imageAssetPaths: collectPersistedImageAssetPathsForComment(images, comment),
-      }))
+      .map((comment) => {
+        const runtimeMeta = Array.from(state.editMetaByKey.values()).find(
+          (meta) => meta.commentId === comment.id,
+        );
+        const element = runtimeMeta ? null : locateElement(comment.locator);
+        const elementKey = runtimeMeta?.elementKey || (element?.isConnected
+          ? resolveElementKey(element)
+          : locatorKey(comment.locator));
+        return {
+          elementKey,
+          label:
+            String(runtimeMeta?.label ?? '').trim() ||
+            String(comment.label ?? '').trim() ||
+            'element',
+          locator: comment.locator,
+          pageScope: String(comment.pageScope ?? '').trim(),
+          note: buildPromptNote(comment.comment ?? '', comment),
+          skillIds: comment.skillIds?.slice(),
+          actions: buildPersistedCommentActionLines(comment),
+          imageAssetPaths: collectPersistedImageAssetPathsForComment(images, comment),
+        };
+      })
       .filter(
         (comment) =>
           Boolean(comment.locator) &&
