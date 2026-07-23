@@ -819,6 +819,7 @@ describe('release make artifact helpers', () => {
   it('exposes only the npm beta release script from the workspace root', () => {
     const rootPackageJson = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8'));
 
+    assert.equal(rootPackageJson.version, '0.6.8');
     assert.equal(rootPackageJson.scripts['release:make:npm:latest'], undefined);
     assert.equal(
       rootPackageJson.scripts['release:make:npm:beta'],
