@@ -1,0 +1,66 @@
+@import './tokens.css';
+
+.image {
+  display: block;
+  object-fit: cover;
+  transition: opacity 0.2s ease;
+}
+
+.image--contain {
+  object-fit: contain;
+}
+
+.image--fill {
+  object-fit: fill;
+}
+
+.image--none {
+  object-fit: none;
+}
+
+.image--loading {
+  opacity: 0;
+}
+
+.image--loaded {
+  opacity: 1;
+}
+
+.image--error {
+  opacity: 1;
+}
+
+.image__placeholder--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+}
+
+.image__spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--color-border-default);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: image-spin 0.8s linear infinite;
+}
+
+.image__placeholder--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-xs);
+}
+
+@keyframes image-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

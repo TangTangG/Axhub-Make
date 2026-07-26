@@ -1,0 +1,20 @@
+@import './tokens.css';
+
+.text {
+  font-family: var(--font-family-body);
+  color: var(--color-text-primary);
+  margin: 0;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.text:hover {
+  color: var(--color-primary);
+}
+
+.text--disabled {
+  color: var(--color-text-disabled);
+  cursor: not-allowed;
+  pointer-events: none;
+  user-select: none;
+}

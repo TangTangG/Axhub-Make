@@ -1,0 +1,20 @@
+@import './tokens.css';
+
+.rectangle {
+  box-sizing: border-box;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rectangle:hover {
+  opacity: 0.9;
+}
+
+.rectangle:active {
+  transform: scale(0.99);
+}
+
+.rectangle--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}

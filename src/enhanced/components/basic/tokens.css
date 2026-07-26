@@ -1,0 +1,73 @@
+/**
+ * Design Tokens CSS Custom Properties
+ * Generated from design-tokens.json
+ * All components reference these variables — never hardcode hex values.
+ */
+:root {
+  /* Color - Primary */
+  --color-primary: #0066cc;
+  --color-primary-hover: #0071e3;
+  --color-primary-active: #005bb5;
+  --color-primary-disabled: #cccccc;
+
+  /* Color - Text */
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #7a7a7a;
+  --color-text-disabled: #cccccc;
+  --color-text-inverse: #ffffff;
+
+  /* Color - Background */
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f5f5f7;
+  --color-bg-hover: #f0f0f0;
+  --color-bg-selected: #e3f2fd;
+
+  /* Color - Border */
+  --color-border-default: #e0e0e0;
+  --color-border-hover: #cccccc;
+  --color-border-focus: #0066cc;
+  --color-border-error: #ff3b30;
+
+  /* Color - State */
+  --color-state-success: #34c759;
+  --color-state-warning: #ff9500;
+  --color-state-error: #ff3b30;
+  --color-state-info: #007aff;
+
+  /* Typography */
+  --font-family-display: SF Pro Display, -apple-system, sans-serif;
+  --font-family-body: SF Pro Text, -apple-system, sans-serif;
+  --font-family-mono: ui-monospace, SF Mono, monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-md: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 24px;
+  --font-size-xxl: 32px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Spacing */
+  --spacing-xxs: 4px;
+  --spacing-xs: 8px;
+  --spacing-sm: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-xxl: 48px;
+  --spacing-section: 80px;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.15);
+}
