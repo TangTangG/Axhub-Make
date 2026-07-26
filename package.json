@@ -75,6 +75,12 @@
     "release:make-client-template:prepare": "node scripts/release-make.mjs --template-only --prepare-only",
     "release:make-client-template": "node scripts/release-make.mjs --template-only",
     "release:make:mirror:gitee": "node scripts/release-make-mirror-gitee.mjs",
+    "sync:upstream": "./scripts/sync-upstream.sh",
+    "check:upstream-api": "./scripts/check-upstream-api.sh",
+    "generate:tokens": "node scripts/generate-tokens.js",
+    "test:e2e": "playwright test tests/e2e/*.ci.test.ts",
+    "test:e2e:local": "playwright test tests/e2e/*.local.test.ts",
+    "test:e2e:real-bridge": "npm run test:e2e:local",
     "release:make": "node scripts/release-make.mjs"
   },
   "dependencies": {
@@ -139,6 +145,8 @@
     "use-sync-external-store": "1.6.0"
   },
   "devDependencies": {
+    "patch-package": "^8.0.0",
+    "postinstall-postinstall": "^2.1.0",
     "@tailwindcss/vite": "^4.1.18",
     "@types/archiver": "^7.0.0",
     "@types/node": "^20.0.0",

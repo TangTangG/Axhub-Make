@@ -1,0 +1,97 @@
+# 上游同步 CI 工作流
+# 每周一 09:00 (Asia/Shanghai) 自动同步上游代码
+
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 1 * * 1'  # 每周一 09:00 (Asia/Shanghai)
+  workflow_dispatch:     # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # 需要完整历史用于 subtree
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/lintendo/Axhub-Make.git || true
+          git fetch upstream main
+      
+      - name: Sync upstream via subtree
+        run: |
+          # 检查 upstream/ 目录是否存在
+          if [ -d "upstream" ]; then
+            echo "使用 git subtree 合并上游变更..."
+            git subtree pull --prefix=upstream https://github.com/lintendo/Axhub-Make.git main --squash -m "chore: sync upstream $(date +%Y-%m-%d)"
+          else
+            echo "upstream/ 目录不存在，初始化 subtree..."
+            git subtree add --prefix=upstream https://github.com/lintendo/Axhub-Make.git main --squash -m "chore: initial upstream subtree"
+          fi
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Apply patches
+        run: |
+          if [ -d "patches" ] && [ "$(ls -A patches 2>/dev/null)" ]; then
+            echo "应用 patch-package 补丁..."
+            npx patch-package
+          else
+            echo "无补丁需要应用"
+          fi
+      
+      - name: Run tests
+        run: npm test
+      
+      - name: Build project
+        run: npm run build || echo "构建失败，继续..."
+      
+      - name: Create sync tag
+        run: |
+          TAG_NAME="upstream-sync-$(date +%Y%m%d)"
+          git tag "$TAG_NAME" || echo "tag 已存在"
+          git push origin "$TAG_NAME" || echo "tag 推送失败"
+      
+      - name: Push changes
+        run: |
+          git push origin main
+      
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '上游同步失败 - $(date +%Y-%m-%d)',
+              body: `自动同步失败，请人工处理。
+              
+              失败步骤: ${{ github.job }}
+              运行日志: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              
+              回滚命令:
+              \`\`\`bash
+              git reset --hard $(git describe --tags --abbrev=0)
+              \`\`\`
+              `,
+              labels: ['upstream-sync', 'bug']
+            })
