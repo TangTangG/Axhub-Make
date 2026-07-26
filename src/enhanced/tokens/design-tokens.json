@@ -1,0 +1,61 @@
+{
+  "color": {
+    "primary": { "value": "#0066cc", "type": "color" },
+    "primary.hover": { "value": "#0071e3", "type": "color" },
+    "primary.active": { "value": "#005bb5", "type": "color" },
+    "primary.disabled": { "value": "#cccccc", "type": "color" },
+    "text.primary": { "value": "#1d1d1f", "type": "color" },
+    "text.secondary": { "value": "#7a7a7a", "type": "color" },
+    "text.disabled": { "value": "#cccccc", "type": "color" },
+    "text.inverse": { "value": "#ffffff", "type": "color" },
+    "bg.primary": { "value": "#ffffff", "type": "color" },
+    "bg.secondary": { "value": "#f5f5f7", "type": "color" },
+    "bg.hover": { "value": "#f0f0f0", "type": "color" },
+    "bg.selected": { "value": "#e3f2fd", "type": "color" },
+    "border.default": { "value": "#e0e0e0", "type": "color" },
+    "border.hover": { "value": "#cccccc", "type": "color" },
+    "border.focus": { "value": "#0066cc", "type": "color" },
+    "border.error": { "value": "#ff3b30", "type": "color" },
+    "state.success": { "value": "#34c759", "type": "color" },
+    "state.warning": { "value": "#ff9500", "type": "color" },
+    "state.error": { "value": "#ff3b30", "type": "color" },
+    "state.info": { "value": "#007aff", "type": "color" }
+  },
+  "typography": {
+    "font.family.display": { "value": "SF Pro Display, -apple-system, sans-serif", "type": "fontFamily" },
+    "font.family.body": { "value": "SF Pro Text, -apple-system, sans-serif", "type": "fontFamily" },
+    "font.family.mono": { "value": "ui-monospace, SF Mono, monospace", "type": "fontFamily" },
+    "font.size.xs": { "value": "12px", "type": "fontSize" },
+    "font.size.sm": { "value": "14px", "type": "fontSize" },
+    "font.size.md": { "value": "16px", "type": "fontSize" },
+    "font.size.lg": { "value": "18px", "type": "fontSize" },
+    "font.size.xl": { "value": "24px", "type": "fontSize" },
+    "font.size.xxl": { "value": "32px", "type": "fontSize" },
+    "font.weight.regular": { "value": "400", "type": "fontWeight" },
+    "font.weight.medium": { "value": "500", "type": "fontWeight" },
+    "font.weight.semibold": { "value": "600", "type": "fontWeight" },
+    "font.weight.bold": { "value": "700", "type": "fontWeight" }
+  },
+  "spacing": {
+    "xxs": { "value": "4px", "type": "spacing" },
+    "xs": { "value": "8px", "type": "spacing" },
+    "sm": { "value": "12px", "type": "spacing" },
+    "md": { "value": "16px", "type": "spacing" },
+    "lg": { "value": "24px", "type": "spacing" },
+    "xl": { "value": "32px", "type": "spacing" },
+    "xxl": { "value": "48px", "type": "spacing" },
+    "section": { "value": "80px", "type": "spacing" }
+  },
+  "radius": {
+    "sm": { "value": "4px", "type": "borderRadius" },
+    "md": { "value": "8px", "type": "borderRadius" },
+    "lg": { "value": "12px", "type": "borderRadius" },
+    "full": { "value": "9999px", "type": "borderRadius" }
+  },
+  "shadow": {
+    "sm": { "value": "0 1px 2px rgba(0,0,0,0.05)", "type": "boxShadow" },
+    "md": { "value": "0 4px 6px rgba(0,0,0,0.07)", "type": "boxShadow" },
+    "lg": { "value": "0 10px 15px rgba(0,0,0,0.1)", "type": "boxShadow" },
+    "xl": { "value": "0 20px 25px rgba(0,0,0,0.15)", "type": "boxShadow" }
+  }
+}
