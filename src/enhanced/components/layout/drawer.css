@@ -1,0 +1,128 @@
+@import '../basic/tokens.css';
+
+.drawer-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.drawer-wrapper--open {
+  pointer-events: auto;
+}
+
+.drawer-mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--color-mask);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.drawer-wrapper--open .drawer-mask {
+  opacity: 1;
+}
+
+.drawer {
+  position: absolute;
+  background-color: var(--color-bg-primary);
+  box-shadow: var(--shadow-xl);
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.3s ease;
+}
+
+.drawer--right {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  transform: translateX(100%);
+}
+
+.drawer-wrapper--open .drawer--right {
+  transform: translateX(0);
+}
+
+.drawer--left {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  transform: translateX(-100%);
+}
+
+.drawer-wrapper--open .drawer--left {
+  transform: translateX(0);
+}
+
+.drawer--top {
+  top: 0;
+  left: 0;
+  right: 0;
+  transform: translateY(-100%);
+}
+
+.drawer-wrapper--open .drawer--top {
+  transform: translateY(0);
+}
+
+.drawer--bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: translateY(100%);
+}
+
+.drawer-wrapper--open .drawer--bottom {
+  transform: translateY(0);
+}
+
+.drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-bottom: 1px solid var(--color-border-default);
+  flex-shrink: 0;
+}
+
+.drawer__title {
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+  padding: 0;
+}
+
+.drawer__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-lg);
+  transition: background-color 0.15s ease, color 0.15s ease;
+  padding: 0;
+}
+
+.drawer__close:hover {
+  background-color: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.drawer__body {
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  flex: 1;
+}

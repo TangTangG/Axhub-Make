@@ -1,0 +1,79 @@
+@import '../basic/tokens.css';
+
+.divider {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.divider--horizontal {
+  width: 100%;
+  height: 1px;
+  background-color: var(--color-border-default);
+  margin: var(--spacing-lg) 0;
+}
+
+.divider--horizontal.divider--dashed {
+  background: none;
+  border-top: 1px dashed var(--color-border-default);
+}
+
+.divider--vertical {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  background-color: var(--color-border-default);
+  vertical-align: middle;
+  margin: 0 var(--spacing-md);
+}
+
+.divider--vertical.divider--dashed {
+  background: none;
+  border-left: 1px dashed var(--color-border-default);
+  height: 1em;
+}
+
+.divider--with-text {
+  display: flex;
+  align-items: center;
+  background: none;
+  height: auto;
+}
+
+.divider--with-text::before,
+.divider--with-text::after {
+  content: '';
+  flex: 1;
+  height: 0;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.divider--with-text.divider--dashed::before,
+.divider--with-text.divider--dashed::after {
+  border-top-style: dashed;
+}
+
+.divider--orientation-left::before {
+  flex: 0 0 var(--spacing-lg);
+}
+
+.divider--orientation-left::after {
+  flex: 1;
+}
+
+.divider--orientation-right::before {
+  flex: 1;
+}
+
+.divider--orientation-right::after {
+  flex: 0 0 var(--spacing-lg);
+}
+
+.divider__text {
+  padding: 0 var(--spacing-md);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
