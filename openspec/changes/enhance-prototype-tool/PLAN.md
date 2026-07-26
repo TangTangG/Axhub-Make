@@ -172,6 +172,49 @@ jobs:
 | 上游仓库结构变更 | 低 | 监控上游 release notes |
 | patch-package 冲突 | 中 | 人工解决后重新生成 patch |
 
+### 任务 1.6: 同步 tag 与回滚机制
+
+**目标**：确保上游同步失败时可快速回滚。
+
+**实现**：
+```bash
+# scripts/sync-upstream.sh（补充）
+# 成功同步后自动打 tag
+git tag upstream-sync-$(date +%Y%m%d)
+
+# CI 失败时输出回滚命令
+echo "回滚命令: git reset --hard $(git describe --tags --abbrev=0)"
+```
+
+**验收标准**：
+- [ ] 每次成功同步自动打 tag
+- [ ] CI 失败时输出回滚命令
+- [ ] 回滚操作文档化
+
+### 任务 1.7: UPSTREAM_API_LOCK.md
+
+**目标**：锁定上游 API 符号，检测意外变更。
+
+**实现**：
+```markdown
+# UPSTREAM_API_LOCK.md
+# 记录上游 axhub-export-core 的公共导出符号
+
+## 导出函数
+- htmlToAxure(html: string, options: ExportOptions): AxureDocument
+- parseComponentTree(tree: ComponentTree): AxureWidget[]
+
+## 类型定义
+- ExportOptions
+- AxureDocument
+- AxureWidget
+```
+
+**验收标准**：
+- [ ] 初始化符号清单
+- [ ] CI 检测符号漂移
+- [ ] 变更时自动报警
+
 ---
 
 ## 三、Phase 2: 设计 Token 与组件系统（Week 2）
@@ -180,78 +223,86 @@ jobs:
 建立统一的设计语言，实现 6 个基础组件。
 
 ### 任务清单
+### 任务 2.1: 设计 Token
 
-#### 任务 2.1: 设计 Token
-```json
-// src/enhanced/tokens/design-tokens.json
-{
-  "color": {
-    "primary": { "value": "#1890ff", "type": "color" },
-    "primary.hover": { "value": "#40a9ff", "type": "color" },
-    "primary.active": { "value": "#096dd9", "type": "color" },
-    "success": { "value": "#52c41a", "type": "color" },
-    "warning": { "value": "#faad14", "type": "color" },
-    "error": { "value": "#f5222d", "type": "color" },
-    "text.primary": { "value": "rgba(0,0,0,0.85)", "type": "color" },
-    "text.secondary": { "value": "rgba(0,0,0,0.45)", "type": "color" },
-    "border.default": { "value": "#d9d9d9", "type": "color" },
-    "border.hover": { "value": "#40a9ff", "type": "color" },
-    "border.focus": { "value": "#1890ff", "type": "color" },
-    "border.error": { "value": "#f5222d", "type": "color" }
-  },
-  "typography": {
-    "font.family": { "value": "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", "type": "fontFamily" },
-    "font.size.xs": { "value": "12px", "type": "fontSize" },
-    "font.size.sm": { "value": "14px", "type": "fontSize" },
-    "font.size.base": { "value": "16px", "type": "fontSize" },
-    "font.size.lg": { "value": "18px", "type": "fontSize" },
-    "font.size.xl": { "value": "20px", "type": "fontSize" },
-    "font.weight.normal": { "value": "400", "type": "fontWeight" },
-    "font.weight.medium": { "value": "500", "type": "fontWeight" },
-    "font.weight.bold": { "value": "700", "type": "fontWeight" }
-  },
-  "spacing": {
-    "spacing.0": { "value": "0", "type": "spacing" },
-    "spacing.1": { "value": "4px", "type": "spacing" },
-    "spacing.2": { "value": "8px", "type": "spacing" },
-    "spacing.3": { "value": "12px", "type": "spacing" },
-    "spacing.4": { "value": "16px", "type": "spacing" },
-    "spacing.5": { "value": "20px", "type": "spacing" },
-    "spacing.6": { "value": "24px", "type": "spacing" },
-    "spacing.8": { "value": "32px", "type": "spacing" }
-  },
-  "radius": {
-    "radius.sm": { "value": "2px", "type": "borderRadius" },
-    "radius.base": { "value": "4px", "type": "borderRadius" },
-    "radius.lg": { "value": "8px", "type": "borderRadius" },
-    "radius.full": { "value": "9999px", "type": "borderRadius" }
-  },
-  "shadow": {
-    "shadow.sm": { "value": "0 1px 2px 0 rgba(0,0,0,0.05)", "type": "shadow" },
-    "shadow.base": { "value": "0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px 0 rgba(0,0,0,0.06)", "type": "shadow" },
-    "shadow.lg": { "value": "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)", "type": "shadow" }
-  }
-}
+> **注意**：本任务不直接定义 Token JSON，而是从 DESIGN_SPEC.md §1 自动生成。
+
+**生成脚本**：
+```bash
+# scripts/generate-tokens.ts
+# 从 DESIGN_SPEC.md 解析 Token 表格，生成 design-tokens.json
+npm run generate:tokens
 ```
 
-**验收标准**：
-- [ ] Token 覆盖颜色/字体/间距/圆角/阴影 5 维度
-- [ ] 与 DESIGN_SPEC.md 一致
-- [ ] 支持 JSON 导入导出
+**输出**：`src/enhanced/tokens/design-tokens.json`（与 DESIGN_SPEC.md §1 完全一致）
 
-#### 任务 2.2: 组件接口
+**验收标准**：
+- [ ] `design-tokens.json` 与 DESIGN_SPEC.md §1 diff 为空
+- [ ] 包含全部 5 维度：color/typography/spacing/radius/shadow
+- [ ] 支持 JSON 导入导出
+### 任务 2.2: 组件接口
+
+> **注意**：本接口以 design.md §2 为唯一蓝本，任何修改需同步更新 design.md。
+
 ```typescript
 // src/enhanced/components/types.ts
+
+/**
+ * 组件可编辑性分级（L1-L4）
+ * 定义见 DESIGN_SPEC.md §X（待补充）
+ */
+type EditabilityLevel = 'L1' | 'L2' | 'L3' | 'L4';
+
+/**
+ * 组件定义接口
+ * 与 design.md §2 完全一致
+ */
 interface ComponentDefinition {
+  /** 组件类型标识（如 proto-button） */
   type: string;
+  
+  /** 组件名称（如"按钮"） */
   name: string;
+  
+  /** 组件分类 */
   category: 'basic' | 'form' | 'layout' | 'advanced';
-  axureWidget: string;
-  editability: 'L1' | 'L2' | 'L3' | 'L4';
+  
+  /** 组件图标（属性面板显示） */
+  icon: string;
+  
+  /** 默认属性值 */
+  defaultProps: Record<string, any>;
+  
+  /** 组件 schema 版本 */
+  version: string;
+  
+  /** Axure 映射配置 */
+  axureMapping: {
+    /** Axure Widget 类型 */
+    widgetType: string;
+    
+    /** 属性映射表 */
+    propertyMap: Record<string, string>;
+    
+    /** 降级策略 */
+    fallback: {
+      type: 'none' | 'placeholder' | 'image' | 'text';
+      placeholderText?: string;
+      preserveSize?: boolean;
+    };
+  };
+  
+  /** 可编辑性分级 */
+  editability: EditabilityLevel;
+  
+  /** 组件状态集 */
   states: ComponentState[];
+  
+  /** 属性 Schema */
   props: PropSchema[];
+  
+  /** 预览支持 */
   previewSupport: ('iframe' | 'html' | 'image')[];
-  fallbackStrategy: 'none' | 'placeholder' | 'image' | 'text';
 }
 
 interface ComponentState {
@@ -270,24 +321,27 @@ interface PropSchema {
 ```
 
 **验收标准**：
-- [ ] 接口覆盖 design.md 定义
-- [ ] 支持 TypeScript 类型检查
+- [ ] 接口与 design.md §2 完全一致
+- [ ] 包含 `icon`/`defaultProps`/`version` 字段
+- [ ] `axureMapping` 为嵌套对象
+- [ ] `editability` 分级在 DESIGN_SPEC.md 中有明确定义
 
 #### 任务 2.3: 基础组件实现
 
-| 组件 | 文件 | 状态 | 验收标准 |
-|------|------|------|---------|
-| 矩形 | `src/enhanced/components/basic/Rectangle.tsx` | 待实现 | 可渲染 + 属性可配置 |
-| 文本 | `src/enhanced/components/basic/Text.tsx` | 待实现 | 可渲染 + 字体/颜色可配置 |
-| 按钮 | `src/enhanced/components/basic/Button.tsx` | 待实现 | 6 状态可切换 |
-| 输入框 | `src/enhanced/components/basic/Input.tsx` | 待实现 | 占位符/值/类型可配置 |
-| 图片 | `src/enhanced/components/basic/Image.tsx` | 待实现 | 填充模式可配置 |
-| 链接 | `src/enhanced/components/basic/Link.tsx` | 待实现 | 4 状态可切换 |
+| 组件 | 文件 | 状态 | 状态集（引用 COMPONENT_MATRIX） |
+|------|------|------|------------------------------|
+| 矩形 | `src/enhanced/components/basic/Rectangle.tsx` | 待实现 | default / hover / active / disabled |
+| 文本 | `src/enhanced/components/basic/Text.tsx` | 待实现 | default / hover / disabled |
+| 按钮 | `src/enhanced/components/basic/Button.tsx` | 待实现 | default / hover / active / focus / disabled / loading |
+| 输入框 | `src/enhanced/components/basic/Input.tsx` | 待实现 | default / hover / focus / disabled / error / placeholder |
+| 图片 | `src/enhanced/components/basic/Image.tsx` | 待实现 | default / loading / error |
+| 链接 | `src/enhanced/components/basic/Link.tsx` | 待实现 | default / hover / active / visited |
 
 **验收标准**：
-- [ ] 组件可独立渲染
-- [ ] 属性面板可配置
-- [ ] 状态切换正常
+- [ ] 每组件实现 COMPONENT_MATRIX 定义的完整状态集
+- [ ] 组件样式必须引用 Token（无 hex 色值硬编码）
+- [ ] 按钮/输入框/链接满足 WCAG AA 对比度 + 键盘可达
+- [ ] 每个状态有 Storybook story
 
 ---
 
@@ -405,6 +459,71 @@ async function exportToAxure(componentTree: ComponentTree): Promise<AxureDocumen
 - [ ] 支持降级策略
 - [ ] 导出时间 ≤5s
 
+### 任务 3.4: AI 输出校验器
+
+**目标**：确保 AI 生成的组件树符合规范，异常时优雅降级。
+
+**实现**：
+```typescript
+// src/enhanced/ai/validator.ts
+function validateAIOutput(output: unknown): ComponentTree {
+  // 1. 非法 JSON 拒绝
+  if (!isValidJSON(output)) {
+    throw new AIValidationError('AI 响应格式错误，请重试');
+  }
+  
+  // 2. 未知组件降级
+  const tree = parseComponentTree(output);
+  tree.walk(node => {
+    if (!isKnownComponent(node.type)) {
+      node.type = 'proto-rectangle'; // 降级为占位矩形
+      node.props.placeholder = `未知组件: ${node.type}`;
+    }
+  });
+  
+  // 3. 循环嵌套截断
+  const maxDepth = 8;
+  tree.walk((node, depth) => {
+    if (depth > maxDepth) {
+      node.children = [];
+      console.warn(`循环嵌套截断: 深度超过 ${maxDepth}`);
+    }
+  });
+  
+  return tree;
+}
+```
+
+**验收标准**：
+- [ ] 非法 JSON 抛出用户友好错误
+- [ ] 未知组件降级为占位矩形
+- [ ] 循环嵌套截断并警告
+- [ ] 对应 TEST_SPEC.md §6.1
+
+### 任务 3.4: 上游导出机制 Spike（Phase 3 前置）
+
+**目标**：在 Phase 3 开发前，验证上游 `axhub-export-core` 的导出机制，避免理解偏差导致返工。
+
+**时间**：1-2 天（Week 3 开始前）
+
+**任务清单**：
+1. 阅读 `vendor/axhub-export-core/dist/` 编译产物
+2. 分析 `htmlToAxure` 函数的输入/输出/扩展点
+3. 验证与 design.md 组件树结构的兼容性
+4. 输出《上游导出机制分析报告》
+
+**报告内容**：
+- 输入格式：HTML 字符串 vs 组件树
+- 输出格式：Axure JSON 结构
+- 扩展点：如何注入自定义组件映射
+- 限制：不支持的 CSS 属性/组件类型
+- 建议：如何封装适配层
+
+**验收标准**：
+- [ ] 报告输出到 `docs/analysis/upstream-export-core.md`
+- [ ] 明确扩展点，支持自定义组件映射
+- [ ] 识别潜在风险（如不支持伪类映射）
+
 ---
 
 ## 五、Phase 4: 多模式预览（Week 6）
@@ -461,6 +580,69 @@ async function exportImage(componentTree: ComponentTree, options: ImageExportOpt
 - [ ] PNG/SVG 可选
 - [ ] 1x/2x/3x 分辨率可选
 - [ ] 透明/白色/页面底色可选
+
+### 任务 4.3: 容量上限守卫
+
+**目标**：防止超出系统容量上限，提前预警并引导用户。
+
+**实现**：
+```typescript
+// src/enhanced/guards/capacity-guard.ts
+const CAPACITY_LIMITS = {
+  maxComponents: 500,
+  maxNestingDepth: 8,
+  maxTableRows: 1000,
+  maxTableColumns: 50,
+  maxPages: 20,
+  maxHtmlSize: 5 * 1024 * 1024, // 5MB
+  maxPayloadSize: 10 * 1024 * 1024, // 10MB
+  maxImageSize: 2 * 1024 * 1024, // 2MB
+};
+
+function checkCapacity(componentTree: ComponentTree): CapacityWarning[] {
+  const warnings: CapacityWarning[] = [];
+  
+  // 组件数量
+  if (componentTree.count > CAPACITY_LIMITS.maxComponents) {
+    warnings.push({
+      type: 'component_count',
+      message: `组件数量 ${componentTree.count} 超过上限 ${CAPACITY_LIMITS.maxComponents}，建议拆分为多个页面`,
+      severity: 'warning',
+    });
+  }
+  
+  // 嵌套深度
+  const maxDepth = componentTree.getMaxDepth();
+  if (maxDepth > CAPACITY_LIMITS.maxNestingDepth) {
+    warnings.push({
+      type: 'nesting_depth',
+      message: `嵌套深度 ${maxDepth} 超过上限 ${CAPACITY_LIMITS.maxNestingDepth}，建议扁平化结构`,
+      severity: 'warning',
+    });
+  }
+  
+  // 表格行数（检测表格组件）
+  componentTree.walk(node => {
+    if (node.type === 'proto-table' && node.props.rows > CAPACITY_LIMITS.maxTableRows) {
+      warnings.push({
+        type: 'table_rows',
+        message: `表格行数 ${node.props.rows} 超过上限 ${CAPACITY_LIMITS.maxTableRows}，已启用虚拟滚动`,
+        severity: 'info',
+      });
+      node.props.virtualScroll = true;
+    }
+  });
+  
+  return warnings;
+}
+```
+
+**验收标准**：
+- [ ] 500 组件提示拆分
+- [ ] 8 层嵌套提示扁平化
+- [ ] 表格 1000 行启用虚拟滚动
+- [ ] 图片 >2MB 自动压缩
+- [ ] 对应 TEST_SPEC.md §4.2
 
 ---
 
@@ -556,67 +738,159 @@ export async function handleTrackEvents(req: Request, res: Response) {
 端到端测试，确保质量达标。
 
 ### 任务清单
+### 任务 6.1: E2E 测试（环境分层）
 
-#### 任务 6.1: E2E 测试
+**环境分层策略**：
+- **CI 层**：使用 `msw` mock Bridge 端点，断言请求体结构
+- **本地层**：连接真实 Axure Bridge，每周回归
+
+**CI 层（GitHub Actions）**：
 ```typescript
-// tests/e2e/export-flow.test.ts
-describe('导出流程', () => {
+// tests/e2e/export-flow.ci.test.ts
+import { setupServer } from 'msw/node';
+import { rest } from 'msw';
+
+const mockBridge = setupServer(
+  rest.post('http://localhost:32767/copyaxvg', (req, res, ctx) => {
+    return res(ctx.json({ success: true }));
+  }),
+  rest.get('http://localhost:32767/available', (req, res, ctx) => {
+    return res(ctx.json({ available: true, maxPayloadSize: 10485760 }));
+  })
+);
+
+beforeAll(() => mockBridge.listen());
+afterAll(() => mockBridge.close());
+
+describe('导出流程（CI Mock）', () => {
   it('AI 生成 → Axure 导出', async () => {
-    // 1. 输入需求
     await page.fill('[data-testid="prompt-input"]', '创建一个登录页面');
-    
-    // 2. AI 生成
     await page.click('[data-testid="generate-button"]');
     await page.waitForSelector('[data-testid="canvas"]');
     
-    // 3. 导出 Axure
     await page.click('[data-testid="export-axure"]');
     
-    // 4. 验证导出成功
+    // 断言请求体结构（而非真实 Axure 响应）
+    const request = await page.waitForRequest('**/copyaxvg');
+    const payload = request.postDataJSON();
+    expect(payload.widgets[0].type).toBe('rectangle');
+    expect(payload.widgets[0].style.fill).toBe('#0066cc');
+    
     await page.waitForSelector('[data-testid="export-success"]');
   });
-  
-  it('AI 生成 → HTML 导出', async () => {
-    // ... 类似流程
-  });
-  
-  it('AI 生成 → 图片导出', async () => {
-    // ... 类似流程
-  });
 });
 ```
 
-**验收标准**：
-- [ ] 全部 E2E 测试通过
-- [ ] 覆盖核心用户路径
-
-#### 任务 6.2: Axure 导入测试
+**本地层（真实 Axure）**：
 ```typescript
-// tests/axure/import.test.ts
-describe('Axure 导入', () => {
-  it('基础组件可编辑', async () => {
-    // 验证 L1 可编辑性
-    const axureDoc = await importAxureFile('test-fixtures/basic-components.axure');
+// tests/e2e/export-flow.local.test.ts
+describe('导出流程（本地真实 Axure）', () => {
+  it('AI 生成 → Axure 导出 → 真实导入验证', async () => {
+    // 需要本地运行 Axure RP 10 + Bridge
+    await page.fill('[data-testid="prompt-input"]', '创建一个登录页面');
+    await page.click('[data-testid="generate-button"]');
+    await page.waitForSelector('[data-testid="canvas"]');
     
-    expect(axureDoc.widgets.rectangle.editable).toBe(true);
-    expect(axureDoc.widgets.text.editable).toBe(true);
-    expect(axureDoc.widgets.button.editable).toBe(true);
-  });
-  
-  it('高级组件降级', async () => {
-    // 验证 L3 占位可编辑
-    const axureDoc = await importAxureFile('test-fixtures/advanced-components.axure');
+    await page.click('[data-testid="export-axure"]');
+    await page.waitForSelector('[data-testid="export-success"]');
     
-    expect(axureDoc.widgets.chart.editability).toBe('L3');
-    expect(axureDoc.widgets.map.editability).toBe('L3');
+    // 人工验证：在 Axure RP 中打开导出的文件
+    console.log('请人工验证 Axure 导入结果');
   });
 });
 ```
 
-**验收标准**：
-- [ ] 基础组件 L1 可编辑
-- [ ] 高级组件 L3 占位可编辑
+**package.json scripts**：
+```json
+{
+  "scripts": {
+    "test:e2e": "playwright test tests/e2e/*.ci.test.ts",
+    "test:e2e:local": "playwright test tests/e2e/*.local.test.ts",
+    "test:e2e:real-bridge": "npm run test:e2e:local"
+  }
+}
+```
 
+**验收标准**：
+- [ ] CI 使用 mock，不依赖真实 Axure
+- [ ] 本地脚本可连接真实 Bridge
+- [ ] 每周本地回归记录到 `docs/qa/weekly-axure-check.md`
+
+### 任务 6.2: Axure 导入测试（拆分为两层）
+
+**自动化层（CI 可跑）**：
+```typescript
+// tests/axure/export-snapshot.test.ts
+describe('Axure 导出快照测试', () => {
+  it('基础组件导出结构正确', async () => {
+    const componentTree = createTestComponentTree();
+    const axureDoc = await exportToAxure(componentTree);
+    
+    // 快照测试：验证导出 JSON 结构
+    expect(axureDoc).toMatchSnapshot({
+      pages: [{
+        widgets: expect.arrayContaining([
+          expect.objectContaining({ type: 'rectangle' }),
+          expect.objectContaining({ type: 'text' }),
+          expect.objectContaining({ type: 'button' }),
+        ]),
+      }],
+    });
+  });
+  
+  it('CSS 属性映射正确', async () => {
+    const componentTree = createComponentWithStyles({
+      fill: '#0066cc',
+      fontSize: '16px',
+      borderRadius: '4px',
+    });
+    const axureDoc = await exportToAxure(componentTree);
+    
+    const widget = axureDoc.pages[0].widgets[0];
+    expect(widget.style.fill).toBe('#0066cc');
+    expect(widget.style.fontSize).toBe('16px');
+    expect(widget.style.cornerRadius).toBe('4px');
+  });
+});
+```
+
+**人工验收层（每周一次）**：
+```markdown
+# Axure 可编辑性验收 Checklist
+# 测试环境：Axure RP 10 + Bridge
+# 日期：_______
+
+## 基础组件
+- [ ] 矩形：双击可修改尺寸/颜色/圆角
+- [ ] 文本：双击可修改内容/字体/颜色
+- [ ] 按钮：双击可修改文本/颜色/状态
+- [ ] 输入框：双击可修改占位符/类型
+- [ ] 图片：双击可替换图片
+- [ ] 链接：双击可修改文本/链接
+
+## 表单组件
+- [ ] 下拉：双击可修改选项
+- [ ] 单选：双击可修改选项/选中态
+- [ ] 复选：双击可修改选项/选中态
+- [ ] 表格：双击可修改行列/内容
+- [ ] 开关：双击可修改状态
+
+## 布局组件
+- [ ] 导航：双击可修改菜单项
+- [ ] 标签页：双击可修改标签
+- [ ] 卡片：双击可修改内容
+
+## 高级组件（降级验证）
+- [ ] 图表：显示为图片占位
+- [ ] 地图：显示为图片占位
+- [ ] 富文本：降级为纯文本可编辑
+- [ ] 视频：显示为图片占位
+```
+
+**验收标准**：
+- [ ] 自动化快照测试 100% 通过
+- [ ] 人工 checklist 15/15 通过
+- [ ] 对应 TEST_SPEC.md §1.2
 ---
 
 ## 八、风险与对策
@@ -643,20 +917,24 @@ describe('Axure 导入', () => {
 
 ---
 
-## 十、遗留问题登记（第 3 轮 Review）
+## 十、遗留问题登记（第 3 轮 Review + Phase 2 Review）
 
-| # | 问题 | 优先级 | 处理计划 | 阶段 |
-|---|------|--------|---------|------|
-| 1 | CSS 伪类 → Axure 交互样式映射 | 高 | ✅ 已修复 | Phase 3 |
-| 2 | 容量上限定义 | 高 | ✅ 已修复 | Phase 6 |
-| 3 | AI 异常输入三场景 | 高 | ✅ 已修复 | Phase 6 |
-| 4 | 回滚策略 | 高 | ✅ 已修复 | Phase 1 |
-| 5 | 上游 API 变更检测 | 中 | ✅ 已修复 | Phase 1 |
-| 6 | Axure 回归测试自动化 | 中 | 登记到 Phase 6 | Phase 6 |
-| 7 | E2E 测试环境分层 | 中 | 登记到 Phase 6 | Phase 6 |
-| 8 | L2 级"格式刷"判定主观 | 低 | 登记到 Phase 6 | Phase 6 |
-| 9 | 跨浏览器"布局 ≤1px"不可达 | 低 | 登记到 Phase 6 | Phase 6 |
-| 10 | 埋点定义双源重复 | 低 | 登记到 Phase 5 | Phase 5 |
+| # | 问题 | 优先级 | 处理计划 | 阶段 | 实施任务编号 |
+|---|------|--------|---------|------|-------------|
+| 1 | CSS 伪类 → Axure 交互样式映射 | 高 | ✅ 已修复 | Phase 3 | 任务 3.1 |
+| 2 | 容量上限定义 | 高 | ✅ 已修复 | Phase 4 | 任务 4.3 |
+| 3 | AI 异常输入三场景 | 高 | ✅ 已修复 | Phase 3 | 任务 3.4 |
+| 4 | 回滚策略 | 高 | ✅ 已修复 | Phase 1 | 任务 1.6 |
+| 5 | 上游 API 变更检测 | 高 | ✅ 已修复 | Phase 1 | 任务 1.7 |
+| 6 | Axure 回归测试自动化 | 中 | 登记到 Phase 6 | Phase 6 | 任务 6.2 |
+| 7 | E2E 测试环境分层 | 中 | 登记到 Phase 6 | Phase 6 | 任务 6.1 |
+| 8 | L2 级"格式刷"判定主观 | 低 | 登记到 Phase 6 | Phase 6 | 任务 6.3 |
+| 9 | 跨浏览器"布局 ≤1px"不可达 | 低 | 登记到 Phase 6 | Phase 6 | 任务 6.3 |
+| 10 | 埋点定义双源重复 | 低 | 登记到 Phase 5 | Phase 5 | 任务 5.1 |
+| 11 | "复杂表格"判定量化 | 中 | 登记到 Phase 3 | Phase 3 | 任务 3.2 |
+| 12 | inline_frame URL 来源 | 中 | 登记到 Phase 3 | Phase 3 | 任务 3.2 |
+| 13 | prompt_text 脱敏规则 | 低 | 登记到 Phase 5 | Phase 5 | 任务 5.1 |
+| 14 | "活跃"定义未明确 | 低 | 登记到 Phase 5 | Phase 5 | 任务 5.1 |
 
 ---
 
