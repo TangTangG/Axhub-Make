@@ -8,7 +8,7 @@ const coverageInclude = coverageScope === 'server'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     maxWorkers: 4,
     testTimeout: 15_000,
     coverage: {
@@ -20,7 +20,14 @@ export default defineConfig({
         'src/**/*.test.ts',
         'src/**/__tests__/**',
         'src/**/*.d.ts',
+        'tests/**',
       ],
+    },
+    // E2E 分层：CI mock / 本地真实
+    reporters: ['default'],
+    pool: 'forks',
+    env: {
+      AXURE_BRIDGE_PORT: process.env.AXURE_BRIDGE_PORT || '32767',
     },
   },
 });
