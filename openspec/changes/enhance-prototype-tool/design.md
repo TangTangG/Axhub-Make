@@ -403,14 +403,14 @@ const NorthStarMetrics = {
     │
     ▼
 ┌─────────────┐
-│  AI 生成模块  │ ──▶ 生成 Excalidraw 元素（上游能力）
+│  AI 生成模块  │ ──▶ 生成 ComponentTree（带组件类型元数据）
 │  (upstream)   │
 └─────────────┘
     │
     ▼
 ┌─────────────────┐
-│ 组件树构建器      │ ──▶ Excalidraw 元素 → ComponentTree
-│ (integration)   │
+│  渲染层适配器     │ ──▶ ComponentTree → Excalidraw 元素（仅预览）
+│  (integration)  │
 └─────────────────┘
     │
     ├─────────────────┬─────────────────┐
@@ -426,6 +426,176 @@ const NorthStarMetrics = {
 │ (enhanced)  │
 └─────────────┘
 ```
+
+### Excalidraw → ComponentTree 语义识别
+
+**核心原则：AI 生成时即携带组件类型元数据，Excalidraw 仅作渲染层**
+
+```typescript
+// AI 生成输出格式（结构化 Schema）
+interface AIGenerationOutput {
+  version: '1.0';
+  metadata: {
+    prompt: string;
+    generatedAt: string;
+    model: string;
+  };
+  pages: Page[];
+}
+
+interface Page {
+  id: string;
+  name: string;
+  route?: string;
+  components: ComponentNode[];
+}
+
+interface ComponentNode {
+  id: string;
+  type: string;              // 组件类型：'proto-button' | 'proto-input' | ...
+  name: string;
+  position: { x: number; y: number };
+  size: { width: number; height: number };
+  props: Record<string, any>; // 组件属性
+  children?: ComponentNode[]; // 嵌套子组件
+  // Excalidraw 渲染数据（仅用于预览，不用于导出）
+  excalidraw?: {
+    elementIds: string[];     // 关联的 Excalidraw 元素 ID
+    customData?: Record<string, any>;
+  };
+}
+```
+
+**识别流程**：
+1. AI 生成时直接输出 `ComponentNode[]`（带类型元数据）
+2. 渲染层将 `ComponentNode` 转换为 Excalidraw 元素（仅用于可视化预览）
+3. 导出时直接读取 `ComponentNode`，不依赖 Excalidraw 元素解析
+4. 用户手动调整（v1.1）时，同步更新 `ComponentNode` 和 Excalidraw 元素
+
+**优势**：
+- 无需反向解析 Excalidraw 自由图形
+- 组件类型 100% 准确（AI 生成时确定）
+- 导出链路完全基于结构化数据，可靠性高
+
+## 组件树持久化与并发设计
+
+### 项目文件 Schema
+
+```typescript
+// 项目文件格式（JSON）
+interface ProjectFile {
+  version: '1.0';
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  pages: Page[];
+  globalStyles: GlobalStyles;
+  metadata: {
+    aiPrompt?: string;
+    lastExportAt?: string;
+    exportCount: number;
+  };
+}
+
+// 存储位置
+// v1.0: LocalStorage（单项目）
+// v1.1: IndexedDB（多项目 + 版本历史）
+// v2.0: 云端同步
+```
+
+### AI 再生成策略
+
+**v1.0 显式声明：全量替换 + 确认弹窗**
+
+```
+用户点击「重新生成」
+    │
+    ▼
+┌─────────────────────────┐
+│  确认弹窗                 │
+│  「重新生成将替换当前所有内容，  │
+│   是否继续？」              │
+│                          │
+│   [取消]  [确认重新生成]    │
+└─────────────────────────┘
+    │
+    ▼
+全量替换 ComponentTree
+    │
+    ▼
+记录埋点事件：ai_regenerate
+```
+
+**v1.1 预留：基于 node.id 的 3-way merge**
+- 保留用户手动修改的组件
+- 仅替换 AI 新生成的组件
+- 冲突时提示用户选择
+
+## Axure Bridge 传输协议
+
+### 协议版本协商
+
+```typescript
+// GET /available 响应
+interface BridgeAvailability {
+  available: boolean;
+  version: string;              // Bridge 版本，如 "1.2.0"
+  axureVersion?: string;        // Axure RP 版本，如 "10.0.0.3892"
+  supportedAxureVersions: string[];  // 支持的 Axure 版本
+  maxPayloadSize: number;       // 最大 payload 大小（字节），默认 10MB
+  capabilities: {
+    compression: boolean;       // 是否支持 gzip
+    chunkedTransfer: boolean;   // 是否支持分片传输
+    asyncExport: boolean;       // 是否支持异步导出
+  };
+}
+```
+
+### 导出请求
+
+```typescript
+// POST /copyaxvg 请求
+interface CopyAxvgRequest {
+  version: '1.0';
+  payload: {
+    format: 'axure-json';
+    data: AxureDocument;        // Axure 中间 JSON
+    compressed: boolean;        // 是否已 gzip 压缩
+    totalSize: number;          // 原始大小（字节）
+  };
+  metadata: {
+    pageCount: number;
+    componentCount: number;
+    exportId: string;           // 用于追踪
+  };
+}
+
+// 大 payload 处理
+// 1. 客户端检查 payload 大小
+// 2. 超过 maxPayloadSize 时：
+//    a. 启用 gzip 压缩（如果 Bridge 支持）
+//    b. 仍超限则分片传输（如果 Bridge 支持）
+//    c. 仍超限则提示用户分批导出
+```
+
+### 传输限制
+
+| 限制项 | 值 | 说明 |
+|--------|-----|------|
+| body 上限 | 10MB | 超过则分片或提示 |
+| 超时时间 | 60s | 大 payload 需要更长超时 |
+| 压缩 | gzip | 减少传输体积 |
+| 分片大小 | 5MB | 每片最大 5MB |
+
+### 错误码
+
+| 错误码 | 含义 | 用户提示 |
+|--------|------|---------|
+| 400 | 请求格式错误 | 导出数据格式异常，请重试 |
+| 413 | Payload 过大 | 页面过大，请分批导出或简化页面 |
+| 500 | Bridge 内部错误 | Axure Bridge 异常，请检查 Axure 是否运行 |
+| 503 | Bridge 不可用 | 请确保 Axure RP 已启动且 Bridge 已启用 |
 
 ## 关键技术决策
 

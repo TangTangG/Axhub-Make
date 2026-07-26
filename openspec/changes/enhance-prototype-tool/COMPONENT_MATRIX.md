@@ -6,7 +6,140 @@
 
 ---
 
-## 基础组件
+## CSS → Axure 属性映射表
+
+### 布局属性
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `width` | `size.width` | 直接映射（px → Axure 单位） | - |
+| `height` | `size.height` | 直接映射 | - |
+| `min-width` | `constraints.minWidth` | 直接映射 | 忽略（Axure 不强制） |
+| `max-width` | `constraints.maxWidth` | 直接映射 | 忽略 |
+| `min-height` | `constraints.minHeight` | 直接映射 | 忽略 |
+| `max-height` | `constraints.maxHeight` | 直接映射 | 忽略 |
+| `position: static` | 默认 | 无特殊处理 | - |
+| `position: relative` | `position: relative` | 直接映射 | - |
+| `position: absolute` | `position: absolute` | 直接映射 | - |
+| `position: fixed` | `position: fixed` | 映射为固定定位 | 降级为 absolute + 注释 |
+| `position: sticky` | - | 不支持 | 降级为 relative + 注释「sticky 不支持」 |
+| `top/right/bottom/left` | `position.x/y` | 直接映射 | - |
+| `z-index` | `zOrder` | 直接映射（数值越大越上层） | 负数降级为 0 |
+| `float` | - | 不支持 | 降级为 block 布局 |
+| `clear` | - | 不支持 | 忽略 |
+| `display: block` | 默认 | 无特殊处理 | - |
+| `display: inline` | - | 不支持 | 降级为 block |
+| `display: inline-block` | - | 不支持 | 降级为 block |
+| `display: flex` | - | 不支持 | 降级为绝对定位矩形组 |
+| `display: grid` | - | 不支持 | 降级为绝对定位矩形组 |
+| `display: none` | `visible: false` | 直接映射 | - |
+
+### 盒模型属性
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `margin` | - | 不支持 | 转换为 padding 或绝对定位偏移 |
+| `margin-top/right/bottom/left` | - | 不支持 | 同上 |
+| `padding` | `padding` | 直接映射（部分组件支持） | 不支持的组件忽略 |
+| `padding-top/right/bottom/left` | `padding.*` | 直接映射 | 同上 |
+| `border` | `border` | 直接映射（宽度/样式/颜色） | - |
+| `border-width` | `border.width` | 直接映射 | - |
+| `border-style` | `border.style` | solid/dashed/dotted 直接映射 | 其他降级为 solid |
+| `border-color` | `border.color` | 直接映射 | - |
+| `border-radius` | `cornerRadius` | 直接映射（ px → Axure 单位） | 百分比降级为 px 近似值 |
+| `box-shadow` | `shadow` | 映射为 Axure 阴影 | 复杂阴影简化 |
+| `box-sizing` | - | 不支持 | 统一按 border-box 计算 |
+
+### 溢出与滚动
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `overflow: visible` | 默认 | 无特殊处理 | - |
+| `overflow: hidden` | `overflow: hidden` | 直接映射 | - |
+| `overflow: scroll` | `overflow: scroll` | 直接映射 | - |
+| `overflow: auto` | `overflow: auto` | 直接映射 | - |
+| `overflow-x/y` | `overflow.*` | 分别映射 | - |
+| `text-overflow: ellipsis` | `textOverflow` | 直接映射 | - |
+| `white-space: nowrap` | `wrap: false` | 直接映射 | - |
+
+### 变换与动画
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `transform: translate()` | `position.x/y` | 转换为位置偏移 | 3D 变换忽略 z 轴 |
+| `transform: rotate()` | `rotation` | 直接映射（角度） | 3D 旋转降级为 2D |
+| `transform: scale()` | - | 不支持 | 转换为 width/height 缩放 |
+| `transform: skew()` | - | 不支持 | 忽略 |
+| `transform-origin` | `transformOrigin` | 直接映射 | - |
+| `transition` | - | 不支持 | 忽略（静态导出） |
+| `animation` | - | 不支持 | 忽略（静态导出） |
+
+### 字体与文本
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `font-family` | `font.family` | 直接映射 | 自定义字体降级为系统字体 |
+| `font-size` | `font.size` | 直接映射（px → Axure 单位） | rem/em 转换为 px |
+| `font-weight` | `font.weight` | 100-900 映射为 Axure 字重 | 非标准值降级为 normal/bold |
+| `font-style` | `font.style` | italic/oblique 映射 | - |
+| `line-height` | `lineHeight` | 直接映射 | 百分比转换为 px |
+| `text-align` | `textAlign` | left/center/right/justify 映射 | - |
+| `text-decoration` | `textDecoration` | underline/line-through 映射 | - |
+| `text-transform` | `textTransform` | uppercase/lowercase/capitalize 映射 | - |
+| `letter-spacing` | `letterSpacing` | 直接映射 | - |
+| `color` | `font.color` | 直接映射 | - |
+
+### 背景与颜色
+
+| CSS 属性 | Axure 属性 | 映射方式 | 降级策略 |
+|---------|-----------|---------|---------|
+| `background-color` | `fill.color` | 直接映射 | - |
+| `background-image` | `fill.image` | URL 映射为图片填充 | 渐变降级为纯色 |
+| `background-size` | `fill.size` | cover/contain 映射 | 百分比降级为 auto |
+| `background-position` | `fill.position` | 直接映射 | - |
+| `background-repeat` | `fill.repeat` | no-repeat/repeat-x/repeat-y 映射 | - |
+| `opacity` | `opacity` | 直接映射（0-1） | - |
+
+### Flexbox 详细映射
+
+| CSS 属性 | Axure 映射 | 降级策略 |
+|---------|-----------|---------|
+| `flex-direction: row` | 水平排列 | 绝对定位 x 递增 |
+| `flex-direction: column` | 垂直排列 | 绝对定位 y 递增 |
+| `justify-content: flex-start` | 左/上对齐 | 起始位置对齐 |
+| `justify-content: center` | 居中 | 计算居中偏移 |
+| `justify-content: flex-end` | 右/下对齐 | 末尾位置对齐 |
+| `justify-content: space-between` | 两端对齐 | 首尾固定，中间均分 |
+| `justify-content: space-around` | 环绕对齐 | 均分间距 |
+| `align-items: flex-start` | 交叉轴起始 | 起始位置对齐 |
+| `align-items: center` | 交叉轴居中 | 计算居中偏移 |
+| `align-items: flex-end` | 交叉轴末尾 | 末尾位置对齐 |
+| `align-items: stretch` | 交叉轴拉伸 | 高度/宽度填充 |
+| `flex-wrap: nowrap` | 不换行 | 单行/单列 |
+| `flex-wrap: wrap` | 换行 | 多行/多列（近似） |
+| `gap` | 间距 | 转换为 margin/padding |
+| `flex-grow` | 比例 | 计算比例分配空间 |
+| `flex-shrink` | 收缩比例 | 近似计算 |
+| `flex-basis` | 基准尺寸 | 直接映射 |
+
+### Grid 详细映射
+
+| CSS 属性 | Axure 映射 | 降级策略 |
+|---------|-----------|---------|
+| `grid-template-columns` | 列定义 | 绝对定位列宽 |
+| `grid-template-rows` | 行定义 | 绝对定位行高 |
+| `grid-column` | 列位置 | 计算 x/width |
+| `grid-row` | 行位置 | 计算 y/height |
+| `grid-gap` | 间距 | 转换为 margin/padding |
+| `grid-area` | 区域 | 计算 x/y/width/height |
+| `justify-items` | 水平对齐 | 单元格内对齐 |
+| `align-items` | 垂直对齐 | 单元格内对齐 |
+
+---
+
+## 组件映射表
+
+### 基础组件
 
 | 组件 | 类别 | Axure Widget | 状态集 | 属性集 | 预览支持 | 导出降级策略 | 可编辑性 |
 |------|------|-------------|--------|--------|---------|-------------|---------|
