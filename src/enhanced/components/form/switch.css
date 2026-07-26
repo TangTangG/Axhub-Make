@@ -1,0 +1,97 @@
+@import '../basic/tokens.css';
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch--disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.switch__track {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 22px;
+  padding: 2px;
+  background-color: var(--color-border-default);
+  border: none;
+  border-radius: var(--radius-full);
+  outline: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.switch__track:hover {
+  background-color: var(--color-border-hover);
+}
+
+.switch__track:focus {
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.switch__track--checked {
+  background-color: var(--color-primary);
+}
+
+.switch__track--checked:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.switch--disabled .switch__track {
+  background-color: var(--color-bg-secondary);
+  cursor: not-allowed;
+}
+
+.switch--disabled .switch__track--checked {
+  background-color: var(--color-primary-disabled);
+}
+
+.switch__thumb {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  background-color: var(--color-bg-primary);
+  border: none;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+
+.switch__track--checked .switch__thumb {
+  transform: translateX(18px);
+}
+
+.switch__loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: var(--color-text-inverse);
+  border-radius: var(--radius-full);
+  animation: switch-spin 0.6s linear infinite;
+}
+
+@keyframes switch-spin {
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+.switch--disabled .switch__loading {
+  border-top-color: var(--color-text-disabled);
+}

@@ -1,0 +1,98 @@
+@import '../basic/tokens.css';
+
+.radio {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.radio--horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--spacing-md);
+}
+
+.radio__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.radio--disabled .radio__item {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.radio__input {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-full);
+  outline: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.radio__input:hover {
+  border-color: var(--color-border-hover);
+}
+
+.radio__input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.radio__input:checked {
+  border-color: var(--color-primary);
+  border-width: 5px;
+}
+
+.radio__input:checked:hover {
+  border-color: var(--color-primary-hover);
+}
+
+.radio--disabled .radio__input {
+  background-color: var(--color-bg-secondary);
+  border-color: var(--color-border-default);
+  cursor: not-allowed;
+}
+
+.radio--disabled .radio__input:checked {
+  border-color: var(--color-primary-disabled);
+}
+
+.radio__input--disabled {
+  background-color: var(--color-bg-secondary);
+  border-color: var(--color-border-default);
+  cursor: not-allowed;
+}
+
+.radio__input--disabled:checked {
+  border-color: var(--color-primary-disabled);
+}
+
+.radio__label {
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+}
+
+.radio--disabled .radio__label,
+.radio__label--disabled {
+  color: var(--color-text-disabled);
+}

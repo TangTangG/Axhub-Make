@@ -1,0 +1,89 @@
+@import '../basic/tokens.css';
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox--disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.checkbox__input {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg-primary);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.checkbox__input:hover {
+  border-color: var(--color-border-hover);
+}
+
+.checkbox__input:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+}
+
+.checkbox__input:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.checkbox__input:checked:hover {
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.checkbox__input:indeterminate {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.checkbox--disabled .checkbox__input {
+  background-color: var(--color-bg-secondary);
+  border-color: var(--color-border-default);
+  cursor: not-allowed;
+}
+
+.checkbox--disabled .checkbox__input:checked {
+  background-color: var(--color-primary-disabled);
+  border-color: var(--color-primary-disabled);
+}
+
+.checkbox__icon {
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-inverse);
+  pointer-events: none;
+}
+
+.checkbox__label {
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+}
+
+.checkbox--disabled .checkbox__label {
+  color: var(--color-text-disabled);
+}
