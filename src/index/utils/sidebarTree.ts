@@ -1,0 +1,447 @@
+import type { ItemData, SidebarTreeNode, SidebarTreeTab } from '../types';
+
+const LEGACY_SUBPAGE_GROUP_ID_PREFIX = 'subpage-group:';
+
+export interface SidebarTreeItemLookupEntry {
+    item: ItemData;
+    canonicalKey: string;
+}
+
+export type SidebarTreeItemLookup = Map<string, SidebarTreeItemLookupEntry>;
+
+function normalizeTreeKey(value: string): string {
+    return String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^\/+|\/+$/g, '')
+        .replace(/\/+/g, '/');
+}
+
+function stripFinalPathExtension(value: string): string {
+    return value.replace(/\/?$/u, '').replace(/\.[^./]+$/u, '');
+}
+
+function getDocsResourcePath(value: string): string {
+    const normalized = normalizeTreeKey(value);
+    for (const prefix of ['src/resources/', 'docs/']) {
+        if (normalized.startsWith(prefix)) {
+            return normalized.slice(prefix.length);
+        }
+    }
+    return normalized;
+}
+
+function isIgnoredDocsResourcePath(value: string): boolean {
+    const normalized = getDocsResourcePath(value).toLowerCase();
+    return !normalized || normalized === 'readme' || normalized === 'readme.md';
+}
+
+function toGeneratedTitle(value: string): string {
+    const name = value.split('/').pop() || value;
+    return name
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || name;
+}
+
+function isGeneratedRepeatedThemeTitle(title: string, item: ItemData): boolean {
+    const match = title.match(/^(.+?)\s+主题\s*-\s*(.+)$/u);
+    if (!match) {
+        return false;
+    }
+
+    const before = match[1]?.trim();
+    const after = match[2]?.trim();
+    const displayName = item.displayName?.trim();
+    if (!before || !after || before.toLowerCase() !== after.toLowerCase()) {
+        return false;
+    }
+
+    return Boolean(displayName && after.toLowerCase() === displayName.toLowerCase());
+}
+
+function getItemResourceName(tab: SidebarTreeTab, item: ItemData): string {
+    if (tab === 'docs') {
+        return getDocsResourcePath(item.filePath || item.name);
+    }
+    return normalizeTreeKey(item.name);
+}
+
+function resolveItemTitle(tab: SidebarTreeTab, item: ItemData, persistedTitle?: string): string {
+    const title = persistedTitle?.trim();
+    if (!title) {
+        return item.displayName || item.name;
+    }
+
+    const itemKey = `${tab}/${item.name}`;
+    const defaultTitleCandidateValues = [
+        item.name,
+        stripFinalPathExtension(item.name),
+        item.name.split('/').pop() || item.name,
+        itemKey,
+        stripFinalPathExtension(itemKey),
+        itemKey.split('/').pop() || itemKey,
+        toGeneratedTitle(item.name),
+        toGeneratedTitle(stripFinalPathExtension(item.name)),
+        toGeneratedTitle(itemKey),
+        toGeneratedTitle(stripFinalPathExtension(itemKey)),
+    ];
+
+    if (tab === 'docs' && item.filePath) {
+        const filePath = normalizeTreeKey(item.filePath);
+        const filePathKey = filePath ? `docs/${filePath}` : '';
+        defaultTitleCandidateValues.push(
+            filePath,
+            stripFinalPathExtension(filePath),
+            filePath.split('/').pop() || filePath,
+            filePathKey,
+            stripFinalPathExtension(filePathKey),
+            filePathKey.split('/').pop() || filePathKey,
+            toGeneratedTitle(filePath),
+            toGeneratedTitle(stripFinalPathExtension(filePath)),
+            toGeneratedTitle(filePathKey),
+            toGeneratedTitle(stripFinalPathExtension(filePathKey)),
+        );
+    }
+
+    const defaultTitleCandidates = new Set(defaultTitleCandidateValues);
+
+    if (defaultTitleCandidates.has(title)) {
+        return item.displayName || item.name;
+    }
+
+    if (tab === 'themes' && isGeneratedRepeatedThemeTitle(title, item)) {
+        return item.displayName || item.name;
+    }
+
+    return title;
+}
+
+function createItemNode(tab: SidebarTreeTab, item: ItemData, title?: string, itemKeyOverride?: string): SidebarTreeNode {
+    const resourceName = getItemResourceName(tab, item) || item.name;
+    const itemKey = itemKeyOverride || `${tab}/${resourceName}`;
+    const itemName = itemKey.startsWith(`${tab}/`) ? itemKey.slice(`${tab}/`.length) : resourceName;
+    return {
+        id: `item:${tab}:${itemName}`,
+        kind: 'item',
+        title: resolveItemTitle(tab, item, title),
+        itemKey,
+    };
+}
+
+function createFallbackFolderId(tab: SidebarTreeTab): string {
+    return `folder:${tab}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function addLookupEntry(lookup: SidebarTreeItemLookup, key: string, entry: SidebarTreeItemLookupEntry) {
+    const normalizedKey = normalizeTreeKey(key);
+    if (normalizedKey && !lookup.has(normalizedKey)) {
+        lookup.set(normalizedKey, entry);
+    }
+}
+
+export function createSidebarTreeItemLookup(tab: SidebarTreeTab, items: ItemData[]): SidebarTreeItemLookup {
+    const lookup: SidebarTreeItemLookup = new Map();
+
+    for (const item of items) {
+        const itemName = getItemResourceName(tab, item);
+        if (!itemName) {
+            continue;
+        }
+        if (tab === 'docs' && isIgnoredDocsResourcePath(itemName)) {
+            continue;
+        }
+        const canonicalKey = `${tab}/${itemName}`;
+        const entry = { item, canonicalKey };
+        addLookupEntry(lookup, canonicalKey, entry);
+
+        if (tab === 'docs') {
+            addLookupEntry(lookup, stripFinalPathExtension(canonicalKey), entry);
+            const legacyName = normalizeTreeKey(item.name);
+            if (legacyName && !isIgnoredDocsResourcePath(legacyName)) {
+                addLookupEntry(lookup, `docs/${legacyName}`, entry);
+                addLookupEntry(lookup, stripFinalPathExtension(`docs/${legacyName}`), entry);
+            }
+        }
+    }
+
+    return lookup;
+}
+
+function getNodeItemKey(tab: SidebarTreeTab, node: SidebarTreeNode): string {
+    const itemKey = normalizeTreeKey(node.itemKey || '');
+    if (itemKey.startsWith(`${tab}/`)) {
+        return itemKey;
+    }
+    return '';
+}
+
+function getItemNameFromKey(tab: SidebarTreeTab, itemKey: string): string {
+    return itemKey.startsWith(`${tab}/`) ? itemKey.slice(`${tab}/`.length) : itemKey;
+}
+
+function buildDocsFileUrl(name: string): string {
+    const normalizedName = normalizeTreeKey(name);
+    return normalizedName ? `/api/docs/${encodeURIComponent(normalizedName)}` : '';
+}
+
+function createFallbackFilesystemDocItem(node: SidebarTreeNode, itemKey: string): ItemData | null {
+    const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
+    if (isIgnoredDocsResourcePath(nodePath)) {
+        return null;
+    }
+    const previewUrl = buildDocsFileUrl(nodePath);
+    if (!previewUrl) {
+        return null;
+    }
+    const displayName = (node.title || toGeneratedTitle(nodePath)).trim() || toGeneratedTitle(nodePath);
+    return {
+        name: nodePath,
+        displayName,
+        jsUrl: '',
+        specUrl: previewUrl,
+        previewUrl,
+        filePath: nodePath,
+        absoluteFilePath: nodePath,
+        resourceId: nodePath,
+    };
+}
+
+function buildDocsRemovalCandidates(itemName: string): { exact: Set<string>; legacyExtensionless: Set<string> } {
+    const normalizedName = normalizeTreeKey(itemName);
+    const exact = new Set<string>();
+    const legacyExtensionless = new Set<string>();
+    const addCandidate = (set: Set<string>, value: string) => {
+        const normalized = normalizeTreeKey(value);
+        if (!normalized) {
+            return;
+        }
+        set.add(normalized);
+    };
+    const addForms = (set: Set<string>, value: string) => {
+        const normalized = normalizeTreeKey(value);
+        addCandidate(set, normalized);
+        addCandidate(set, normalized.startsWith('docs/') ? normalized : `docs/${normalized}`);
+        if (normalized.startsWith('docs/')) {
+            addCandidate(set, normalized.slice('docs/'.length));
+        }
+    };
+
+    addForms(exact, normalizedName);
+    addForms(legacyExtensionless, stripFinalPathExtension(normalizedName));
+
+    return { exact, legacyExtensionless };
+}
+
+export function removeDocsSidebarTreeItem(tree: SidebarTreeNode[], itemName: string): SidebarTreeNode[] {
+    const removalCandidates = buildDocsRemovalCandidates(itemName);
+    if (removalCandidates.exact.size === 0 && removalCandidates.legacyExtensionless.size === 0) {
+        return tree;
+    }
+
+    const shouldRemoveItem = (node: SidebarTreeNode): boolean => {
+        const itemKey = normalizeTreeKey(node.itemKey || '');
+        const itemPath = normalizeTreeKey(node.path || '');
+        return Boolean(
+            itemKey && removalCandidates.exact.has(itemKey)
+            || itemPath && removalCandidates.exact.has(itemPath)
+            || !itemPath && itemKey && removalCandidates.legacyExtensionless.has(stripFinalPathExtension(itemKey)),
+        );
+    };
+
+    const walk = (nodes: SidebarTreeNode[]): SidebarTreeNode[] => {
+        const result: SidebarTreeNode[] = [];
+        for (const node of nodes) {
+            if (node.kind === 'folder') {
+                result.push({
+                    ...node,
+                    children: walk(Array.isArray(node.children) ? node.children : []),
+                });
+                continue;
+            }
+            if (!shouldRemoveItem(node)) {
+                result.push(node);
+            }
+        }
+        return result;
+    };
+
+    return walk(tree);
+}
+
+function createFilesystemDocNode(node: SidebarTreeNode, itemKey: string, title: string): SidebarTreeNode | null {
+    const nodePath = normalizeTreeKey(node.path || getItemNameFromKey('docs', itemKey));
+    if (isIgnoredDocsResourcePath(nodePath)) {
+        return null;
+    }
+
+    const resolveFilesystemTitle = (value: string): string => {
+        const normalized = normalizeTreeKey(value);
+        const fileName = normalized.split('/').filter(Boolean).pop() || normalized;
+        return stripFinalPathExtension(fileName) || fileName || normalized;
+    };
+    const trimmedTitle = String(title || '').trim();
+    const filesystemTitle = trimmedTitle.includes('/') || trimmedTitle.includes('\\')
+        ? resolveFilesystemTitle(trimmedTitle)
+        : trimmedTitle || resolveFilesystemTitle(nodePath) || toGeneratedTitle(nodePath);
+
+    return {
+        ...node,
+        id: node.id || `item:docs:${nodePath}`,
+        kind: 'item',
+        title: filesystemTitle,
+        itemKey,
+        path: nodePath,
+    };
+}
+
+function hasFilesystemResourcePath(nodes: SidebarTreeNode[]): boolean {
+    for (const node of nodes) {
+        if (normalizeTreeKey(node.path || node.folderPath || '')) {
+            return true;
+        }
+        if (node.kind === 'folder' && hasFilesystemResourcePath(node.children || [])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function resolveSidebarTreeItemEntry(
+    tab: SidebarTreeTab,
+    node: SidebarTreeNode,
+    lookup: SidebarTreeItemLookup,
+): { item: ItemData; canonicalKey: string; itemKey: string } | null {
+    const itemKey = getNodeItemKey(tab, node);
+    if (!itemKey) {
+        return null;
+    }
+
+    const exact = lookup.get(itemKey);
+    if (exact) {
+        return { ...exact, itemKey };
+    }
+
+    if (tab !== 'docs') {
+        return null;
+    }
+
+    const withoutExtension = stripFinalPathExtension(itemKey);
+    const extensionlessMatch = lookup.get(withoutExtension);
+    if (!extensionlessMatch) {
+        return null;
+    }
+
+    return {
+        ...extensionlessMatch,
+        itemKey,
+    };
+}
+
+export function resolveSidebarTreeItem(
+    tab: SidebarTreeTab,
+    node: SidebarTreeNode,
+    lookup: SidebarTreeItemLookup,
+): ItemData | null {
+    const resolved = resolveSidebarTreeItemEntry(tab, node, lookup)?.item || null;
+    if (resolved) {
+        return resolved;
+    }
+    const itemKey = getNodeItemKey(tab, node);
+    if (tab === 'docs' && itemKey && node.path) {
+        return createFallbackFilesystemDocItem(node, itemKey);
+    }
+    return null;
+}
+
+function isConsumedItem(tab: SidebarTreeTab, itemKey: string, consumedKeys: Set<string>): boolean {
+    if (consumedKeys.has(itemKey)) {
+        return true;
+    }
+    return tab === 'docs' && consumedKeys.has(stripFinalPathExtension(itemKey));
+}
+
+export function buildDefaultTree(tab: SidebarTreeTab, items: ItemData[]): SidebarTreeNode[] {
+    return items
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(getItemResourceName(tab, item)))
+        .map((item) => createItemNode(tab, item));
+}
+
+export function sanitizeSidebarTree(tab: SidebarTreeTab, tree: SidebarTreeNode[], items: ItemData[]): SidebarTreeNode[] {
+    if (tab !== 'docs' && items.length === 0 && tree.length > 0) {
+        return tree;
+    }
+
+    const itemLookup = createSidebarTreeItemLookup(tab, items);
+    const consumedKeys = new Set<string>();
+
+    const walk = (nodes: SidebarTreeNode[]): SidebarTreeNode[] => {
+        const result: SidebarTreeNode[] = [];
+
+        nodes.forEach((node) => {
+            if (node.kind === 'folder') {
+                const children = walk(Array.isArray(node.children) ? node.children : []);
+
+                if (node.id?.startsWith(LEGACY_SUBPAGE_GROUP_ID_PREFIX)) {
+                    result.push(...children);
+                    return;
+                }
+
+                result.push({
+                    ...node,
+                    id: node.id || createFallbackFolderId(tab),
+                    title: node.title || '未命名文件夹',
+                    kind: 'folder',
+                    children,
+                });
+                return;
+            }
+
+            const resolved = resolveSidebarTreeItemEntry(tab, node, itemLookup);
+            if (!resolved) {
+                const itemKey = getNodeItemKey(tab, node);
+                if (tab === 'docs' && itemKey && node.path) {
+                    const filesystemNode = createFilesystemDocNode(node, itemKey, node.title);
+                    if (filesystemNode) {
+                        consumedKeys.add(itemKey);
+                        consumedKeys.add(stripFinalPathExtension(itemKey));
+                        result.push(filesystemNode);
+                    }
+                }
+                return;
+            }
+
+            consumedKeys.add(resolved.canonicalKey);
+            consumedKeys.add(resolved.itemKey);
+            if (tab === 'docs') {
+                consumedKeys.add(stripFinalPathExtension(resolved.itemKey));
+            }
+            if (tab === 'docs' && node.path) {
+                const filesystemNode = createFilesystemDocNode(
+                    node,
+                    resolved.itemKey,
+                    resolveItemTitle(tab, resolved.item, node.title),
+                );
+                if (filesystemNode) {
+                    result.push(filesystemNode);
+                    return;
+                }
+            }
+            result.push(createItemNode(tab, resolved.item, node.title, resolved.itemKey));
+        });
+
+        return result;
+    };
+
+    const nextTree = walk(tree);
+    if (tab === 'docs' && hasFilesystemResourcePath(tree)) {
+        return nextTree;
+    }
+
+    const missingNodes = items
+        .filter((item) => tab !== 'docs' || !isIgnoredDocsResourcePath(getItemResourceName(tab, item)))
+        .filter((item) => !isConsumedItem(tab, `${tab}/${getItemResourceName(tab, item)}`, consumedKeys))
+        .map((item) => createItemNode(tab, item));
+
+    return [...missingNodes, ...nextTree];
+}

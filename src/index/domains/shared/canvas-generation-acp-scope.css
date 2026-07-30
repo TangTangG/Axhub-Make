@@ -1,0 +1,237 @@
+.ax-acp-ui-scope {
+  --composer-radius: 24px;
+  --composer-padding: 10px;
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --primary: 159 100% 28%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 78% 58%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 159 100% 28%;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: var(--axhub-border-color);
+  --color-input: var(--axhub-input-color);
+  --color-ring: var(--axhub-ring-color);
+  color: hsl(var(--foreground));
+}
+
+.ax-acp-ui-scope.dark,
+.dark .ax-acp-ui-scope {
+  --background: 224 71% 4%;
+  --foreground: 213 31% 91%;
+  --muted: 216 34% 13%;
+  --muted-foreground: 217.9 10.6% 64.9%;
+  --accent: 216 34% 16%;
+  --accent-foreground: 210 40% 98%;
+  --popover: 222 39% 10%;
+  --popover-foreground: 213 31% 91%;
+  --primary: 159 100% 35%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 74% 45%;
+  --border: 215 27.9% 16.9%;
+  --input: 215 27.9% 16.9%;
+  --ring: 159 100% 35%;
+}
+
+.ax-acp-settings-dialog-content {
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --primary: 159 100% 28%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 78% 58%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 159 100% 28%;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: var(--axhub-border-color);
+  --color-input: var(--axhub-input-color);
+  --color-ring: var(--axhub-ring-color);
+  width: min(calc(100vw - 2rem), 42rem) !important;
+  max-width: min(calc(100vw - 2rem), 42rem) !important;
+  max-height: min(calc(100dvh - 2rem), 42rem);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: hsl(var(--foreground));
+}
+
+.dark .ax-acp-settings-dialog-content,
+.ax-acp-settings-dialog-content.dark {
+  --background: 224 71% 4%;
+  --foreground: 213 31% 91%;
+  --muted: 216 34% 13%;
+  --muted-foreground: 217.9 10.6% 64.9%;
+  --accent: 216 34% 16%;
+  --accent-foreground: 210 40% 98%;
+  --popover: 222 39% 10%;
+  --popover-foreground: 213 31% 91%;
+  --primary: 159 100% 35%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 74% 45%;
+  --border: 215 27.9% 16.9%;
+  --input: 215 27.9% 16.9%;
+  --ring: 159 100% 35%;
+}
+
+.ax-acp-settings-dialog-content [role='checkbox'][data-state='checked'] {
+  border-color: hsl(var(--primary));
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.ax-acp-ui-scope .aui-composer-root {
+  --composer-radius: 24px;
+  --composer-padding: 10px;
+}
+
+.ax-acp-ui-scope .ax-ai-image-settings-trigger {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 224px;
+  height: 32px;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  padding: 0 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  line-height: 16px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.ax-acp-ui-scope .ax-ai-image-settings-trigger:hover,
+.ax-acp-ui-scope .ax-ai-image-settings-trigger[data-state='open'] {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.ax-acp-ui-scope .ax-ai-image-settings-trigger:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px hsl(var(--ring));
+}
+
+.ax-acp-ui-scope .ax-ai-image-settings-trigger svg {
+  flex: 0 0 auto;
+}
+
+.ax-acp-ui-scope .ax-ai-image-settings-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ax-ai-generation-scene-switcher {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background-color: hsl(var(--background) / 0.96);
+  padding: 4px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  backdrop-filter: blur(6px);
+}
+
+.ax-canvas-start-launcher {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 6px);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ax-canvas-start-launcher:hover {
+  background: hsl(var(--accent));
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.12);
+}
+
+.ax-canvas-start-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ax-canvas-start-composer-topbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.ax-canvas-start-composer-topbar__close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md, 6px);
+  background: hsl(var(--background) / 0.96);
+  color: hsl(var(--muted-foreground));
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.ax-canvas-start-composer-topbar__close:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.ax-canvas-start-display-composer {
+  max-width: none;
+}
+
+@media (max-width: 720px) {
+  .ax-acp-ui-scope .ax-ai-image-settings-trigger {
+    max-width: 224px;
+  }
+
+  .ax-canvas-start-composer-topbar {
+    align-items: flex-start;
+  }
+}

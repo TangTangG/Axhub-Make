@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "vite.config.ts",
+    "client/vite-plugins/annotationSourceMarkdown.ts",
+    "client/vite-plugins/utils/moduleSpecifierQuery.ts",
+    "src/server/**/*",
+    "src/common/makeClientTemplate.ts",
+    "src/common/aiArtifactClassification.ts",
+    "src/chunking/excalidrawDevCjsInterop.ts",
+    "src/chunking/manualChunks.ts",
+    "src/chunking/adminAssetStamping.ts"
+  ]
+}

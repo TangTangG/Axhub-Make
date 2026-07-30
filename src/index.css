@@ -1,0 +1,300 @@
+@import "tailwindcss";
+@source "../node_modules/@axhub/acp/dist/components/assistant-ui/thread/composer.mjs";
+@source "../node_modules/@axhub/acp/dist/components/assistant-ui/acp-selectors.mjs";
+@source "../node_modules/@axhub/acp/dist/components/assistant-ui/image-generation-settings-dialog.mjs";
+@source "../node_modules/@axhub/acp/dist/components/assistant-ui/attachment.mjs";
+@source "../node_modules/@axhub/acp/dist/components/assistant-ui/tooltip-icon-button.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/avatar.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/button.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/checkbox.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/collapsible.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/dialog.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/input.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/label.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/switch.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/tabs.mjs";
+@source "../node_modules/@axhub/acp/dist/components/ui/tooltip.mjs";
+@plugin "tailwindcss-animate";
+@import "./theme/mira-neutral-brand.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --color-background: hsl(var(--background));
+    --color-foreground: hsl(var(--foreground));
+    --color-card: hsl(var(--card));
+    --color-card-foreground: hsl(var(--card-foreground));
+    --color-popover: hsl(var(--popover));
+    --color-popover-foreground: hsl(var(--popover-foreground));
+    --color-primary: hsl(var(--primary));
+    --color-primary-foreground: hsl(var(--primary-foreground));
+    --color-brand: hsl(var(--brand));
+    --color-brand-foreground: hsl(var(--brand-foreground));
+    --color-secondary: hsl(var(--secondary));
+    --color-secondary-foreground: hsl(var(--secondary-foreground));
+    --color-muted: hsl(var(--muted));
+    --color-muted-foreground: hsl(var(--muted-foreground));
+    --color-accent: hsl(var(--accent));
+    --color-accent-foreground: hsl(var(--accent-foreground));
+    --color-success: hsl(var(--success));
+    --color-success-foreground: hsl(var(--success-foreground));
+    --color-warning: hsl(var(--warning));
+    --color-warning-foreground: hsl(var(--warning-foreground));
+    --color-info: hsl(var(--info));
+    --color-info-foreground: hsl(var(--info-foreground));
+    --color-destructive: hsl(var(--destructive));
+    --color-destructive-foreground: hsl(var(--destructive-foreground));
+    --color-border: var(--axhub-border-color);
+    --color-border-strong: var(--axhub-border-strong-color);
+    --color-input: var(--axhub-input-color);
+    --color-ring: var(--axhub-ring-color);
+    --color-chart-1: hsl(var(--chart-1));
+    --color-chart-2: hsl(var(--chart-2));
+    --color-chart-3: hsl(var(--chart-3));
+    --color-chart-4: hsl(var(--chart-4));
+    --color-chart-5: hsl(var(--chart-5));
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    --axhub-overlay-z-tooltip: 3200;
+    --axhub-border: 214.3 31.8% 91.4%;
+    --axhub-border-strong: 214 26% 83%;
+    --axhub-input: 214.3 31.8% 91.4%;
+    --axhub-ring: 159 100% 28%;
+    --axhub-border-color: hsl(var(--axhub-border));
+    --axhub-border-strong-color: hsl(var(--axhub-border-strong));
+    --axhub-input-color: hsl(var(--axhub-input));
+    --axhub-ring-color: hsl(var(--axhub-ring));
+    --color-border: var(--axhub-border-color);
+    --color-border-strong: var(--axhub-border-strong-color);
+    --color-input: var(--axhub-input-color);
+    --color-ring: var(--axhub-ring-color);
+}
+
+body.dark {
+    --axhub-border: 215 27.9% 16.9%;
+    --axhub-border-strong: 215 20% 26%;
+    --axhub-input: 215 27.9% 16.9%;
+    --axhub-ring: 159 100% 35%;
+}
+
+.axhub-dropdown-menu-surface {
+    box-shadow:
+        0 8px 18px hsl(220 43% 11% / 0.10),
+        0 2px 5px hsl(220 43% 11% / 0.06);
+}
+
+.dark .axhub-dropdown-menu-surface {
+    box-shadow:
+        0 8px 18px hsl(220 33% 2% / 0.30),
+        inset 0 1px 0 hsl(0 0% 100% / 0.04);
+}
+
+/* Prevent default heading top margins from breaking vertical centering in fixed-height rows. */
+.ax-admin-theme h1,
+.ax-admin-theme h2,
+.ax-admin-theme h3,
+.ax-admin-theme h4,
+.ax-admin-theme h5,
+.ax-admin-theme h6 {
+    margin-top: 0;
+}
+
+.ax-admin-theme {
+    height: 100%;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    --axhub-border: 214.3 31.8% 91.4%;
+    --axhub-border-strong: 214 26% 83%;
+    --axhub-input: 214.3 31.8% 91.4%;
+    --axhub-ring: 159 100% 28%;
+    --axhub-border-color: hsl(var(--axhub-border));
+    --axhub-border-strong-color: hsl(var(--axhub-border-strong));
+    --axhub-input-color: hsl(var(--axhub-input));
+    --axhub-ring-color: hsl(var(--axhub-ring));
+    --color-border: var(--axhub-border-color);
+    --color-border-strong: var(--axhub-border-strong-color);
+    --color-input: var(--axhub-input-color);
+    --color-ring: var(--axhub-ring-color);
+}
+
+.ax-admin-theme.dark {
+    --axhub-border: 215 27.9% 16.9%;
+    --axhub-border-strong: 215 20% 26%;
+    --axhub-input: 215 27.9% 16.9%;
+    --axhub-ring: 159 100% 35%;
+}
+
+.ax-admin-theme .ant-menu,
+.ax-admin-theme .ant-menu .ant-menu-item,
+.ax-admin-theme .ant-menu .ant-menu-submenu-title,
+.ax-admin-theme .ant-dropdown-menu {
+    font-size: var(--ax-font-size-ui);
+}
+
+.ax-admin-theme .ant-form-item .ant-form-item-label > label,
+.ax-admin-theme .ant-form-item .ant-input,
+.ax-admin-theme .ant-form-item .ant-input-affix-wrapper,
+.ax-admin-theme .ant-form-item .ant-input-number,
+.ax-admin-theme .ant-form-item .ant-input-number-input,
+.ax-admin-theme .ant-form-item .ant-select .ant-select-selector,
+.ax-admin-theme .ant-form-item .ant-select-selection-item,
+.ax-admin-theme .ant-form-item .ant-select-selection-placeholder,
+.ax-admin-theme .ant-select-dropdown .ant-select-item-option-content,
+.ax-admin-theme .ant-form-item .ant-picker,
+.ax-admin-theme .ant-form-item .ant-picker-input > input,
+.ax-admin-theme .ant-form-item .ant-radio-wrapper,
+.ax-admin-theme .ant-form-item .ant-checkbox-wrapper,
+.ax-admin-theme .ant-form-item .ant-form-item-explain,
+.ax-admin-theme .ant-form-item .ant-form-item-extra {
+    font-size: 14px;
+}
+
+*,
+*::before,
+*::after {
+    border-color: var(--axhub-border-color);
+}
+
+.ax-inline-rename-input {
+    width: 100%;
+    min-width: 0;
+    height: 20px;
+    border: 1px solid var(--axhub-border-color);
+    border-radius: 6px;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    padding: 0 6px;
+    line-height: 20px;
+    font-size: var(--ax-font-size-ui);
+    outline: none;
+}
+
+.ax-inline-rename-input:focus,
+.ax-inline-rename-input:focus-visible {
+    border-color: var(--axhub-ring-color);
+    box-shadow: none !important;
+}
+
+.ax-inline-rename-input-title {
+    font-size: 14px;
+    line-height: 1;
+    font-weight: 600;
+}
+
+.ax-admin-theme button svg,
+.ax-admin-theme [role='button'] svg {
+    stroke-width: 1.8;
+}
+
+.ax-admin-theme button.h-7.w-7,
+.ax-admin-theme button.h-6.w-6 {
+    min-width: auto;
+    padding: 0;
+}
+
+.ax-admin-theme .ax-header-quick-edit-button.ant-btn {
+    height: 28px;
+    padding-inline: 8px;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.ax-admin-theme .ax-header-quick-edit-button.ant-btn .anticon {
+    font-size: 13px;
+}
+
+.ax-admin-theme button[class~='bg-primary'],
+.ax-admin-theme button[class^='bg-primary '],
+.ax-admin-theme button[class*=' bg-primary '] {
+    color: hsl(var(--primary-foreground));
+}
+
+/* Keep check/radio indicators high-contrast on primary backgrounds. */
+.ax-admin-theme [role='checkbox'][data-state='checked'],
+.ax-admin-theme [role='radio'][data-state='checked'],
+.ax-admin-theme [role='menuitemcheckbox'][data-state='checked'],
+.ax-admin-theme [role='menuitemradio'][data-state='checked'] {
+    color: hsl(var(--primary-foreground));
+}
+
+.ax-admin-theme *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--axhub-ring-color);
+}
+
+.ax-admin-theme button:focus-visible,
+.ax-admin-theme [role='button']:focus-visible {
+    box-shadow: none;
+}
+
+.ax-admin-theme .ax-dialog-content:focus,
+.ax-admin-theme .ax-dialog-content:focus-visible,
+.ax-admin-theme [role='dialog']:focus,
+.ax-admin-theme [role='dialog']:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+.ax-admin-theme [data-document-paste-focus-surface]:focus,
+.ax-admin-theme [data-document-paste-focus-surface]:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+.ax-placeholder-display-composer .aui-composer-input:focus,
+.ax-placeholder-display-composer .aui-composer-input:focus-visible {
+    outline: none;
+    box-shadow: none !important;
+}
+
+/* Ensure Radix popper wrappers (Dropdown/Select/Popover/Tooltip) stay above dialog overlays. */
+[data-radix-popper-content-wrapper] {
+    z-index: 2000 !important;
+}
+
+[data-radix-popper-content-wrapper]:has([role='tooltip']),
+[data-radix-popper-content-wrapper]:has(.aui-tooltip-content) {
+    z-index: var(--axhub-overlay-z-tooltip) !important;
+}
+
+[role='tooltip'],
+.aui-tooltip-content {
+    z-index: var(--axhub-overlay-z-tooltip) !important;
+}
+
+.ax-scrollarea-hide-chrome > [data-radix-scroll-area-viewport] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.ax-scrollarea-hide-chrome > [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.ax-scrollarea-hide-chrome > :not([data-radix-scroll-area-viewport]) {
+    display: none;
+}

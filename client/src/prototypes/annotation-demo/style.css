@@ -1,0 +1,1062 @@
+.annotation-guide-shell {
+    --paper:#fafaf8;
+    --paper-rgb:250,250,248;
+    --ink:#0a0a0a;
+    --ink-rgb:10,10,10;
+    --grey-1:#f0f0ee;
+    --grey-2:#d4d4d2;
+    --grey-3:#737373;
+    --accent:#002FA7;
+    --accent-rgb:0,47,167;
+    --accent-on:#ffffff;
+    --marker-default:#D97706;
+    --marker-secondary:#059669;
+    --marker-tertiary:#7C3AED;
+    --danger:#E11D48;
+    min-height:100vh;
+    background:var(--paper);
+    color:var(--ink);
+    display:grid;
+    grid-template-columns:270px minmax(0, 1fr);
+    font-family:"Inter", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    letter-spacing:0;
+}
+
+.annotation-guide-shell *,
+.annotation-guide-shell *::before,
+.annotation-guide-shell *::after {
+    box-sizing:border-box;
+}
+
+.annotation-guide-sidebar {
+    min-width:0;
+    min-height:100vh;
+    border-right:1px solid var(--grey-2);
+    background:var(--paper);
+    display:flex;
+    flex-direction:column;
+    gap:28px;
+    padding:40px 22px 36px;
+    position:sticky;
+    top:0;
+}
+
+.annotation-guide-brand p,
+.annotation-guide-eyebrow,
+.annotation-guide-chrome {
+    color:var(--grey-3);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:11px;
+    font-weight:600;
+    line-height:1.25;
+    letter-spacing:0;
+}
+
+.annotation-guide-brand p {
+    margin:0 0 4px;
+}
+
+.annotation-guide-brand h1 {
+    margin:0;
+    color:var(--ink);
+    font-size:22px;
+    font-weight:600;
+    line-height:1.12;
+}
+
+.annotation-guide-nav {
+    min-width:0;
+    max-width:100%;
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+}
+
+.annotation-guide-nav button {
+    width:100%;
+    min-height:42px;
+    border:0;
+    border-left:3px solid transparent;
+    background:transparent;
+    color:var(--ink);
+    display:grid;
+    grid-template-columns:22px 28px minmax(0, 1fr);
+    align-items:center;
+    gap:8px;
+    padding:8px 0 8px 12px;
+    text-align:left;
+    cursor:pointer;
+    font-family:inherit;
+}
+
+.annotation-guide-nav button svg {
+    color:var(--grey-3);
+}
+
+.annotation-guide-nav button small {
+    color:var(--grey-3);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:11px;
+    font-weight:600;
+}
+
+.annotation-guide-nav button span {
+    min-width:0;
+    color:var(--ink);
+    font-size:14px;
+    font-weight:500;
+    line-height:1.2;
+}
+
+.annotation-guide-nav button:hover,
+.annotation-guide-nav button.is-active {
+    border-left-color:var(--accent);
+}
+
+.annotation-guide-nav button:hover svg,
+.annotation-guide-nav button:hover small,
+.annotation-guide-nav button:hover span,
+.annotation-guide-nav button.is-active svg,
+.annotation-guide-nav button.is-active small,
+.annotation-guide-nav button.is-active span {
+    color:var(--accent);
+}
+
+.annotation-guide-nav button:focus-visible,
+.annotation-guide-footer button:focus-visible,
+.annotation-guide-state-demo-card button:focus-visible {
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+}
+
+.annotation-guide-chrome {
+    margin-top:auto;
+    display:grid;
+    gap:7px;
+}
+
+.annotation-guide-scroll {
+    min-width:0;
+    min-height:100vh;
+    overflow-y:auto;
+}
+
+.annotation-guide-content-inner {
+    width:min(980px, calc(100% - 96px));
+    margin:0 auto;
+    padding:56px 0 50px;
+}
+
+.annotation-guide-document {
+    min-width:0;
+}
+
+.annotation-guide-hero {
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) auto;
+    align-items:start;
+    gap:36px;
+    border-bottom:1px solid var(--grey-2);
+    padding-bottom:28px;
+}
+
+.annotation-guide-hero-copy {
+    border-left:4px solid var(--accent);
+    padding-left:16px;
+}
+
+.annotation-guide-hero h2 {
+    margin:8px 0 10px;
+    color:var(--ink);
+    font-size:clamp(34px, 4.2vw, 54px);
+    font-weight:600;
+    line-height:1.1;
+}
+
+.annotation-guide-hero p:not(.annotation-guide-eyebrow) {
+    max-width:640px;
+    margin:0;
+    color:var(--ink);
+    font-size:16px;
+    font-weight:400;
+    line-height:1.55;
+}
+
+.annotation-guide-hero-meta {
+    display:grid;
+    grid-template-columns:auto auto;
+    gap:14px;
+    margin:4px 0 0;
+}
+
+.annotation-guide-hero-meta div {
+    min-width:86px;
+    border-left:1px solid var(--grey-2);
+    padding-left:10px;
+}
+
+.annotation-guide-hero-meta dt {
+    margin:0;
+    color:var(--grey-3);
+    font-size:10px;
+    font-weight:500;
+    line-height:1.35;
+}
+
+.annotation-guide-hero-meta dd {
+    margin:4px 0 0;
+    color:var(--accent);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:14px;
+    font-weight:700;
+    line-height:1;
+    white-space:nowrap;
+}
+
+.annotation-guide-manuscript {
+    margin-top:64px;
+    display:grid;
+    grid-template-columns:180px minmax(0, 1fr);
+    gap:34px;
+    align-items:start;
+}
+
+.annotation-guide-manuscript.is-without-title {
+    grid-template-columns:minmax(0, 1fr);
+}
+
+.annotation-guide-section-title {
+    margin:0;
+    border-left:3px solid var(--accent);
+    padding-left:12px;
+    color:var(--ink);
+    font-size:20px;
+    font-weight:600;
+    line-height:1.22;
+}
+
+.annotation-guide-manuscript p {
+    margin:0 0 12px;
+    max-width:780px;
+    color:var(--ink);
+    font-size:15px;
+    font-weight:400;
+    line-height:1.55;
+}
+
+.annotation-guide-section-body {
+    min-width:0;
+    border-top:1px solid var(--ink);
+    padding-top:18px;
+}
+
+.annotation-guide-section-body p:last-child {
+    margin-bottom:0;
+}
+
+.annotation-guide-comparison-table {
+    width:100%;
+    border-collapse:collapse;
+    color:var(--ink);
+    table-layout:fixed;
+    font-size:13px;
+    line-height:1.45;
+}
+
+.annotation-guide-comparison-table th,
+.annotation-guide-comparison-table td {
+    border-bottom:1px solid var(--grey-2);
+    padding:13px 12px;
+    text-align:left;
+    vertical-align:top;
+}
+
+.annotation-guide-comparison-table th:first-child {
+    width:112px;
+    white-space:nowrap;
+}
+
+.annotation-guide-comparison-table thead th {
+    color:var(--grey-3);
+    font-size:11px;
+    font-weight:700;
+    padding-bottom:17px;
+}
+
+.annotation-guide-comparison-table thead th:nth-child(2),
+.annotation-guide-comparison-prototype {
+    background:rgba(var(--accent-rgb), .06);
+    color:var(--accent);
+}
+
+.annotation-guide-comparison-table tbody th {
+    color:var(--accent);
+    font-size:15px;
+    font-weight:700;
+}
+
+.annotation-guide-comparison-table td {
+    font-size:14px;
+    font-weight:400;
+    line-height:1.5;
+}
+
+.annotation-guide-annotation-card-grid {
+    margin-top:42px;
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:24px;
+}
+
+.annotation-guide-annotation-card {
+    min-width:0;
+    min-height:320px;
+    border:1px solid var(--ink);
+    border-top:6px solid var(--marker-default);
+    border-top-width:6px;
+    border-radius:8px;
+    background:var(--paper);
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    padding:20px;
+}
+
+.annotation-guide-annotation-card.is-secondary {
+    border-top-color:var(--marker-secondary);
+}
+
+.annotation-guide-annotation-card.is-tertiary {
+    border-top-color:var(--marker-tertiary);
+}
+
+.annotation-guide-annotation-card-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+}
+
+.annotation-guide-annotation-card-head > span {
+    color:var(--accent);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:11px;
+    font-weight:700;
+}
+
+.annotation-guide-annotation-card-head > i,
+.annotation-guide-multi-markers i {
+    width:10px;
+    height:10px;
+    border-radius:999px;
+    background:var(--marker-default);
+    display:block;
+}
+
+.annotation-guide-annotation-card.is-secondary .annotation-guide-annotation-card-head > i,
+.annotation-guide-multi-markers .is-secondary {
+    background:var(--marker-secondary);
+}
+
+.annotation-guide-annotation-card.is-tertiary .annotation-guide-annotation-card-head > i,
+.annotation-guide-multi-markers .is-tertiary {
+    background:var(--marker-tertiary);
+}
+
+.annotation-guide-multi-markers {
+    display:flex;
+    align-items:center;
+    gap:5px;
+}
+
+.annotation-guide-annotation-card h3,
+.annotation-guide-state-demo-card h3,
+.annotation-guide-directory-type-list h3,
+.annotation-guide-generate-capability-grid h4,
+.annotation-guide-method-grid h4 {
+    margin:0;
+    color:var(--ink);
+    font-size:17px;
+    font-weight:600;
+    line-height:1.2;
+}
+
+.annotation-guide-annotation-card h3 {
+    font-size:22px;
+    font-weight:500;
+}
+
+.annotation-guide-annotation-card p,
+.annotation-guide-state-demo-card p,
+.annotation-guide-directory-type-list p,
+.annotation-guide-generate-capability-grid p,
+.annotation-guide-method-grid p,
+.annotation-guide-method-placeholder {
+    margin:0;
+    color:var(--ink);
+    font-size:14px;
+    font-weight:400;
+    line-height:1.52;
+}
+
+.annotation-guide-markdown-preview {
+    margin-top:auto;
+    border-top:1px solid var(--ink);
+    padding-top:16px;
+}
+
+.annotation-guide-markdown-preview h4 {
+    margin:0 0 8px;
+    font-size:14px;
+    line-height:1.2;
+}
+
+.annotation-guide-markdown-preview ul {
+    margin:0;
+    padding-left:18px;
+    color:var(--ink);
+    font-size:13px;
+    line-height:1.45;
+}
+
+.annotation-guide-markdown-preview blockquote {
+    margin:10px 0 0;
+    border-left:3px solid var(--marker-default);
+    padding-left:10px;
+    color:var(--grey-3);
+    font-size:13px;
+    line-height:1.45;
+}
+
+.annotation-guide-category-strip,
+.annotation-guide-filter-preview,
+.annotation-guide-node-stack {
+    margin-top:auto;
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+}
+
+.annotation-guide-category-strip span,
+.annotation-guide-node-stack span,
+.annotation-guide-filter-preview span {
+    border:1px solid var(--grey-2);
+    background:var(--paper);
+    padding:7px 9px;
+    color:var(--ink);
+    font-size:12px;
+    font-weight:700;
+    line-height:1;
+}
+
+.annotation-guide-category-strip .is-default,
+.annotation-guide-node-stack .is-default {
+    border-color:var(--marker-default);
+    color:var(--marker-default);
+}
+
+.annotation-guide-category-strip .is-secondary,
+.annotation-guide-node-stack .is-secondary {
+    border-color:var(--marker-secondary);
+    color:var(--marker-secondary);
+}
+
+.annotation-guide-node-stack .is-tertiary {
+    border-color:var(--marker-tertiary);
+    color:var(--marker-tertiary);
+}
+
+.annotation-guide-filter-preview .is-on {
+    flex:1 1 100%;
+    border-color:var(--ink);
+    color:var(--ink);
+}
+
+.annotation-guide-filter-preview span:not(.is-on) {
+    width:30px;
+    height:22px;
+    padding:0;
+}
+
+.annotation-guide-filter-preview .is-default {
+    background:var(--marker-default);
+}
+
+.annotation-guide-filter-preview .is-secondary {
+    background:var(--marker-secondary);
+}
+
+.annotation-guide-filter-preview .is-tertiary {
+    background:var(--marker-tertiary);
+}
+
+.annotation-guide-state-demo-grid {
+    margin-top:42px;
+    display:grid;
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+    gap:20px;
+}
+
+.annotation-guide-state-demo-card {
+    min-width:0;
+    min-height:312px;
+    border:1px solid var(--grey-2);
+    border-top:4px solid var(--marker-default);
+    border-radius:8px;
+    background:var(--grey-1);
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    padding:16px;
+}
+
+.annotation-guide-state-demo-card.is-failure,
+.annotation-guide-state-demo-card.is-low {
+    border-top-color:var(--danger);
+}
+
+.annotation-guide-state-demo-card.is-normal {
+    border-top-color:var(--marker-secondary);
+}
+
+.annotation-guide-state-demo-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+}
+
+.annotation-guide-state-demo-head span,
+.annotation-guide-state-demo-head strong {
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:11px;
+    line-height:1.2;
+}
+
+.annotation-guide-state-demo-head span {
+    color:var(--grey-3);
+    font-weight:700;
+}
+
+.annotation-guide-state-demo-head strong {
+    color:var(--accent);
+    font-weight:700;
+}
+
+.annotation-guide-result-symbol {
+    width:54px;
+    height:54px;
+    border:2px solid currentColor;
+    border-radius:999px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--marker-secondary);
+    font-size:30px;
+    font-weight:800;
+    line-height:1;
+}
+
+.annotation-guide-state-demo-card.is-failure .annotation-guide-result-symbol {
+    color:var(--danger);
+}
+
+.annotation-guide-result-message {
+    min-height:42px;
+}
+
+.annotation-guide-state-demo-card button {
+    width:max-content;
+    min-height:36px;
+    border:1px solid var(--ink);
+    background:var(--paper);
+    color:var(--ink);
+    padding:0 14px;
+    cursor:pointer;
+    font-family:inherit;
+    font-size:13px;
+    font-weight:700;
+}
+
+.annotation-guide-state-list {
+    margin:0;
+    padding:0;
+    list-style:none;
+    display:grid;
+    gap:8px;
+}
+
+.annotation-guide-state-list li {
+    border-bottom:1px solid var(--grey-2);
+    padding:0 0 8px;
+    color:var(--ink);
+    font-size:14px;
+    line-height:1.45;
+}
+
+.annotation-guide-empty-list {
+    min-height:128px;
+    border:1px dashed var(--grey-2);
+    display:grid;
+    place-items:center;
+    gap:10px;
+    padding:16px;
+    text-align:center;
+}
+
+.annotation-guide-empty-list span {
+    width:42px;
+    height:30px;
+    border:2px solid var(--grey-2);
+    border-top:0;
+    display:block;
+}
+
+.annotation-guide-metric-value {
+    color:var(--ink);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:36px;
+    font-weight:700;
+    line-height:1;
+}
+
+.annotation-guide-meter {
+    height:12px;
+    background:var(--paper);
+    border:1px solid var(--ink);
+    overflow:hidden;
+}
+
+.annotation-guide-meter span {
+    display:block;
+    height:100%;
+    background:var(--marker-default);
+}
+
+.annotation-guide-state-demo-card.is-low .annotation-guide-meter span {
+    background:var(--danger);
+}
+
+.annotation-guide-state-demo-card.is-normal .annotation-guide-meter span {
+    background:var(--marker-secondary);
+}
+
+.annotation-guide-state-note {
+    margin-top:auto;
+}
+
+.annotation-guide-shell.is-directory-page {
+    height:100vh;
+    overflow:hidden;
+}
+
+.annotation-guide-shell.is-directory-page .annotation-guide-scroll {
+    height:100vh;
+    min-height:0;
+    overflow:hidden;
+}
+
+.annotation-guide-shell.is-directory-page .annotation-guide-content-inner {
+    height:100vh;
+    padding:46px 0 34px;
+    display:flex;
+    flex-direction:column;
+}
+
+.annotation-guide-shell.is-directory-page .annotation-guide-document {
+    flex:1 1 auto;
+    min-height:0;
+    display:flex;
+}
+
+.annotation-guide-shell.is-directory-page .annotation-guide-footer {
+    flex:0 0 auto;
+    margin-top:18px;
+}
+
+.annotation-guide-directory-overview {
+    width:100%;
+    min-height:0;
+    display:grid;
+    grid-template-columns:minmax(0, 520px) minmax(0, 1fr);
+    align-items:center;
+    gap:42px;
+}
+
+.annotation-guide-directory-copy {
+    border-left:4px solid var(--accent);
+    padding-left:18px;
+}
+
+.annotation-guide-directory-copy h2 {
+    margin:8px 0 12px;
+    color:var(--ink);
+    font-size:clamp(34px, 4.2vw, 54px);
+    font-weight:600;
+    line-height:1.08;
+}
+
+.annotation-guide-directory-copy > p {
+    margin:0;
+    max-width:46ch;
+    color:var(--grey-3);
+    font-size:16px;
+    line-height:1.65;
+}
+
+.annotation-guide-directory-type-list {
+    margin-top:28px;
+    border-top:1px solid var(--grey-2);
+    display:grid;
+}
+
+.annotation-guide-directory-type-list article {
+    min-width:0;
+    border-bottom:1px solid var(--grey-2);
+    display:grid;
+    grid-template-columns:36px minmax(0, 1fr);
+    gap:14px;
+    padding:16px 0;
+    align-items:start;
+}
+
+.annotation-guide-directory-type-list article > span {
+    width:34px;
+    height:34px;
+    border:1px solid var(--ink);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--accent);
+}
+
+.annotation-guide-directory-type-list h3 {
+    margin:0 0 4px;
+}
+
+.annotation-guide-directory-pointer {
+    position:fixed;
+    right:76px;
+    top:50%;
+    z-index:2;
+    display:grid;
+    grid-template-columns:auto auto;
+    align-items:center;
+    gap:18px;
+    color:var(--accent);
+    pointer-events:none;
+    transform:translateY(-42%);
+}
+
+.annotation-guide-directory-pointer div {
+    justify-self:end;
+    border-top:1px solid var(--accent);
+    border-bottom:1px solid var(--accent);
+    padding:14px 0;
+    text-align:right;
+}
+
+.annotation-guide-directory-pointer span,
+.annotation-guide-directory-pointer strong {
+    display:block;
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    letter-spacing:0;
+}
+
+.annotation-guide-directory-pointer span {
+    color:var(--grey-3);
+    font-size:11px;
+    font-weight:600;
+    line-height:1.25;
+}
+
+.annotation-guide-directory-pointer strong {
+    margin-top:6px;
+    color:var(--accent);
+    font-size:13px;
+    font-weight:700;
+    line-height:1.3;
+}
+
+.annotation-guide-directory-pointer svg {
+    width:clamp(88px, 8vw, 132px);
+    height:auto;
+}
+
+@media (max-width:1180px) {
+    .annotation-guide-directory-pointer {
+        right:58px;
+    }
+
+    .annotation-guide-directory-pointer div {
+        display:none;
+    }
+}
+
+.annotation-guide-generate-section-body {
+    min-width:0;
+    border-top:1px solid var(--ink);
+    display:grid;
+    gap:24px;
+    padding-top:18px;
+}
+
+.annotation-guide-generate-capability-grid {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:20px 28px;
+}
+
+.annotation-guide-generate-capability-grid article {
+    border:0;
+    padding:0;
+}
+
+.annotation-guide-method-grid {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:24px;
+}
+
+.annotation-guide-method-grid.is-three {
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+}
+
+.annotation-guide-method-grid.is-vertical {
+    grid-template-columns:1fr;
+}
+
+.annotation-guide-method-grid article {
+    border:0;
+    border-radius:8px;
+    background:var(--grey-1);
+    display:grid;
+    gap:14px;
+    padding:18px;
+}
+
+.annotation-guide-method-placeholder {
+    min-height:180px;
+    border:1px solid var(--grey-2);
+    border-radius:8px;
+    background:var(--paper);
+    display:grid;
+    place-items:center;
+    overflow:hidden;
+}
+
+.annotation-guide-method-placeholder span {
+    color:var(--grey-3);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:12px;
+    font-weight:700;
+}
+
+.annotation-guide-method-placeholder img {
+    width:100%;
+    height:100%;
+    max-height:220px;
+    display:block;
+    object-fit:contain;
+}
+
+.annotation-guide-edit-method-list h4 {
+    margin:0;
+    color:var(--ink);
+    font-size:16px;
+    font-weight:600;
+    line-height:1.2;
+}
+
+.annotation-guide-edit-method-list p {
+    margin:0;
+    color:var(--ink);
+    font-size:14px;
+    line-height:1.52;
+}
+
+.annotation-guide-edit-method-list {
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    gap:14px;
+}
+
+.annotation-guide-edit-method-list article {
+    min-width:0;
+    border:1px solid var(--grey-2);
+    border-radius:8px;
+    background:var(--paper);
+    display:grid;
+    gap:8px;
+    padding:14px;
+}
+
+.annotation-guide-agent-read {
+    min-width:0;
+    display:grid;
+    grid-template-columns:minmax(0, 1fr) minmax(260px, 380px);
+    gap:24px;
+}
+
+.annotation-guide-agent-read p {
+    margin:0;
+}
+
+.annotation-guide-read-source-list {
+    margin-top:18px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+}
+
+.annotation-guide-read-source-list span {
+    border:1px solid var(--ink);
+    background:var(--paper);
+    padding:8px 10px;
+    color:var(--accent);
+    font-size:13px;
+    font-weight:700;
+    line-height:1;
+}
+
+.annotation-guide-footer {
+    margin-top:34px;
+    border-top:1px solid var(--grey-2);
+    display:grid;
+    grid-template-columns:1fr auto 1fr;
+    align-items:center;
+    gap:14px;
+    padding-top:18px;
+}
+
+.annotation-guide-footer button {
+    width:112px;
+    min-height:42px;
+    border:1px solid var(--ink);
+    background:var(--paper);
+    color:var(--ink);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    padding:0 14px;
+    cursor:pointer;
+    font-family:inherit;
+    font-size:14px;
+    font-weight:600;
+}
+
+.annotation-guide-footer button:first-child {
+    justify-self:start;
+}
+
+.annotation-guide-footer button:last-child {
+    justify-self:end;
+    background:var(--accent);
+    border-color:var(--accent);
+    color:var(--accent-on);
+}
+
+.annotation-guide-footer button:disabled {
+    cursor:not-allowed;
+    opacity:.38;
+}
+
+.annotation-guide-footer span {
+    color:var(--grey-3);
+    font-family:"SFMono-Regular", Consolas, Menlo, monospace;
+    font-size:12px;
+    font-weight:600;
+}
+
+@media (max-width:900px) {
+    .annotation-guide-shell {
+        display:block;
+    }
+
+    .annotation-guide-sidebar {
+        min-height:0;
+        border-right:0;
+        border-bottom:1px solid var(--grey-2);
+        position:relative;
+        top:auto;
+    }
+
+    .annotation-guide-nav {
+        display:grid;
+        grid-template-columns:repeat(2, minmax(0, 1fr));
+        gap:6px 12px;
+    }
+
+    .annotation-guide-chrome {
+        margin-top:0;
+    }
+
+    .annotation-guide-content-inner {
+        width:min(100% - 36px, 980px);
+        padding-top:36px;
+    }
+
+    .annotation-guide-hero,
+    .annotation-guide-directory-overview,
+    .annotation-guide-manuscript {
+        grid-template-columns:1fr;
+        gap:18px;
+    }
+
+    .annotation-guide-directory-pointer {
+        display:none;
+    }
+
+    .annotation-guide-annotation-card-grid,
+    .annotation-guide-state-demo-grid,
+    .annotation-guide-generate-capability-grid,
+    .annotation-guide-method-grid,
+    .annotation-guide-method-grid.is-three,
+    .annotation-guide-method-grid.is-vertical,
+    .annotation-guide-edit-method-list,
+    .annotation-guide-agent-read {
+        grid-template-columns:1fr;
+    }
+}
+
+@media (max-width:560px) {
+    .annotation-guide-sidebar {
+        padding:28px 18px 24px;
+    }
+
+    .annotation-guide-nav {
+        grid-template-columns:1fr;
+    }
+
+    .annotation-guide-content-inner {
+        width:min(100% - 28px, 980px);
+        padding-top:32px;
+    }
+
+    .annotation-guide-hero h2 {
+        font-size:clamp(32px, 12vw, 46px);
+    }
+
+    .annotation-guide-hero-meta {
+        grid-template-columns:1fr 1fr;
+    }
+
+    .annotation-guide-manuscript {
+        margin-top:42px;
+    }
+
+    .annotation-guide-footer {
+        grid-template-columns:1fr;
+    }
+
+    .annotation-guide-footer span {
+        order:-1;
+    }
+
+    .annotation-guide-footer button,
+    .annotation-guide-footer button:last-child {
+        width:100%;
+        justify-self:stretch;
+    }
+}
