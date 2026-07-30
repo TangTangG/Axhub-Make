@@ -194,9 +194,10 @@ function createFallbackWidget(node: ComponentNode, options: AxureExportOptions):
  */
 function extractPosition(node: ComponentNode): { x: number; y: number } {
   const style = node.props?.style ?? {};
+  const props = node.props ?? {};
   return {
-    x: parseNumericValue(style.left ?? style.x ?? '0'),
-    y: parseNumericValue(style.top ?? style.y ?? '0'),
+    x: parseNumericValue(style.left ?? style.x ?? props.left ?? props.x ?? '0'),
+    y: parseNumericValue(style.top ?? style.y ?? props.top ?? props.y ?? '0'),
   };
 }
 
@@ -205,9 +206,10 @@ function extractPosition(node: ComponentNode): { x: number; y: number } {
  */
 function extractSize(node: ComponentNode): { width: number; height: number } {
   const style = node.props?.style ?? {};
+  const props = node.props ?? {};
   return {
-    width: parseNumericValue(style.width ?? '100'),
-    height: parseNumericValue(style.height ?? '40'),
+    width: parseNumericValue(style.width ?? props.width ?? '100'),
+    height: parseNumericValue(style.height ?? props.height ?? '40'),
   };
 }
 

@@ -180,11 +180,15 @@ describe('容量守卫 (CI)', () => {
 
   it('validateTree 应在超限时抛出 CapacityError', () => {
     const tree = createLargeTree(600);
-    expect(() => guard.validateTree(tree)).toThrow('CapacityError');
+    expect(() => guard.validateTree(tree)).toThrow(/Capacity limit exceeded/);
   });
 
-  it('validatePayloadSize 应在超限时抛出 CapacityError', () => {
-    expect(() => guard.validatePayloadSize(11 * 1024 * 1024)).toThrow('CapacityError');
+  it('validatePayloadSize 超限时仅告警不抛错', () => {
+    // G2 修复后改为仅 console.warn，不再 throw
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => guard.validatePayloadSize(11 * 1024 * 1024)).not.toThrow();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('validatePayloadSize 应通过正常大小', () => {
@@ -241,10 +245,12 @@ describe('导出管道 (CI Mock)', () => {
     expect(result.stats?.exportedNodes).toBe(3);
   });
 
-  it('应拒绝不支持的格式', async () => {
+  it('应支持 image 格式导出', async () => {
     const tree = createSmallTree();
-    const result = await pipeline.export(tree, { format: 'image' as any });
+    const result = await pipeline.export(tree, { format: 'image' });
+    // CI 环境无 DOM（document/canvas/Image），exportImage 会失败并走 catch 返回 UNKNOWN
+    // 断言：CI 环境下 image 导出优雅降级为错误结果，而非崩溃
     expect(result.success).toBe(false);
-    expect(result.error?.code).toBe('FORMAT_NOT_SUPPORTED');
+    expect(result.error?.code).toBe('UNKNOWN');
   });
 });

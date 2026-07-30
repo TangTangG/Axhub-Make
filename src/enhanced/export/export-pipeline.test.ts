@@ -106,9 +106,9 @@ describe('exportToAxure', () => {
     const tree = createTreeWithUnsupportedComponent();
     const result = await exportToAxure(tree);
 
-    const items = result.document.pages[0].scene.items;
-    // 找到 fallback 的 chart 组件
-    const fallbackWidget = items.find((w) => w.name?.startsWith('fallback-'));
+    const rootWidget = result.document.pages[0].scene.items[0];
+    // 在 root 的 children 中找到 fallback 的 chart 组件
+    const fallbackWidget = rootWidget.children?.find((w) => w.name?.startsWith('fallback-'));
     expect(fallbackWidget).toBeDefined();
     expect(fallbackWidget?.type).toBe('rectangle');
     expect(fallbackWidget?.style['border.style']).toBe('dashed');
