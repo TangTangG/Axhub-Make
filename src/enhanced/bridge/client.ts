@@ -122,13 +122,22 @@ export class AxureBridgeClient implements BridgeClient {
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      let requestBody: BodyInit = body;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (compressed) {
+        // 真实 gzip 压缩（CompressionStream）
+        const stream = new Blob([body]).stream().pipeThrough(new CompressionStream('gzip'));
+        requestBody = await new Response(stream).blob();
+        headers['Content-Encoding'] = 'gzip';
+      }
+
       const res = await fetch(`${this.baseUrl}/copyaxvg`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(compressed ? { 'Content-Encoding': 'gzip' } : {}),
-        },
-        body,
+        headers,
+        body: requestBody,
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -233,9 +242,15 @@ export class AxureBridgeClient implements BridgeClient {
   }
 
   private splitIntoChunks(data: string, chunkSize: number): string[] {
+    // 按字节切分，确保不在多字节 UTF-8 字符中间切断
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(data);
     const chunks: string[] = [];
-    for (let i = 0; i < data.length; i += chunkSize) {
-      chunks.push(data.slice(i, i + chunkSize));
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunkBytes = bytes.slice(i, i + chunkSize);
+      chunks.push(decoder.decode(chunkBytes, { stream: true }));
     }
     return chunks;
   }

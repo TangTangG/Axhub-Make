@@ -52,11 +52,13 @@ export async function exportToAxure(
   }
 
   // 如果根节点本身有内容，也转换根节点
+  // 注意：根节点已在上方遍历 children 时计入 stats.totalNodes，此处不再重复计数
   const rootWidget = await convertNodeToAxureWidget(
     componentTree.root,
     warnings,
     stats,
     options,
+    true, // skipCount: 根节点已计数
   );
   if (rootWidget && items.length === 0) {
     items.push(rootWidget);
@@ -91,8 +93,11 @@ export async function convertNodeToAxureWidget(
   warnings: AxureExportWarning[],
   stats: AxureExportStats,
   options: AxureExportOptions = {},
+  skipCount = false,
 ): Promise<AxureWidget | null> {
-  stats.totalNodes++;
+  if (!skipCount) {
+    stats.totalNodes++;
+  }
 
   const mapping = getWidgetMapping(node.type);
 

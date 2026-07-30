@@ -206,11 +206,10 @@ describe('导出管道 (CI Mock)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('应支持 axure/html 格式（image 格式在 v1.0.0 中已移除）', () => {
+  it('应支持 axure/html/image 格式', () => {
     expect(pipeline.supportsFormat('axure')).toBe(true);
     expect(pipeline.supportsFormat('html')).toBe(true);
-    // v1.0.0: image 格式为假实现（返回 text/html Blob），已从声明中移除
-    expect(pipeline.supportsFormat('image' as any)).toBe(false);
+    expect(pipeline.supportsFormat('image')).toBe(true);
   });
 
   it('应成功导出 HTML', async () => {

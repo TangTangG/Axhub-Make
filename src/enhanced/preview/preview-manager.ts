@@ -4,7 +4,7 @@
  * @version 1.0.0
  */
 
-import type { ComponentTree } from '../components/types';
+import type { ComponentTree, ComponentNode } from '../components/types';
 import type {
   PreviewMode,
   PreviewState,
@@ -36,7 +36,7 @@ export type PreviewEventType =
 
 export interface PreviewEvent {
   type: PreviewEventType;
-  payload?: any;
+  payload?: unknown;
 }
 
 type EventHandler = (event: PreviewEvent) => void;
@@ -381,11 +381,11 @@ export class PreviewManager {
 </html>`;
   }
 
-  private renderNodeInline(node: any): string {
+  private renderNodeInline(node: ComponentNode): string {
     const styles = this.buildQuickStyles(node.props);
     const text = node.props.text || node.props.label || node.props.content || '';
     const children = node.children
-      ? node.children.map((c: any) => this.renderNodeInline(c)).join('')
+      ? node.children.map((c: ComponentNode) => this.renderNodeInline(c)).join('')
       : '';
 
     return `<div data-component-id="${node.id}" style="${styles}">${text}${children}</div>`;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { GutterContext } from './gutter-context';
 import styles from './row.css';
 
 interface RowProps {
@@ -38,14 +39,11 @@ const Row: React.FC<RowProps> = ({
   };
 
   return (
-    <div className={classNames} style={inlineStyle}>
-      {React.Children.map(children, (child) => {
-        if (!React.isValidElement(child)) return child;
-        return React.cloneElement(child as React.ReactElement<any>, {
-          _gutterH: gutterH,
-        });
-      })}
-    </div>
+    <GutterContext.Provider value={gutterH}>
+      <div className={classNames} style={inlineStyle}>
+        {children}
+      </div>
+    </GutterContext.Provider>
   );
 };
 

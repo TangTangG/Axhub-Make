@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useContext } from 'react';
+import { GutterContext } from './gutter-context';
 import styles from './col.css';
 
 interface ColProps {
@@ -8,7 +9,6 @@ interface ColProps {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
-  _gutterH?: number;
 }
 
 const TOTAL_SPAN = 24;
@@ -20,8 +20,8 @@ const Col: React.FC<ColProps> = ({
   children,
   className,
   style,
-  _gutterH,
 }) => {
+  const gutterH = useContext(GutterContext);
   const classNames = [styles.col, className ?? ''].filter(Boolean).join(' ');
 
   const inlineStyle: React.CSSProperties = {};
@@ -37,9 +37,9 @@ const Col: React.FC<ColProps> = ({
     inlineStyle.marginLeft = `${(offset / TOTAL_SPAN) * 100}%`;
   }
 
-  if (_gutterH) {
-    inlineStyle.paddingLeft = `${_gutterH / 2}px`;
-    inlineStyle.paddingRight = `${_gutterH / 2}px`;
+  if (gutterH) {
+    inlineStyle.paddingLeft = `${gutterH / 2}px`;
+    inlineStyle.paddingRight = `${gutterH / 2}px`;
   }
 
   return (
