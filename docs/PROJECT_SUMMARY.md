@@ -2,7 +2,7 @@
 
 > 日期：2026-07-27
 > 版本：v1.0.0
-> 状态：开发完成，待代码 Review
+> 状态：开发完成，代码 Review 3 轮已通过
 
 ---
 
@@ -65,18 +65,19 @@ src/integration/ (适配层)       ← 连接上游与自研
 |------|------|
 | 需求 Review | ✅ 3 轮通过 |
 | 设计 Review | ✅ 3 轮通过 |
-| 代码 Review | ⚠️ 未执行（遗留 v1.1）|
+| 代码 Review | ✅ 3 轮通过（11 高优 + 40 中优全部修复）|
 | TypeScript 编译 | ⚠️ 未验证（依赖冲突，遗留）|
 | E2E 测试 | ⚠️ 配置完成未运行（依赖未安装，遗留）|
 | Token 一致性 | ✅ 零硬编码 hex（grep 验证）|
 
 ## 七、遗留问题（TOP 5）
 
-1. **代码 Review 3 轮未执行**（高）— Phase 3 流程要求
+1. **代码 Review 3 轮已通过** ✅ — 11 高优 + 40 中优全部修复（d0cebf8 → d2a364a → 557a1f5）
 2. **fork 仓库 + upstream/ subtree 初始化未执行**（高）— 脚本/CI 就绪，需 GitHub 操作
 3. **TypeScript 编译未验证**（中）— pnpm 缺失 + npm ERESOLVE 冲突
 4. **E2E 测试未运行**（中）— vitest 配置完成，依赖未安装
 5. **patch-package 对 vendor dist 支持未验证**（中）— axhub-export-core 仅 dist
+6. **export-pipeline 2 个测试断言与实现语义不完全对齐**（低）— fallback 查找逻辑 + 尺寸提取，非阻塞
 
 ## 八、经验教训
 
