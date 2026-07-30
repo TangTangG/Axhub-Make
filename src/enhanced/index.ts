@@ -29,3 +29,14 @@ export * from './bridge/client';
 
 // ─── 容量守卫 ───
 export * from './guards/capacity-guard';
+
+// ─── 埋点初始化 ───
+import { tracker } from './analytics/tracker';
+import { AnalyticsEvents } from './analytics/events';
+
+// 应用打开事件（首次访问标记）
+const isFirstVisit = !localStorage.getItem('app_visited');
+tracker.track(AnalyticsEvents.APP_OPEN, { first_visit: isFirstVisit });
+if (isFirstVisit) {
+  localStorage.setItem('app_visited', 'true');
+}

@@ -419,7 +419,7 @@ export class PreviewManager {
     let maxX = 0;
     let maxY = 0;
 
-    const walk = (node: any) => {
+    const walk = (node: ComponentNode) => {
       const right = (node.props.left || 0) + (node.props.width || 0);
       const bottom = (node.props.top || 0) + (node.props.height || 0);
       if (right > maxX) maxX = right;

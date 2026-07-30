@@ -1,5 +1,6 @@
 import { CRITICAL_EVENTS } from './events';
 import type { CommonEventProperties, TrackEvent, TrackerConfig, ITracker } from './types';
+import { sanitizePrompt } from './utils/prompt-sanitizer';
 
 const STORAGE_KEY = 'analytics_queue';
 const USER_ID_KEY = 'analytics_user_id';
@@ -61,11 +62,17 @@ export class AnalyticsTracker implements ITracker {
   track(event: string, properties?: Record<string, unknown>): void {
     if (this.config.disabled || this.destroyed) return;
 
+    // 自动脱敏 prompt_text（双保险，业务方传原文也会被拦截）
+    const sanitizedProperties = { ...properties };
+    if (typeof sanitizedProperties.prompt_text === 'string') {
+      sanitizedProperties.prompt_text = sanitizePrompt(sanitizedProperties.prompt_text);
+    }
+
     const eventData: TrackEvent = {
       event,
       properties: {
         ...this.getCommonProperties(),
-        ...properties,
+        ...sanitizedProperties,
       },
       timestamp: Date.now(),
     };
@@ -78,6 +85,24 @@ export class AnalyticsTracker implements ITracker {
 
     if (this.queue.length >= this.config.maxQueueSize) {
       this.flush();
+    }
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.config.disabled = !enabled;
+    if (enabled && !this.flushTimer && !this.destroyed) {
+      this.startFlushTimer();
+    } else if (!enabled && this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  optOut(): void {
+    this.setEnabled(false);
+    this.queue = [];
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_KEY);
     }
   }
 

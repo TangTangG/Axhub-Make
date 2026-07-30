@@ -18,6 +18,8 @@ import type { ComponentTree, ComponentNode } from '../components/types';
 
 import { getWidgetMapping, canMapToAxure } from './component-mapper';
 import { convertStyles } from './axure-mapper';
+import { tracker } from '../analytics/tracker';
+import { AnalyticsEvents } from '../analytics/events';
 
 // ─── 导出管道 ───
 
@@ -31,53 +33,72 @@ export async function exportToAxure(
   componentTree: ComponentTree,
   options: AxureExportOptions = {},
 ): Promise<AxureExportResult> {
-  const warnings: AxureExportWarning[] = [];
-  const stats: AxureExportStats = {
-    totalNodes: 0,
-    mappedNodes: 0,
-    fallbackNodes: 0,
-    skippedNodes: 0,
-  };
+  tracker.track(AnalyticsEvents.EXPORT_AXURE_START, {
+    component_count: componentTree.root.children?.length ?? 0,
+    has_styles: Object.keys(componentTree.root.props?.style ?? {}).length > 0,
+  });
 
-  const items: AxureWidget[] = [];
+  try {
+    const warnings: AxureExportWarning[] = [];
+    const stats: AxureExportStats = {
+      totalNodes: 0,
+      mappedNodes: 0,
+      fallbackNodes: 0,
+      skippedNodes: 0,
+    };
 
-  // 遍历根节点的子节点（如果有）
-  if (componentTree.root.children) {
-    for (const child of componentTree.root.children) {
-      const widget = await convertNodeToAxureWidget(child, warnings, stats, options);
-      if (widget) {
-        items.push(widget);
+    const items: AxureWidget[] = [];
+
+    // 遍历根节点的子节点（如果有）
+    if (componentTree.root.children) {
+      for (const child of componentTree.root.children) {
+        const widget = await convertNodeToAxureWidget(child, warnings, stats, options);
+        if (widget) {
+          items.push(widget);
+        }
       }
     }
+
+    // 如果根节点本身有内容，也转换根节点
+    // 注意：根节点已在上方遍历 children 时计入 stats.totalNodes，此处不再重复计数
+    const rootWidget = await convertNodeToAxureWidget(
+      componentTree.root,
+      warnings,
+      stats,
+      options,
+      true, // skipCount: 根节点已计数
+    );
+    if (rootWidget && items.length === 0) {
+      items.push(rootWidget);
+    }
+
+    const page: AxurePage = {
+      id: componentTree.id,
+      name: componentTree.name,
+      scene: { items },
+    };
+
+    const document: AxureDocument = {
+      version: '1.0',
+      pages: [page],
+      masters: [],
+      imageMap: {},
+    };
+
+    tracker.track(AnalyticsEvents.EXPORT_AXURE_SUCCESS, {
+      component_count: stats.totalNodes,
+      mapped_count: stats.mappedNodes,
+      fallback_count: stats.fallbackNodes,
+      warning_count: warnings.length,
+    });
+
+    return { document, warnings, stats };
+  } catch (err) {
+    tracker.track(AnalyticsEvents.EXPORT_AXURE_FAIL, {
+      error_message: (err as Error).message,
+    });
+    throw err;
   }
-
-  // 如果根节点本身有内容，也转换根节点
-  // 注意：根节点已在上方遍历 children 时计入 stats.totalNodes，此处不再重复计数
-  const rootWidget = await convertNodeToAxureWidget(
-    componentTree.root,
-    warnings,
-    stats,
-    options,
-    true, // skipCount: 根节点已计数
-  );
-  if (rootWidget && items.length === 0) {
-    items.push(rootWidget);
-  }
-
-  const page: AxurePage = {
-    id: componentTree.id,
-    name: componentTree.name,
-    scene: { items },
-  };
-
-  const document: AxureDocument = {
-    version: '1.0',
-    pages: [page],
-    masters: [],
-    imageMap: {},
-  };
-
-  return { document, warnings, stats };
 }
 
 /**
