@@ -10,7 +10,7 @@
   font-family: var(--font-family-body);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  transition: background-color 200ms ease, transform 200ms ease, box-shadow 200ms ease;
   outline: none;
   white-space: nowrap;
   user-select: none;
@@ -24,7 +24,7 @@
   font-size: var(--font-size-md);
 }
 
-.button--middle {
+.button--medium {
   height: 36px;
   padding: 0 var(--spacing-md);
   font-size: var(--font-size-sm);
@@ -56,47 +56,46 @@
   box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-primary);
 }
 
-.button--default {
+.button--secondary {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-default);
 }
 
-.button--default:hover {
+.button--secondary:hover {
   color: var(--color-primary);
   border-color: var(--color-primary);
 }
 
-.button--default:active {
+.button--secondary:active {
   color: var(--color-primary-active);
   border-color: var(--color-primary-active);
   transform: scale(0.98);
 }
 
-.button--default:focus-visible {
+.button--secondary:focus-visible {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-primary);
 }
 
-.button--dashed {
-  background-color: var(--color-bg-primary);
+.button--text {
+  background-color: transparent;
   color: var(--color-text-primary);
-  border: 1px dashed var(--color-border-default);
+  border: none;
+  padding: 0 var(--spacing-xs);
 }
 
-.button--dashed:hover {
+.button--text:hover {
   color: var(--color-primary);
-  border-color: var(--color-primary);
+  background-color: var(--color-bg-hover);
 }
 
-.button--dashed:active {
+.button--text:active {
   color: var(--color-primary-active);
-  border-color: var(--color-primary-active);
-  transform: scale(0.98);
 }
 
-.button--dashed:focus-visible {
-  border-color: var(--color-primary);
+.button--text:focus-visible {
+  color: var(--color-primary);
   box-shadow: 0 0 0 2px var(--color-bg-primary), 0 0 0 4px var(--color-primary);
 }
 
@@ -130,10 +129,14 @@
   pointer-events: none;
 }
 
-.button--disabled.button--default,
-.button--disabled.button--dashed {
+.button--disabled.button--secondary {
   background-color: var(--color-bg-secondary);
   border-color: var(--color-border-default);
+}
+
+.button--disabled.button--text {
+  background-color: transparent;
+  color: var(--color-text-disabled);
 }
 
 .button--disabled.button--link {

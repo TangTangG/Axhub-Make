@@ -78,8 +78,8 @@
     "sync:upstream": "./scripts/sync-upstream.sh",
     "check:upstream-api": "./scripts/check-upstream-api.sh",
     "generate:tokens": "node scripts/generate-tokens.js",
-    "test:e2e": "playwright test tests/e2e/*.ci.test.ts",
-    "test:e2e:local": "playwright test tests/e2e/*.local.test.ts",
+    "test:e2e": "vitest run tests/e2e/export.ci.test.ts",
+    "test:e2e:local": "vitest run tests/e2e/export.local.test.ts",
     "test:e2e:real-bridge": "npm run test:e2e:local",
     "release:make": "node scripts/release-make.mjs"
   },

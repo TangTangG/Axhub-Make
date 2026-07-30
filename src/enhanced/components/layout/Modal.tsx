@@ -56,12 +56,12 @@ const Modal: React.FC<ModalProps> = ({
   return (
     <div className={wrapperClass}>
       <div className={styles['modal-mask']} onClick={onClose} />
-      <div className={modalClass} style={modalStyle}>
+      <div className={modalClass} style={modalStyle} role="dialog" aria-modal="true" aria-label={title ?? 'Modal'}>
         {(title || onClose) && (
           <div className={styles.modal__header}>
             {title && <div className={styles.modal__title}>{title}</div>}
             {onClose && (
-              <button className={styles.modal__close} onClick={onClose} aria-label="Close">
+              <button className={styles.modal__close} onClick={onClose} aria-label="关闭">
                 ✕
               </button>
             )}

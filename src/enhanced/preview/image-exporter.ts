@@ -28,19 +28,21 @@ export async function exportImage(
   // 1. 创建离屏容器并渲染组件树
   const { container, element } = renderToOffscreenDom(componentTree, opts);
 
-  // 2. 等待资源加载
-  await waitForResources(element);
-
-  // 3. 根据格式导出
   let blob: Blob;
-  if (opts.format === 'svg') {
-    blob = await exportToSvg(element, opts);
-  } else {
-    blob = await exportToPng(element, opts);
-  }
+  try {
+    // 2. 等待资源加载
+    await waitForResources(element);
 
-  // 4. 清理离屏容器
-  document.body.removeChild(container);
+    // 3. 根据格式导出
+    if (opts.format === 'svg') {
+      blob = await exportToSvg(element, opts);
+    } else {
+      blob = await exportToPng(element, opts);
+    }
+  } finally {
+    // 4. 清理离屏容器（finally 确保异常时也执行）
+    document.body.removeChild(container);
+  }
 
   const duration = performance.now() - startTime;
 

@@ -11,7 +11,7 @@ import type { ComponentTree, ComponentNode } from '../components/types';
 export const CAPACITY_LIMITS = {
   maxComponents: 500,
   maxNestingDepth: 8,
-  maxTableRows: 100,
+  maxTableRows: 1000,
   maxPayloadSize: 10 * 1024 * 1024, // 10MB
   chunkSize: 5 * 1024 * 1024, // 5MB
 } as const;
@@ -57,14 +57,30 @@ export class CapacityGuard {
   }
 
   /**
-   * 验证组件树是否符合容量限制，超限抛出 CapacityError
+   * 验证组件树是否符合容量限制，超限抛出聚合的 CapacityError
+   * 聚合所有错误信息，避免修复一个再撞下一个
    */
   validateTree(tree: ComponentTree): void {
     const result = this.check(tree);
 
-    for (const error of result.errors) {
+    if (result.errors.length === 0) return;
+
+    if (result.errors.length === 1) {
+      const error = result.errors[0];
       throw new CapacityError(error.limit, error.actual, error.max);
     }
+
+    // 聚合多个错误
+    const messages = result.errors.map((e) => e.message).join('; ');
+    const firstError = result.errors[0];
+    const aggregated = new CapacityError(
+      firstError.limit,
+      firstError.actual,
+      firstError.max,
+    );
+    aggregated.message = `多项容量限制超出: ${messages}`;
+    (aggregated as any).errors = result.errors;
+    throw aggregated;
   }
 
   /**
@@ -119,11 +135,18 @@ export class CapacityGuard {
   }
 
   /**
-   * 验证 payload 大小
+   * 验证 payload 大小（超限仅告警，不再硬错误）
+   *
+   * 10MB 硬上限与 Bridge 分片能力冲突：当 Bridge 支持 chunkedTransfer 时，
+   * 超限 payload 仍可传输。因此这里只输出警告，由 Bridge Client 根据
+   * capabilities 决定是否分片或拒绝。
    */
   validatePayloadSize(size: number): void {
     if (size > this.limits.maxPayloadSize) {
-      throw new CapacityError('maxPayloadSize', size, this.limits.maxPayloadSize);
+      console.warn(
+        `[CapacityGuard] payload size ${size} exceeds ${this.limits.maxPayloadSize}; ` +
+          'will rely on Bridge chunkedTransfer if available',
+      );
     }
   }
 

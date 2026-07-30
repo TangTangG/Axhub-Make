@@ -12,16 +12,14 @@ export const NorthStarMetrics = {
 
 export type NorthStarMetricName = (typeof NorthStarMetrics)[keyof typeof NorthStarMetrics];
 
-const EXPORT_SUCCESS_EVENTS = new Set([
+const EXPORT_SUCCESS_EVENTS = new Set<string>([
   AnalyticsEvents.EXPORT_AXURE_SUCCESS,
   AnalyticsEvents.EXPORT_HTML,
   AnalyticsEvents.EXPORT_IMAGE,
 ]);
 
-const EXPORT_START_EVENTS = new Set([
+const EXPORT_START_EVENTS = new Set<string>([
   AnalyticsEvents.EXPORT_AXURE_START,
-  AnalyticsEvents.EXPORT_HTML,
-  AnalyticsEvents.EXPORT_IMAGE,
 ]);
 
 const AI_SUCCESS_EVENT = AnalyticsEvents.AI_GENERATE_SUCCESS;

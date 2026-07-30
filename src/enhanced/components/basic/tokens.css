@@ -34,6 +34,9 @@
   --color-state-error: #ff3b30;
   --color-state-info: #007aff;
 
+  /* Focus Ring */
+  --color-focus-ring: #0066cc;
+
   /* Typography */
   --font-family-display: SF Pro Display, -apple-system, sans-serif;
   --font-family-body: SF Pro Text, -apple-system, sans-serif;

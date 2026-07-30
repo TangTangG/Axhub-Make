@@ -6,8 +6,8 @@ const meta: Meta<typeof Button> = {
   component: Button,
   tags: ['autodocs'],
   argTypes: {
-    type: { control: 'select', options: ['primary', 'default', 'dashed', 'link'] },
-    size: { control: 'select', options: ['large', 'middle', 'small'] },
+    type: { control: 'select', options: ['primary', 'secondary', 'text', 'link'] },
+    size: { control: 'select', options: ['small', 'medium', 'large'] },
     disabled: { control: 'boolean' },
     loading: { control: 'boolean' },
     children: { control: 'text' },
@@ -70,17 +70,17 @@ export const Loading: Story = {
   },
 };
 
-export const DefaultType: Story = {
+export const SecondaryType: Story = {
   args: {
-    type: 'default',
-    children: 'Default Button',
+    type: 'secondary',
+    children: 'Secondary Button',
   },
 };
 
-export const DashedType: Story = {
+export const TextType: Story = {
   args: {
-    type: 'dashed',
-    children: 'Dashed Button',
+    type: 'text',
+    children: 'Text Button',
   },
 };
 
@@ -96,6 +96,14 @@ export const LargeSize: Story = {
     type: 'primary',
     size: 'large',
     children: 'Large',
+  },
+};
+
+export const MediumSize: Story = {
+  args: {
+    type: 'primary',
+    size: 'medium',
+    children: 'Medium',
   },
 };
 
@@ -118,13 +126,13 @@ export const WithIcon: Story = {
 export const AllStates: Story = {
   render: () => (
     <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-      <Button type="primary">Default</Button>
+      <Button type="primary">Primary</Button>
       <Button type="primary" disabled>Disabled</Button>
       <Button type="primary" loading>Loading</Button>
-      <Button type="default">Default</Button>
-      <Button type="default" disabled>Disabled</Button>
-      <Button type="dashed">Dashed</Button>
-      <Button type="dashed" disabled>Disabled</Button>
+      <Button type="secondary">Secondary</Button>
+      <Button type="secondary" disabled>Disabled</Button>
+      <Button type="text">Text</Button>
+      <Button type="text" disabled>Disabled</Button>
       <Button type="link">Link</Button>
       <Button type="link" disabled>Disabled</Button>
     </div>

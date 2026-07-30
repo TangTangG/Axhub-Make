@@ -79,25 +79,28 @@ function renderComponentTreeToHtml(node: ComponentNode): string {
 
   const tag = resolveHtmlTag(node.type);
   const textContent = extractTextContent(node.props);
+  // 安全：node.id / node.type 拼进 HTML 属性前必须转义双引号，防属性层注入 on* 事件
+  const safeId = escapeHtml(String(node.id ?? ''));
+  const safeType = escapeHtml(String(node.type ?? ''));
 
   if (tag === 'img') {
     const src = node.props.src || node.props.imageSrc || '';
     const alt = node.props.alt || node.props.name || '';
-    return `<img data-component-id="${node.id}" data-component-type="${node.type}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="${styles}" />`;
+    return `<img data-component-id="${safeId}" data-component-type="${safeType}" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="${escapeHtml(styles)}" />`;
   }
 
   if (tag === 'input') {
     const inputType = node.props.inputType || 'text';
     const placeholder = node.props.placeholder || '';
     const value = node.props.value || '';
-    return `<input data-component-id="${node.id}" data-component-type="${node.type}" type="${escapeHtml(inputType)}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" style="${styles}" />`;
+    return `<input data-component-id="${safeId}" data-component-type="${safeType}" type="${escapeHtml(inputType)}" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" style="${escapeHtml(styles)}" />`;
   }
 
   const innerContent = textContent
     ? escapeHtml(textContent)
     : childrenHtml;
 
-  return `<div data-component-id="${node.id}" data-component-type="${node.type}" style="${styles}">${innerContent}</div>`;
+  return `<div data-component-id="${safeId}" data-component-type="${safeType}" style="${escapeHtml(styles)}">${innerContent}</div>`;
 }
 
 function buildInlineStyles(props: Record<string, any>): string {
@@ -155,7 +158,26 @@ function normalizeCssValue(prop: string, value: any): string {
   if (needsUnit && typeof value === 'number') {
     return `${value}px`;
   }
-  return strValue;
+  return sanitizeCssValue(strValue);
+}
+
+// CSS 值白名单校验：仅允许颜色、长度、数字、常见枚举关键字与 font-family 字符集，
+// 拒绝包含 url( / expression( / javascript: / 引号 / 尖括号等危险载荷的值
+function sanitizeCssValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) return 'initial';
+
+  const lowered = trimmed.toLowerCase();
+  const dangerous = ['url(', 'expression(', 'javascript:', 'data:', 'vbscript:', '<', '>', '"', "'", ';', '{', '}', '\\'];
+  for (const token of dangerous) {
+    if (lowered.includes(token)) return 'initial';
+  }
+
+  // 白名单字符：字母数字、空白、# . % - + , ( ) / 与常用 CSS 标识符
+  // 覆盖 #hex、rgb(a)、hsl(a)、px/em/rem/vw/vh/% 长度、CSS 变量名、字体栈等
+  if (!/^[\w\s#.,%+\-()/]+$/.test(trimmed)) return 'initial';
+
+  return trimmed;
 }
 
 function resolveHtmlTag(componentType: string): string {
@@ -217,32 +239,42 @@ async function inlineResources(
   let exceededLimit = false;
   let processedHtml = html;
 
-  for (const resource of resources) {
-    if (currentSize >= maxFileSize) {
-      exceededLimit = true;
-      warnings.push(`资源 ${resource.url} 未内联：已达到文件大小限制`);
-      continue;
-    }
-
-    try {
-      const dataUri = await fetchAndConvertToDataUri(resource.url);
-      if (!dataUri) continue;
-
-      const resourceSize = new TextEncoder().encode(dataUri).byteLength;
-      if (currentSize + resourceSize > maxFileSize) {
-        exceededLimit = true;
-        warnings.push(`资源 ${resource.url} 未内联：内联后将超过文件大小限制`);
-        continue;
+  // 并发内联资源（Promise.allSettled + 总预算闸门）
+  const results = await Promise.allSettled(
+    resources.map(async (resource) => {
+      if (currentSize >= maxFileSize) {
+        return { resource, dataUri: null, skipped: true, reason: '已达到文件大小限制' };
       }
 
+      try {
+        const dataUri = await fetchAndConvertToDataUri(resource.url);
+        if (!dataUri) return { resource, dataUri: null, skipped: true, reason: '获取失败' };
+
+        const resourceSize = new TextEncoder().encode(dataUri).byteLength;
+        if (currentSize + resourceSize > maxFileSize) {
+          return { resource, dataUri: null, skipped: true, reason: '内联后将超过文件大小限制' };
+        }
+
+        return { resource, dataUri, resourceSize, skipped: false };
+      } catch {
+        return { resource, dataUri: null, skipped: true, reason: '内联失败' };
+      }
+    }),
+  );
+
+  for (const result of results) {
+    if (result.status === 'rejected') continue;
+    const { resource, dataUri, resourceSize, skipped, reason } = result.value;
+    if (skipped) {
+      warnings.push(`资源 ${resource.url} 未内联：${reason}`);
+      if (reason.includes('超过') || reason.includes('限制')) exceededLimit = true;
+      continue;
+    }
+    if (dataUri && resourceSize) {
       resource.dataUri = dataUri;
       resource.size = resourceSize;
       currentSize += resourceSize;
-
-      // 替换 HTML 中的 URL
       processedHtml = processedHtml.replaceAll(resource.url, dataUri);
-    } catch {
-      warnings.push(`资源 ${resource.url} 内联失败`);
     }
   }
 
@@ -252,13 +284,76 @@ async function inlineResources(
 async function fetchAndConvertToDataUri(url: string): Promise<string | null> {
   if (url.startsWith('font:')) return null;
 
+  // 单资源体积上限：超过则不下载/不内联（与导出 maxFileSize 同量级，避免一次拉爆内存）
+  const MAX_RESOURCE_BYTES = 20 * 1024 * 1024; // 20MB
+
   try {
+    // 1) HEAD 预检 Content-Length：超限即中断，避免下载超大响应体
+    try {
+      const headResp = await fetch(url, { method: 'HEAD' });
+      if (headResp.ok) {
+        const contentLength = headResp.headers.get('content-length');
+        if (contentLength) {
+          const declaredSize = parseInt(contentLength, 10);
+          if (Number.isFinite(declaredSize) && declaredSize > MAX_RESOURCE_BYTES) {
+            return null;
+          }
+        }
+      }
+    } catch {
+      // HEAD 失败不阻断 GET（部分服务器不支持 HEAD）
+    }
+
+    // 2) GET + 流式读取：边下边累计字节，超过上限立即取消
     const response = await fetch(url);
     if (!response.ok) return null;
 
+    // 二次校验：服务器若给 GET 也回了 Content-Length，仍按上限拒绝
+    const getLength = response.headers.get('content-length');
+    if (getLength) {
+      const declaredSize = parseInt(getLength, 10);
+      if (Number.isFinite(declaredSize) && declaredSize > MAX_RESOURCE_BYTES) {
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        return null;
+      }
+    }
+
     const contentType = response.headers.get('content-type') || guessMimeType(url);
-    const buffer = await response.arrayBuffer();
-    const base64 = arrayBufferToBase64(buffer);
+
+    if (!response.body) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > MAX_RESOURCE_BYTES) return null;
+      const base64 = arrayBufferToBase64(buffer);
+      return `data:${contentType};base64,${base64}`;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          total += value.byteLength;
+          if (total > MAX_RESOURCE_BYTES) {
+            try { await reader.cancel(); } catch { /* ignore */ }
+            return null;
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try { reader.releaseLock(); } catch { /* ignore */ }
+    }
+
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      merged.set(c, offset);
+      offset += c.byteLength;
+    }
+    const base64 = arrayBufferToBase64(merged.buffer as ArrayBuffer);
     return `data:${contentType};base64,${base64}`;
   } catch {
     return null;
@@ -306,20 +401,44 @@ function generateInteractionCode(
   const domEvent = mapToDomEvent(event);
   if (!domEvent) return null;
 
+  // 安全：id 必须是合法 CSS 标识符字符集（[\w-]+），否则可引号逃逸注入任意脚本
+  if (!isSafeDomId(nodeId)) return null;
+  const safeTargetId = typeof targetId === 'string' && isSafeDomId(targetId) ? targetId : null;
+
+  // 安全：url/target 一律 JSON.stringify 注入字符串字面量，避免 escapeJs 引号/闭合标签逃逸
+  const urlLiteral = JSON.stringify(String(params.url ?? '/'));
+  const linkTargetLiteral = JSON.stringify(String(params.target ?? '_blank'));
+
+  let code: string | null = null;
   switch (action) {
     case 'navigate':
-      return `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { window.location.href = '${escapeJs(params.url || '/')}'; });`;
+      code = `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { window.location.href = ${urlLiteral}; });`;
+      break;
     case 'show':
-      return `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${targetId}"]'); if(t) t.style.display = ''; });`;
+      if (!safeTargetId) return null;
+      code = `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${safeTargetId}"]'); if(t) t.style.display = ''; });`;
+      break;
     case 'hide':
-      return `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${targetId}"]'); if(t) t.style.display = 'none'; });`;
+      if (!safeTargetId) return null;
+      code = `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${safeTargetId}"]'); if(t) t.style.display = 'none'; });`;
+      break;
     case 'toggle':
-      return `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${targetId}"]'); if(t) t.style.display = t.style.display === 'none' ? '' : 'none'; });`;
+      if (!safeTargetId) return null;
+      code = `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { var t = document.querySelector('[data-component-id="${safeTargetId}"]'); if(t) t.style.display = t.style.display === 'none' ? '' : 'none'; });`;
+      break;
     case 'openLink':
-      return `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { window.open('${escapeJs(params.url || '#')}', '${escapeJs(params.target || '_blank')}'); });`;
+      code = `document.querySelector('[data-component-id="${nodeId}"]').addEventListener('${domEvent}', function() { window.open(${urlLiteral}, ${linkTargetLiteral}); });`;
+      break;
     default:
       return null;
   }
+
+  // 安全：脚本块整体逃逸 </script 闭合标签，防止 url 内嵌 </script><script>alert(1)</script> 突破
+  return code.replace(/<\/script/gi, '<\\/script');
+}
+
+function isSafeDomId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && /^[\w-]+$/.test(id);
 }
 
 function mapToDomEvent(event: string): string | null {
@@ -343,8 +462,10 @@ function assembleHtml(
   scripts: InteractionScript[],
   options: HtmlExportOptions,
 ): string {
+  // 安全：拼装前对整体 scriptBlock 做 </script → <\/script 兜底替换，
+  // 即使某条 code 漏过 generateInteractionCode 的逐条转义，也无法在输出层突破脚本块
   const scriptBlock = scripts.length > 0
-    ? `\n<script>\n(function(){\n${scripts.map((s) => s.code).join('\n')}\n})();\n</script>`
+    ? `\n<script>\n(function(){\n${scripts.map((s) => s.code).join('\n')}\n})();\n</script>`.replace(/<\/script/gi, '<\\/script')
     : '';
 
   return `<!DOCTYPE html>
@@ -412,9 +533,15 @@ function guessMimeType(url: string): string {
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const CHUNK_SIZE = 32 * 1024; // 每 32KB 一块，避免 O(n) 字符串拼接与参数栈溢出
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.byteLength; i += CHUNK_SIZE) {
+    chunks.push(
+      String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.byteLength)) as unknown as number[],
+      ),
+    );
   }
-  return btoa(binary);
+  return btoa(chunks.join(''));
 }

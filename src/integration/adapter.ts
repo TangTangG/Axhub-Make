@@ -65,7 +65,7 @@ export class AxhubMakeAdapter implements UpstreamAdapter {
 
   private convertElementsToNode(elements: UpstreamElement[]): ComponentNode {
     if (elements.length === 0) {
-      return { id: 'root', type: 'rectangle', props: {} };
+      return { id: 'root', type: 'proto-rectangle', props: {} };
     }
 
     const root = elements[0];
@@ -108,58 +108,58 @@ export class AxhubMakeAdapter implements UpstreamAdapter {
 
   private mapUpstreamType(upstreamType: string): string {
     const typeMap: Record<string, string> = {
-      rect: 'rectangle',
-      text: 'text',
-      button: 'button',
-      input: 'input',
-      image: 'image',
-      link: 'link',
-      select: 'select',
-      radio: 'radio',
-      checkbox: 'checkbox',
-      table: 'table',
-      switch: 'switch',
-      slider: 'slider',
-      datepicker: 'date-picker',
-      nav: 'nav',
-      tabs: 'tabs',
-      card: 'card',
-      divider: 'divider',
-      grid: 'grid',
-      modal: 'modal',
-      drawer: 'drawer',
-      chart: 'chart',
-      map: 'map',
-      richtext: 'rich-text',
+      rect: 'proto-rectangle',
+      text: 'proto-text',
+      button: 'proto-button',
+      input: 'proto-input',
+      image: 'proto-image',
+      link: 'proto-link',
+      select: 'proto-select',
+      radio: 'proto-radio',
+      checkbox: 'proto-checkbox',
+      table: 'proto-table',
+      switch: 'proto-switch',
+      slider: 'proto-slider',
+      datepicker: 'proto-date-picker',
+      nav: 'proto-nav',
+      tabs: 'proto-tabs',
+      card: 'proto-card',
+      divider: 'proto-divider',
+      grid: 'proto-grid',
+      modal: 'proto-modal',
+      drawer: 'proto-drawer',
+      chart: 'proto-chart',
+      map: 'proto-map',
+      richtext: 'proto-rich-text',
     };
     return typeMap[upstreamType] ?? upstreamType;
   }
 
   private mapToUpstreamType(type: string): string {
     const typeMap: Record<string, string> = {
-      rectangle: 'rect',
-      text: 'text',
-      button: 'button',
-      input: 'input',
-      image: 'image',
-      link: 'link',
-      select: 'select',
-      radio: 'radio',
-      checkbox: 'checkbox',
-      table: 'table',
-      switch: 'switch',
-      slider: 'slider',
-      'date-picker': 'datepicker',
-      nav: 'nav',
-      tabs: 'tabs',
-      card: 'card',
-      divider: 'divider',
-      grid: 'grid',
-      modal: 'modal',
-      drawer: 'drawer',
-      chart: 'chart',
-      map: 'map',
-      'rich-text': 'richtext',
+      'proto-rectangle': 'rect',
+      'proto-text': 'text',
+      'proto-button': 'button',
+      'proto-input': 'input',
+      'proto-image': 'image',
+      'proto-link': 'link',
+      'proto-select': 'select',
+      'proto-radio': 'radio',
+      'proto-checkbox': 'checkbox',
+      'proto-table': 'table',
+      'proto-switch': 'switch',
+      'proto-slider': 'slider',
+      'proto-date-picker': 'datepicker',
+      'proto-nav': 'nav',
+      'proto-tabs': 'tabs',
+      'proto-card': 'card',
+      'proto-divider': 'divider',
+      'proto-grid': 'grid',
+      'proto-modal': 'modal',
+      'proto-drawer': 'drawer',
+      'proto-chart': 'chart',
+      'proto-map': 'map',
+      'proto-rich-text': 'richtext',
     };
     return typeMap[type] ?? type;
   }

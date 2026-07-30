@@ -67,12 +67,12 @@ const Drawer: React.FC<DrawerProps> = ({
   return (
     <div className={wrapperClass}>
       <div className={styles['drawer-mask']} onClick={onClose} />
-      <div className={drawerClass} style={{ ...sizeStyle, ...style }}>
+      <div className={drawerClass} style={{ ...sizeStyle, ...style }} role="dialog" aria-modal="true" aria-label={title ?? 'Drawer'}>
         {(title || onClose) && (
           <div className={styles.drawer__header}>
             {title && <div className={styles.drawer__title}>{title}</div>}
             {onClose && (
-              <button className={styles.drawer__close} onClick={onClose} aria-label="Close">
+              <button className={styles.drawer__close} onClick={onClose} aria-label="关闭">
                 ✕
               </button>
             )}

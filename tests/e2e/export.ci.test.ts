@@ -206,10 +206,11 @@ describe('导出管道 (CI Mock)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('应支持 axure/html/image 格式', () => {
+  it('应支持 axure/html 格式（image 格式在 v1.0.0 中已移除）', () => {
     expect(pipeline.supportsFormat('axure')).toBe(true);
     expect(pipeline.supportsFormat('html')).toBe(true);
-    expect(pipeline.supportsFormat('image')).toBe(true);
+    // v1.0.0: image 格式为假实现（返回 text/html Blob），已从声明中移除
+    expect(pipeline.supportsFormat('image' as any)).toBe(false);
   });
 
   it('应成功导出 HTML', async () => {
@@ -239,5 +240,12 @@ describe('导出管道 (CI Mock)', () => {
     const result = await pipeline.export(tree, { format: 'html' });
     expect(result.stats?.totalNodes).toBe(3);
     expect(result.stats?.exportedNodes).toBe(3);
+  });
+
+  it('应拒绝不支持的格式', async () => {
+    const tree = createSmallTree();
+    const result = await pipeline.export(tree, { format: 'image' as any });
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('FORMAT_NOT_SUPPORTED');
   });
 });

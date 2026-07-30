@@ -68,6 +68,7 @@ import { handleTemplateLibraryApi } from './managementApi.templateLibrary.ts';
 import { handleThemeLibraryApi } from './managementApi.themeLibrary.ts';
 import { handleWorkspaceApi, SIDEBAR_TREE_VERSION } from './managementApi.workspace.ts';
 import { handleMediaApi } from './mediaApi.ts';
+import { handleAnalyticsTrackApi, handleAnalyticsMetricsApi } from './analytics-track.ts';
 import { handleHtmlReviewArtifactsApi } from './htmlReviewArtifacts.ts';
 import { handleHtmlResourceEditingApi } from './htmlResourceEditing.ts';
 import { handleQuickEditRuntimeApi } from './quickEditRuntimeApi.ts';
@@ -1244,6 +1245,14 @@ export async function handleManagementApi(req: IncomingMessage, res: ServerRespo
       makeState: options.makeStateHealth,
     });
     return true;
+  }
+
+  // 埋点数据接收与查询（无需 projectId，落在 projectRoot 下）
+  if (pathname === '/api/analytics/track') {
+    return handleAnalyticsTrackApi(req, res, projectRoot);
+  }
+  if (pathname === '/api/analytics/metrics') {
+    return handleAnalyticsMetricsApi(req, res, projectRoot);
   }
 
   if (pathname === '/api/make-state/health') {

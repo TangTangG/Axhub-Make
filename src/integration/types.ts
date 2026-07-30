@@ -97,6 +97,10 @@ export interface ExportResult {
   error?: ExportError;
   warnings?: ExportWarning[];
   stats?: ExportStats;
+  /** 是否走了降级路径 */
+  degraded?: boolean;
+  /** 降级方式 */
+  fallback?: 'clipboard' | 'html' | 'image';
 }
 
 export interface ExportError {
@@ -107,6 +111,10 @@ export interface ExportError {
 
 export type ExportErrorCode =
   | 'BRIDGE_UNAVAILABLE'
+  | 'BRIDGE_400'
+  | 'BRIDGE_413'
+  | 'BRIDGE_500'
+  | 'BRIDGE_503'
   | 'PAYLOAD_TOO_LARGE'
   | 'FORMAT_NOT_SUPPORTED'
   | 'CONVERSION_FAILED'

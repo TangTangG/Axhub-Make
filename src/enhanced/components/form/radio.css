@@ -41,7 +41,7 @@
   border-radius: var(--radius-full);
   outline: none;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background-color 200ms ease, border-color 0.15s ease, box-shadow 0.15s ease;
   appearance: none;
   -webkit-appearance: none;
 }
@@ -52,7 +52,7 @@
 
 .radio__input:focus {
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .radio__input:checked {

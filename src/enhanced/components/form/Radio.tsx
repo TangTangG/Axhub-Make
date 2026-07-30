@@ -12,6 +12,7 @@ interface RadioProps {
   value?: string;
   defaultValue?: string;
   disabled?: boolean;
+  name?: string;
   onChange?: (value: string) => void;
   className?: string;
   style?: React.CSSProperties;
@@ -22,6 +23,7 @@ const Radio: React.FC<RadioProps> = ({
   value,
   defaultValue,
   disabled = false,
+  name,
   onChange,
   className,
   style,
@@ -29,6 +31,13 @@ const Radio: React.FC<RadioProps> = ({
   const [internalValue, setInternalValue] = useState(defaultValue ?? '');
   const isControlled = value !== undefined;
   const currentValue = isControlled ? value : internalValue;
+
+  // 自动生成 radio group name（模块级序号 + useRef 保证稳定）
+  const groupNameRef = React.useRef<string>('');
+  if (!groupNameRef.current) {
+    groupNameRef.current = name ?? `radio-group-${++Radio.groupCounter}`;
+  }
+  const groupName = groupNameRef.current;
 
   const handleChange = useCallback(
     (optionValue: string) => {
@@ -70,6 +79,7 @@ const Radio: React.FC<RadioProps> = ({
           >
             <input
               type="radio"
+              name={groupName}
               className={[
                 styles.radio__input,
                 isItemDisabled ? styles['radio__input--disabled'] : '',
@@ -98,5 +108,8 @@ const Radio: React.FC<RadioProps> = ({
     </div>
   );
 };
+
+// 模块级计数器用于自动生成 radio group name
+(Radio as any).groupCounter = 0;
 
 export default Radio;

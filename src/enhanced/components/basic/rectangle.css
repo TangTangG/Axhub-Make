@@ -2,7 +2,7 @@
 
 .rectangle {
   box-sizing: border-box;
-  transition: opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: opacity 200ms ease, box-shadow 0.15s ease;
 }
 
 .rectangle:hover {

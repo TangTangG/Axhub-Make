@@ -2,8 +2,8 @@ import React from 'react';
 import styles from './button.css';
 
 interface ButtonProps {
-  type?: 'primary' | 'default' | 'dashed' | 'link';
-  size?: 'large' | 'middle' | 'small';
+  type?: 'primary' | 'secondary' | 'text' | 'link';
+  size?: 'small' | 'medium' | 'large';
   disabled?: boolean;
   loading?: boolean;
   icon?: React.ReactNode;
@@ -15,7 +15,7 @@ interface ButtonProps {
 
 const Button: React.FC<ButtonProps> = ({
   type = 'primary',
-  size = 'middle',
+  size = 'medium',
   disabled = false,
   loading = false,
   icon,

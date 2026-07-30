@@ -23,7 +23,7 @@
   border-radius: var(--radius-md);
   outline: none;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 200ms ease, box-shadow 0.15s ease;
   user-select: none;
 }
 
@@ -33,12 +33,12 @@
 
 .datePicker__trigger:focus {
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .datePicker--open .datePicker__trigger {
   border-color: var(--color-border-focus);
-  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.15);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .datePicker--disabled .datePicker__trigger {
@@ -127,7 +127,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--color-text-secondary);
-  transition: background-color 0.1s ease, color 0.1s ease;
+  transition: background-color 200ms ease, color 0.1s ease;
 }
 
 .datePicker__navButton:hover {
@@ -175,7 +175,7 @@
   border: none;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background-color 0.1s ease;
+  transition: background-color 200ms ease;
 }
 
 .datePicker__day:hover {

@@ -3,7 +3,7 @@
 .image {
   display: block;
   object-fit: cover;
-  transition: opacity 0.2s ease;
+  transition: opacity 200ms ease;
 }
 
 .image--contain {
