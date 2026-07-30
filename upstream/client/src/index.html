@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Axhub Make Project</title>
+  <style>
+    :root {
+      color: #20242a;
+      background: #f7f8fa;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    html,
+    body {
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    main {
+      box-sizing: border-box;
+      width: min(100%, 680px);
+      padding: 32px;
+      text-align: center;
+    }
+
+    p {
+      margin: 0;
+      color: #22262d;
+      font-size: 22px;
+      font-weight: 500;
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #20242a;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      min-height: 40px;
+      padding: 0 18px;
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.68;
+    }
+
+    .status {
+      color: #5f6673;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-top: 12px;
+      min-height: 22px;
+    }
+
+    @media (max-width: 520px) {
+      main {
+        padding: 24px;
+      }
+
+      p {
+        font-size: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p>可以通过 npx -y @axhub/make@latest 启动管理页面。</p>
+    <div class="actions">
+      <button id="start-button" type="button" hidden>启动管理服务</button>
+    </div>
+    <div id="status" class="status">正在检查管理服务...</div>
+  </main>
+  <script>
+    (function () {
+      var statusElement = document.getElementById('status');
+      var startButton = document.getElementById('start-button');
+      var pollTimer = 0;
+
+      function setStatus(text) {
+        if (statusElement) {
+          statusElement.textContent = text;
+        }
+      }
+
+      function redirectWhenReady(payload) {
+        if (!shouldRedirectToAdmin()) {
+          return false;
+        }
+        if (payload && payload.ready && payload.adminUrl) {
+          location.replace(payload.adminUrl);
+          return true;
+        }
+        return false;
+      }
+
+      function shouldRedirectToAdmin() {
+        var pathname = window.location.pathname;
+        return pathname === '/' || pathname === '/index.html';
+      }
+
+      function showStartButton() {
+        if (startButton) {
+          startButton.hidden = false;
+          startButton.disabled = false;
+          startButton.textContent = '启动管理服务';
+        }
+      }
+
+      function schedulePoll() {
+        window.clearTimeout(pollTimer);
+        pollTimer = window.setTimeout(checkStatus, 1200);
+      }
+
+      async function checkStatus() {
+        try {
+          var response = await fetch('/__axhub/make-server/status', { headers: { accept: 'application/json' } });
+          var payload = await response.json();
+          if (redirectWhenReady(payload)) {
+            return;
+          }
+          if (payload && payload.starting) {
+            setStatus('管理服务正在启动...');
+            schedulePoll();
+            return;
+          }
+          setStatus(payload && payload.error ? payload.error : '管理服务尚未启动。');
+          showStartButton();
+        } catch (error) {
+          setStatus('管理服务尚未启动。');
+          showStartButton();
+        }
+      }
+
+      async function startServer() {
+        if (!startButton || startButton.disabled) {
+          return;
+        }
+        startButton.disabled = true;
+        startButton.textContent = '启动中...';
+        setStatus('正在执行 npx -y @axhub/make@latest...');
+        try {
+          var response = await fetch('/__axhub/make-server/start', { method: 'POST', headers: { accept: 'application/json' } });
+          var payload = await response.json();
+          if (redirectWhenReady(payload)) {
+            return;
+          }
+          setStatus(payload && payload.error ? payload.error : '管理服务正在启动...');
+          schedulePoll();
+        } catch (error) {
+          setStatus('启动失败，请稍后重试。');
+          showStartButton();
+        }
+      }
+
+      if (startButton) {
+        startButton.addEventListener('click', startServer);
+      }
+      if (!shouldRedirectToAdmin()) {
+        setStatus('当前路径不是管理入口。');
+        return;
+      }
+      checkStatus();
+    }());
+  </script>
+</body>
+</html>

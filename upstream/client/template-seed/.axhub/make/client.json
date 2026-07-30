@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "kind": "axhub-make-client",
+  "repository": "https://github.com/lintendo/Axhub-Make/tree/main/client",
+  "project": {
+    "id": "make-project",
+    "name": ""
+  }
+}

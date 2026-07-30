@@ -1,0 +1,134 @@
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { describe, expect, it, vi } from 'vitest';
+
+import { handleEntriesCompatibilityApi } from './managementApi.entries';
+
+function createJsonResponse() {
+  let body = '';
+  const headers = new Map<string, string | number | readonly string[]>();
+  const res = {
+    statusCode: 0,
+    setHeader: vi.fn((key: string, value: string | number | readonly string[]) => {
+      headers.set(key, value);
+      return res;
+    }),
+    end: vi.fn((chunk?: unknown) => {
+      body = String(chunk ?? '');
+      return res;
+    }),
+  } as unknown as ServerResponse;
+
+  return {
+    res,
+    headers,
+    readBody: () => JSON.parse(body),
+  };
+}
+
+describe('entries compatibility API', () => {
+  it('preserves placeholder prototype metadata for the start page after resource refresh', () => {
+    const { res, readBody } = createJsonResponse();
+
+    const handled = handleEntriesCompatibilityApi(
+      {
+        url: '/api/entries.json',
+        method: 'GET',
+        headers: { host: 'localhost' },
+      } as IncomingMessage,
+      res,
+      { runtimeOrigin: '' } as any,
+      {
+        project: {
+          id: 'demo-project',
+          root: '/tmp/demo-project',
+        },
+        metadata: {
+          resources: {
+            prototypes: [
+              {
+                id: 'untitled',
+                name: 'untitled',
+                title: 'Untitled',
+                clientUrl: '/prototypes/untitled',
+                filePath: 'src/prototypes/untitled/index.tsx',
+                absoluteFilePath: '/tmp/demo-project/src/prototypes/untitled/index.tsx',
+                placeholder: true,
+                placeholderGuide: {
+                  kind: 'prototype-empty',
+                  title: 'Empty prototype',
+                  description: 'Describe what to create.',
+                  steps: [],
+                  tips: [],
+                },
+              },
+            ],
+            docs: [],
+            themes: [],
+            data: [],
+            templates: [],
+          },
+        } as any,
+      },
+      '/api/entries.json',
+    );
+
+    expect(handled).toBe(true);
+    expect(readBody().prototypes[0]).toMatchObject({
+      name: 'untitled',
+      placeholder: true,
+      placeholderGuide: {
+        kind: 'prototype-empty',
+        title: 'Empty prototype',
+      },
+    });
+  });
+
+  it('preserves waiting prototype metadata after resource refresh', () => {
+    const { res, readBody } = createJsonResponse();
+
+    const handled = handleEntriesCompatibilityApi(
+      {
+        url: '/api/entries.json',
+        method: 'GET',
+        headers: { host: 'localhost' },
+      } as IncomingMessage,
+      res,
+      { runtimeOrigin: '' } as any,
+      {
+        project: {
+          id: 'demo-project',
+          root: '/tmp/demo-project',
+        },
+        metadata: {
+          resources: {
+            prototypes: [
+              {
+                id: 'untitled',
+                name: 'untitled',
+                title: 'Untitled',
+                clientUrl: '/prototypes/untitled',
+                filePath: 'src/prototypes/untitled/index.tsx',
+                absoluteFilePath: '/tmp/demo-project/src/prototypes/untitled/index.tsx',
+                generationStatus: 'waiting',
+              },
+            ],
+            docs: [],
+            themes: [],
+            data: [],
+            templates: [],
+          },
+        } as any,
+      },
+      '/api/entries.json',
+    );
+
+    const body = readBody();
+    expect(handled).toBe(true);
+    expect(body.prototypes[0]).toMatchObject({
+      name: 'untitled',
+      generationStatus: 'waiting',
+    });
+    expect(body.prototypes[0]).not.toHaveProperty('placeholder');
+    expect(body.prototypes[0]).not.toHaveProperty('placeholderGuide');
+  });
+});

@@ -1,0 +1,799 @@
+import { describe, expect, it } from 'vitest';
+
+import type { ItemData, SidebarTreeNode } from '../types';
+import {
+    buildDefaultTree,
+    createSidebarTreeItemLookup,
+    removeDocsSidebarTreeItem,
+    resolveSidebarTreeItem,
+    sanitizeSidebarTree,
+} from './sidebarTree';
+
+function createPrototype(overrides: Partial<ItemData> = {}): ItemData {
+	    return {
+	        name: 'ref-app-home',
+	        displayName: '健身 App 首页',
+	        jsUrl: '/build/prototypes/ref-app-home.js',
+	        specUrl: '/prototypes/ref-app-home/spec',
+	        ...overrides,
+	    };
+}
+
+describe('sidebarTree', () => {
+    it('builds a flat tree for prototypes', () => {
+        const tree = buildDefaultTree('prototypes', [
+            createPrototype(),
+            createPrototype({
+                name: 'ref-antd',
+                displayName: 'Antd 电商后台',
+            }),
+        ]);
+
+        expect(tree).toEqual([
+            {
+                id: 'item:prototypes:ref-app-home',
+                kind: 'item',
+                title: '健身 App 首页',
+                itemKey: 'prototypes/ref-app-home',
+            },
+            {
+                id: 'item:prototypes:ref-antd',
+                kind: 'item',
+                title: 'Antd 电商后台',
+                itemKey: 'prototypes/ref-antd',
+            },
+        ]);
+    });
+
+    it('keeps regular folders, persisted item titles, and removes missing items during sanitize', () => {
+        const items = [
+            createPrototype(),
+            createPrototype({
+                name: 'ref-antd',
+                displayName: 'Antd 电商后台',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder:demos',
+                kind: 'folder',
+                title: '演示原型',
+                children: [
+                    {
+                        id: 'item:prototypes:ref-antd',
+                        kind: 'item',
+                        title: '旧标题',
+                        itemKey: 'prototypes/ref-antd',
+                    },
+                    {
+                        id: 'item:prototypes:ghost-app',
+                        kind: 'item',
+                        title: 'Ghost',
+                        itemKey: 'prototypes/ghost-app',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('prototypes', persistedTree, items);
+
+        expect(tree[0]).toMatchObject({
+            itemKey: 'prototypes/ref-app-home',
+        });
+        expect(tree[1]).toMatchObject({
+            kind: 'folder',
+            title: '演示原型',
+        });
+        expect(tree[1]?.children).toEqual([
+            {
+                id: 'item:prototypes:ref-antd',
+                kind: 'item',
+                title: '旧标题',
+                itemKey: 'prototypes/ref-antd',
+            },
+        ]);
+    });
+
+    it('refreshes generated file-name titles from resource display names while preserving manual titles', () => {
+        const items = [
+            createPrototype({
+                name: 'express-home',
+                displayName: '快递官网移动端首页',
+            }),
+            createPrototype({
+                name: 'ref-antd',
+                displayName: 'Antd 电商后台',
+            }),
+            createPrototype({
+                name: 'ref-app-home',
+                displayName: '健身 App 首页',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder:demos',
+                kind: 'folder',
+                title: '演示原型',
+                children: [
+                    {
+                        id: 'item:prototypes:express-home',
+                        kind: 'item',
+                        title: 'express home',
+                        itemKey: 'prototypes/express-home',
+                    },
+                ],
+            },
+            {
+                id: 'item:prototypes:ref-antd',
+                kind: 'item',
+                title: 'ref antd',
+                itemKey: 'prototypes/ref-antd',
+            },
+            {
+                id: 'item:prototypes:ref-app-home',
+                kind: 'item',
+                title: '手动标题',
+                itemKey: 'prototypes/ref-app-home',
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('prototypes', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'folder:demos',
+                kind: 'folder',
+                title: '演示原型',
+                children: [
+                    {
+                        id: 'item:prototypes:express-home',
+                        kind: 'item',
+                        title: '快递官网移动端首页',
+                        itemKey: 'prototypes/express-home',
+                    },
+                ],
+            },
+            {
+                id: 'item:prototypes:ref-antd',
+                kind: 'item',
+                title: 'Antd 电商后台',
+                itemKey: 'prototypes/ref-antd',
+            },
+            {
+                id: 'item:prototypes:ref-app-home',
+                kind: 'item',
+                title: '手动标题',
+                itemKey: 'prototypes/ref-app-home',
+            },
+        ]);
+    });
+
+    it('refreshes persisted path-like nested doc titles from resource display names', () => {
+        const items = [
+            createPrototype({
+                name: 'templates/prd-template.md',
+                displayName: 'prd-template',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-templates',
+                kind: 'folder',
+                title: 'templates',
+                children: [
+                    {
+                        id: 'item-docs-templates-prd-template',
+                        kind: 'item',
+                        title: 'templates/prd-template',
+                        itemKey: 'docs/templates/prd-template.md',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('docs', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'folder-docs-templates',
+                kind: 'folder',
+                title: 'templates',
+                children: [
+                    {
+                        id: 'item:docs:templates/prd-template.md',
+                        kind: 'item',
+                        title: 'prd-template',
+                        itemKey: 'docs/templates/prd-template.md',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('matches basename docs to filesystem tree paths and refreshes path-like titles', () => {
+        const items = [
+            createPrototype({
+                name: 'Agent.png',
+                displayName: 'Agent',
+                filePath: '素材/Agent.png',
+            }),
+            createPrototype({
+                name: '批注更多开启.png',
+                displayName: '批注更多开启',
+                filePath: '素材/批注更多开启.png',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-materials',
+                kind: 'folder',
+                title: '素材',
+                path: '素材',
+                folderPath: '素材',
+                children: [
+                    {
+                        id: 'item-docs-materials-agent',
+                        kind: 'item',
+                        title: '素材/Agent',
+                        itemKey: 'docs/素材/Agent.png',
+                        path: '素材/Agent.png',
+                    },
+                    {
+                        id: 'item-docs-materials-comment-more',
+                        kind: 'item',
+                        title: '素材/批注更多开启',
+                        itemKey: 'docs/素材/批注更多开启.png',
+                        path: '素材/批注更多开启.png',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('docs', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'folder-docs-materials',
+                kind: 'folder',
+                title: '素材',
+                path: '素材',
+                folderPath: '素材',
+                children: [
+                    {
+                        id: 'item-docs-materials-agent',
+                        kind: 'item',
+                        title: 'Agent',
+                        itemKey: 'docs/素材/Agent.png',
+                        path: '素材/Agent.png',
+                    },
+                    {
+                        id: 'item-docs-materials-comment-more',
+                        kind: 'item',
+                        title: '批注更多开启',
+                        itemKey: 'docs/素材/批注更多开启.png',
+                        path: '素材/批注更多开启.png',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('refreshes generated repeated theme titles from resource display names', () => {
+        const items = [
+            createPrototype({
+                name: 'figma',
+                displayName: 'Figma',
+            }),
+            createPrototype({
+                name: 'orderful',
+                displayName: 'Orderful',
+            }),
+            createPrototype({
+                name: 'custom-theme',
+                displayName: 'Custom Theme',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'item-themes-figma',
+                kind: 'item',
+                title: 'Figma 主题 - Figma',
+                itemKey: 'themes/figma',
+            },
+            {
+                id: 'item-themes-orderful',
+                kind: 'item',
+                title: 'Orderful 主题 - Orderful',
+                itemKey: 'themes/orderful',
+            },
+            {
+                id: 'item-themes-custom-theme',
+                kind: 'item',
+                title: '手动主题名',
+                itemKey: 'themes/custom-theme',
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('themes', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'item:themes:figma',
+                kind: 'item',
+                title: 'Figma',
+                itemKey: 'themes/figma',
+            },
+            {
+                id: 'item:themes:orderful',
+                kind: 'item',
+                title: 'Orderful',
+                itemKey: 'themes/orderful',
+            },
+            {
+                id: 'item:themes:custom-theme',
+                kind: 'item',
+                title: '手动主题名',
+                itemKey: 'themes/custom-theme',
+            },
+        ]);
+    });
+
+    it('keeps persisted trees while entry items are still loading', () => {
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder:demos',
+                kind: 'folder',
+                title: '演示原型',
+                children: [
+                    {
+                        id: 'item:prototypes:ref-antd',
+                        kind: 'item',
+                        title: 'Antd 电商后台',
+                        itemKey: 'prototypes/ref-antd',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('prototypes', persistedTree, [])).toEqual(persistedTree);
+    });
+
+    it('matches resource docs inside real subfolders', () => {
+        const items = [
+            createPrototype({
+                name: 'assets/icons/photos/2026-04-03-10.20.43.md',
+                displayName: '2026-04-03-10.20.43',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-icons-photos-2026-04-03-10-20-43-md',
+                        kind: 'item',
+                        title: '2026-04-03-10.20.43',
+                        itemKey: 'docs/assets/icons/photos/2026-04-03-10.20.43.md',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', persistedTree, items)).toEqual([
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                children: [
+                    {
+                        id: 'item:docs:assets/icons/photos/2026-04-03-10.20.43.md',
+                        kind: 'item',
+                        title: '2026-04-03-10.20.43',
+                        itemKey: 'docs/assets/icons/photos/2026-04-03-10.20.43.md',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('keeps filesystem resource files that do not have metadata docs', () => {
+        const items = [
+            createPrototype({
+                name: 'README',
+                displayName: 'README',
+            }),
+        ];
+        const scannedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-test-files',
+                kind: 'folder',
+                title: 'test-files',
+                path: 'test-files',
+                folderPath: 'test-files',
+                children: [
+                    {
+                        id: 'item-docs-test-files-sample-pdf',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.pdf',
+                        path: 'test-files/sample.pdf',
+                    },
+                    {
+                        id: 'item-docs-test-files-sample-xlsx',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.xlsx',
+                        path: 'test-files/sample.xlsx',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-README-md',
+                kind: 'item',
+                title: 'README',
+                itemKey: 'docs/README.md',
+                path: 'README.md',
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual([
+            {
+                id: 'folder-docs-test-files',
+                kind: 'folder',
+                title: 'test-files',
+                path: 'test-files',
+                folderPath: 'test-files',
+                children: [
+                    {
+                        id: 'item-docs-test-files-sample-pdf',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.pdf',
+                        path: 'test-files/sample.pdf',
+                    },
+                    {
+                        id: 'item-docs-test-files-sample-xlsx',
+                        kind: 'item',
+                        title: 'sample',
+                        itemKey: 'docs/test-files/sample.xlsx',
+                        path: 'test-files/sample.xlsx',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('keeps nested filesystem resource titles as basenames when metadata display names include the folder path', () => {
+        const items = [
+            createPrototype({
+                name: 'new-folder/fabu.md',
+                displayName: 'new-folder/fabu',
+                filePath: 'new-folder/fabu.md',
+            }),
+            createPrototype({
+                name: 'new-folder/新建.md',
+                displayName: 'new-folder/新建',
+                filePath: 'new-folder/新建.md',
+            }),
+        ];
+        const scannedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-new-folder',
+                kind: 'folder',
+                title: 'new-folder',
+                path: 'new-folder',
+                folderPath: 'new-folder',
+                children: [
+                    {
+                        id: 'item-docs-new-folder-fabu-md',
+                        kind: 'item',
+                        title: 'fabu',
+                        itemKey: 'docs/new-folder/fabu.md',
+                        path: 'new-folder/fabu.md',
+                    },
+                    {
+                        id: 'item-docs-new-folder-new-md',
+                        kind: 'item',
+                        title: 'new-folder/新建',
+                        itemKey: 'docs/new-folder/新建.md',
+                        path: 'new-folder/新建.md',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual([
+            {
+                id: 'folder-docs-new-folder',
+                kind: 'folder',
+                title: 'new-folder',
+                path: 'new-folder',
+                folderPath: 'new-folder',
+                children: [
+                    {
+                        id: 'item-docs-new-folder-fabu-md',
+                        kind: 'item',
+                        title: 'fabu',
+                        itemKey: 'docs/new-folder/fabu.md',
+                        path: 'new-folder/fabu.md',
+                    },
+                    {
+                        id: 'item-docs-new-folder-new-md',
+                        kind: 'item',
+                        title: '新建',
+                        itemKey: 'docs/new-folder/新建.md',
+                        path: 'new-folder/新建.md',
+                    },
+                ],
+            },
+        ]);
+    });
+
+    it('preserves extensionless markdown item identity when resolving filesystem tree nodes', () => {
+        const items = [
+            createPrototype({
+                name: 'new-folder/plain',
+                displayName: 'plain',
+                filePath: 'src/resources/new-folder/plain.md',
+                resourceId: 'new-folder/plain',
+            }),
+        ];
+        const lookup = createSidebarTreeItemLookup('docs', items);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-new-folder-plain-md',
+            kind: 'item',
+            title: 'plain',
+            itemKey: 'docs/new-folder/plain.md',
+            path: 'new-folder/plain.md',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toEqual(expect.objectContaining({
+            name: 'new-folder/plain',
+            displayName: 'plain',
+            filePath: 'src/resources/new-folder/plain.md',
+            resourceId: 'new-folder/plain',
+        }));
+    });
+
+    it('drops stale root README resource nodes from docs trees', () => {
+        const lookup = createSidebarTreeItemLookup('docs', []);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-README-md',
+            kind: 'item',
+            title: 'README.md',
+            itemKey: 'docs/README.md',
+            path: 'README.md',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toBeNull();
+        expect(sanitizeSidebarTree('docs', [node], [])).toEqual([]);
+    });
+
+    it('resolves filesystem document tree nodes before docs metadata catches up', () => {
+        const lookup = createSidebarTreeItemLookup('docs', []);
+        const node: SidebarTreeNode = {
+            id: 'item-docs-secondhand-market-home-png',
+            kind: 'item',
+            title: 'secondhand-market-home',
+            itemKey: 'docs/secondhand-market-home.png',
+            path: 'secondhand-market-home.png',
+        };
+
+        expect(resolveSidebarTreeItem('docs', node, lookup)).toMatchObject({
+            name: 'secondhand-market-home.png',
+            displayName: 'secondhand-market-home',
+            specUrl: '/api/docs/secondhand-market-home.png',
+            previewUrl: '/api/docs/secondhand-market-home.png',
+            filePath: 'secondhand-market-home.png',
+            absoluteFilePath: 'secondhand-market-home.png',
+        });
+    });
+
+    it('removes deleted docs resource nodes from filesystem and persisted trees', () => {
+        const tree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-pasted-image-png',
+                        kind: 'item',
+                        title: 'pasted image',
+                        itemKey: 'docs/assets/pasted-image.png',
+                        path: 'assets/pasted-image.png',
+                    },
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-legacy-image',
+                kind: 'item',
+                title: 'legacy image',
+                itemKey: 'docs/legacy-image',
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ];
+
+        const withoutPastedImage = removeDocsSidebarTreeItem(tree, 'assets/pasted-image.png');
+        expect(withoutPastedImage).toEqual([
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-legacy-image',
+                kind: 'item',
+                title: 'legacy image',
+                itemKey: 'docs/legacy-image',
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ]);
+
+        expect(removeDocsSidebarTreeItem(tree, 'legacy-image.png')).toEqual([
+            {
+                id: 'folder-docs-assets',
+                kind: 'folder',
+                title: 'assets',
+                path: 'assets',
+                folderPath: 'assets',
+                children: [
+                    {
+                        id: 'item-docs-assets-pasted-image-png',
+                        kind: 'item',
+                        title: 'pasted image',
+                        itemKey: 'docs/assets/pasted-image.png',
+                        path: 'assets/pasted-image.png',
+                    },
+                    {
+                        id: 'item-docs-assets-keep-png',
+                        kind: 'item',
+                        title: 'keep',
+                        itemKey: 'docs/assets/keep.png',
+                        path: 'assets/keep.png',
+                    },
+                ],
+            },
+            {
+                id: 'item-docs-extensionless-file',
+                kind: 'item',
+                title: 'extensionless file',
+                itemKey: 'docs/extensionless-file',
+                path: 'extensionless-file',
+            },
+        ]);
+
+        expect(removeDocsSidebarTreeItem(tree, 'extensionless-file.png')).toEqual(tree);
+    });
+
+    it('does not re-add stale root docs after a filesystem doc moves into a folder', () => {
+        const items = [
+            createPrototype({
+                name: 'index',
+                displayName: 'index',
+            }),
+        ];
+        const scannedTree: SidebarTreeNode[] = [
+            {
+                id: 'folder-docs-test',
+                kind: 'folder',
+                title: '测试',
+                path: '测试',
+                folderPath: '测试',
+                children: [
+                    {
+                        id: 'item-docs-test-index-md',
+                        kind: 'item',
+                        title: 'index',
+                        itemKey: 'docs/测试/index.md',
+                        path: '测试/index.md',
+                    },
+                ],
+            },
+        ];
+
+        expect(sanitizeSidebarTree('docs', scannedTree, items)).toEqual(scannedTree);
+    });
+
+    it('lifts legacy subpage folders into regular items', () => {
+        const items = [
+            createPrototype({
+                name: 'legacy-page-a',
+                displayName: '旧页面 A',
+            }),
+            createPrototype({
+                name: 'legacy-page-b',
+                displayName: '旧页面 B',
+            }),
+        ];
+        const persistedTree: SidebarTreeNode[] = [
+            {
+                id: 'subpage-group:prototypes:ref-app-home',
+                kind: 'folder',
+                title: '旧自动分组',
+                children: [
+                    {
+                        id: 'item:prototypes:legacy-page-a',
+                        kind: 'item',
+                        title: '旧页面 A',
+                        itemKey: 'prototypes/legacy-page-a',
+                    },
+                    {
+                        id: 'item:prototypes:legacy-page-b',
+                        kind: 'item',
+                        title: '旧页面 B',
+                        itemKey: 'prototypes/legacy-page-b',
+                    },
+                ],
+            },
+        ];
+
+        const tree = sanitizeSidebarTree('prototypes', persistedTree, items);
+
+        expect(tree).toEqual([
+            {
+                id: 'item:prototypes:legacy-page-a',
+                kind: 'item',
+                title: '旧页面 A',
+                itemKey: 'prototypes/legacy-page-a',
+            },
+            {
+                id: 'item:prototypes:legacy-page-b',
+                kind: 'item',
+                title: '旧页面 B',
+                itemKey: 'prototypes/legacy-page-b',
+            },
+        ]);
+    });
+
+    it('resolves resource tree file nodes to metadata docs stored without file extensions', () => {
+        const item = createPrototype({
+            name: 'assets/icons/photos/2026-04-03-10.20.43',
+            displayName: '2026-04-03-10.20.43',
+        });
+        const lookup = createSidebarTreeItemLookup('docs', [item]);
+
+        const resolved = resolveSidebarTreeItem('docs', {
+            id: 'item-docs-assets-icons-photos-2026-04-03-10-20-43-md',
+            kind: 'item',
+            title: '2026-04-03-10.20.43',
+            itemKey: 'docs/assets/icons/photos/2026-04-03-10.20.43.md',
+        }, lookup);
+
+        expect(resolved).toEqual(item);
+    });
+});

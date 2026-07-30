@@ -1,0 +1,52 @@
+.tiptap.ProseMirror {
+  .tiptap-resizable-image {
+    display: block;
+    margin: 2rem 0;
+  }
+
+  .tiptap-resizable-image__container {
+    position: relative;
+    display: inline-block;
+    outline: 0.125rem solid transparent;
+    border-radius: var(--tt-radius-xs, 0.25rem);
+    overflow: hidden;
+  }
+
+  .tiptap-resizable-image.is-selected .tiptap-resizable-image__container {
+    outline-color: var(--tt-brand-color-500);
+  }
+
+  .tiptap-resizable-image__img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+
+  .tiptap-resizable-image__handle {
+    position: absolute;
+    right: -6px;
+    bottom: -6px;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    cursor: nwse-resize;
+    touch-action: none;
+    opacity: 0;
+    transform: scale(0.96);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+  }
+
+  .tiptap-resizable-image.is-selected .tiptap-resizable-image__handle {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .tiptap-resizable-image.is-resizing .tiptap-resizable-image__handle {
+    opacity: 1;
+  }
+}
+

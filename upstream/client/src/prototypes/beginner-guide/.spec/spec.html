@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新手指导规格</title>
+  <style>
+    :root {
+      font-family:
+        ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      --brand: #008f5d;
+      --brand-ink: #007a50;
+      --brand-soft: #e6f5ef;
+      --brand-surface: #f2faf7;
+      --brand-border: #b7ddcf;
+      --text: #222832;
+      --text-secondary: #4b5565;
+      --text-muted: #6f7888;
+      --text-placeholder: #8b94a3;
+      color: var(--text);
+      background: #f5f7fb;
+      scrollbar-gutter: stable;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 32px 20px 64px;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 24px;
+      width: min(1200px, 100%);
+      margin: 0 auto;
+      align-items: start;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 32px;
+      padding: 18px 14px;
+      border: 1px solid #dfe4ee;
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .sidebar-title {
+      margin: 0 8px 10px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .page-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .page-nav button {
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 8px;
+      color: var(--text-secondary);
+      background: transparent;
+      font: inherit;
+      font-size: 13px;
+      line-height: 1.45;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .page-nav button:hover,
+    .page-nav button[aria-current="page"] {
+      color: var(--brand-ink);
+      background: var(--brand-soft);
+    }
+
+    .page-nav button[aria-current="page"] { font-weight: 600; }
+
+    main {
+      min-width: 0;
+      padding: 40px;
+      border: 1px solid #dfe4ee;
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 4px 16px rgb(30 45 75 / 6%);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      line-height: 1.3;
+    }
+
+    h2 {
+      margin: 44px 0 20px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #e7eaf0;
+      font-size: 21px;
+      line-height: 1.55;
+    }
+
+    h3 {
+      margin: 28px 0 12px;
+      font-size: 17px;
+      line-height: 1.5;
+    }
+
+    p,
+    li {
+      font-size: 15px;
+      line-height: 2;
+    }
+
+    p { margin: 20px 0; }
+
+    td,
+    th {
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .definition {
+      margin: 16px 0 0;
+      padding: 14px 16px;
+      border-left: 3px solid var(--brand);
+      color: var(--text-secondary);
+      background: var(--brand-surface);
+    }
+
+    .hint { color: var(--text-muted); }
+
+    ul {
+      margin: 10px 0 20px;
+      padding-left: 22px;
+    }
+
+    .placeholder-list { padding-left: 0; }
+
+    .placeholder-list li {
+      list-style: none;
+      color: var(--text-placeholder);
+    }
+
+    .placeholder-list li::before {
+      margin-right: 8px;
+      color: #b2bac6;
+      content: "—";
+    }
+
+    table {
+      width: 100%;
+      margin-top: 14px;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      min-width: 120px;
+      padding: 10px 12px;
+      border: 1px solid #dfe4ee;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #f6f8fb; }
+
+    td:empty::after {
+      content: "待补充";
+      color: var(--text-placeholder);
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef1f6;
+    }
+
+    .mermaid {
+      display: flex;
+      justify-content: center;
+      margin: 12px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--brand-border);
+      border-radius: 8px;
+      background: var(--brand-surface);
+    }
+
+    .mermaid svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .spec-page[hidden] { display: none; }
+
+    @media (max-width: 720px) {
+      body { padding: 0 8px 40px; }
+      .shell { display: block; }
+
+      .sidebar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        margin: 0 -8px 12px;
+        padding: 10px 8px;
+        border-width: 0 0 1px;
+        border-radius: 0;
+      }
+
+      .sidebar-title {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+      }
+
+      .page-nav {
+        flex-direction: row;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+
+      .page-nav::-webkit-scrollbar { display: none; }
+
+      .page-nav button {
+        width: auto;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+
+      main {
+        padding: 24px 18px;
+        border-radius: 8px;
+      }
+
+      .table-wrap { overflow: visible; }
+
+      table,
+      tbody,
+      tr,
+      td {
+        display: block;
+        width: 100%;
+      }
+
+      thead { display: none; }
+
+      tbody {
+        display: grid;
+        gap: 12px;
+      }
+
+      tr {
+        overflow: hidden;
+        border: 1px solid #dfe4ee;
+        border-radius: 6px;
+        background: #fff;
+      }
+
+      td {
+        display: grid;
+        grid-template-columns: minmax(96px, 36%) minmax(0, 1fr);
+        gap: 12px;
+        min-width: 0;
+        padding: 10px 12px;
+        border: 0;
+        border-bottom: 1px solid #e7eaf0;
+      }
+
+      td:last-child { border-bottom: 0; }
+
+      td::before {
+        content: attr(data-label);
+        color: var(--text-secondary);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.5;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <p class="sidebar-title">目录</p>
+      <nav class="page-nav" aria-label="规格文档页面">
+        <button type="button" data-page-target="overview" aria-current="page">当前方案</button>
+        <button type="button" data-page-target="chapter-content">章节内容</button>
+      </nav>
+    </aside>
+
+    <main>
+      <article class="spec-page" data-spec-page="overview">
+        <h1>新手指导</h1>
+        <p class="definition">面向首次使用 Axhub Make 的产品经理，通过约 30 分钟的分章学习和动手练习，完成从选择 AI 工具到创建、修改和发布原型的第一次完整体验。</p>
+
+        <section id="current-plan">
+          <h2>当前方案</h2>
+          <ul>
+            <li><strong>目标用户：</strong>第一次使用 Axhub Make，对 AI 工具、模型选择和原型协作流程还不熟悉的产品经理。</li>
+            <li><strong>使用场景：</strong>用户打开“新手指导”项目后，按照章节边学边操作；也可以直接跳到当前需要的章节查阅。</li>
+            <li><strong>核心体验：</strong>七个短章节串联“准备工具、选择模型、沟通、创建、修改、发布、继续学习”的完整路径，每章都有清晰目标、示例和完成标准。</li>
+            <li><strong>预期结果：</strong>用户能独立打开正确项目，向 AI 说明需求，生成并修改一个原型，并知道如何发布、导出和继续进阶。</li>
+          </ul>
+        </section>
+
+        <section id="facts-inputs">
+          <h2>事实与输入</h2>
+          <h3>已确认的产品事实</h3>
+          <ul>
+            <li>学习路径固定为七章，预计总用时约 29 分钟；章节可按顺序学习，也可自由跳转。</li>
+            <li>工具选择覆盖 ChatGPT、Cursor、TRAE CN 系列和 WorkBuddy；模型选择提供六个推荐项。</li>
+            <li>安装、沟通和创建章节提供可直接使用的练习内容；编辑章节鼓励用户用截图、标注和语音表达修改要求。</li>
+            <li>完成标准用于帮助用户自查，不承担课程进度、考试或账号记录功能。</li>
+          </ul>
+          <h3>参考资料</h3>
+          <ul>
+            <li>“打开 AI”和“新建项目”截图：帮助用户完成工具安装与项目打开。</li>
+            <li>模型与计划模式截图：帮助用户定位模型入口，并理解先确认方案再生成的操作方式。</li>
+            <li>添加页面与批注截图：帮助用户把具体页面和具体位置交给 AI。</li>
+            <li>发布、访问链接和在线原型截图：帮助用户识别交付入口与后续学习入口。</li>
+          </ul>
+        </section>
+
+        <section id="prototype-scope">
+          <h2>原型范围</h2>
+          <h3>本次呈现</h3>
+          <ul>
+            <li>七章完整学习路径，以及章节目录、上一章和下一章。</li>
+            <li>AI 工具和推荐模型的选择信息。</li>
+            <li>与 AI 沟通、创建原型和编辑原型的方法与练习。</li>
+            <li>云端发布、文件导出和局域网访问的入口说明。</li>
+            <li>完成学习后的进阶路线与项目清理建议。</li>
+          </ul>
+          <h3>本次不呈现</h3>
+          <ul>
+            <li>账号注册、付费购买、工具自动安装和模型可用性检测。</li>
+            <li>课程进度保存、完成率统计、考试、证书或章节解锁。</li>
+            <li>真正执行云端发布、文件导出或团队协作；教程只帮助用户找到入口并理解用途。</li>
+            <li>覆盖 Axhub Make 的全部能力；本项目只建立新手第一次使用所需的最小闭环。</li>
+          </ul>
+        </section>
+
+        <section id="pages-content">
+          <h2>页面与内容方案</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>章节</th>
+                  <th>页面作用</th>
+                  <th>主要内容</th>
+                  <th>练习或素材</th>
+                  <th>完成结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="章节">01 安装 Agent</td>
+                  <td data-label="页面作用">完成使用前的工具准备。</td>
+                  <td data-label="主要内容">选择一个 AI 工具；在工具中打开当前项目；确认项目目录正确。</td>
+                  <td data-label="练习或素材">工具对比表、打开入口截图、新建项目截图、目录确认练习。</td>
+                  <td data-label="完成结果">已选工具并打开正确项目。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">02 选对模型</td>
+                  <td data-label="页面作用">减少因默认模型不合适导致的失败。</td>
+                  <td data-label="主要内容">认识六个推荐模型；知道模型入口通常位于输入框附近；主动选择模型。</td>
+                  <td data-label="练习或素材">推荐模型表、模型入口截图。</td>
+                  <td data-label="完成结果">已选择推荐模型，不盲目依赖自动选择。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">03 给 AI 下达指令</td>
+                  <td data-label="页面作用">建立正确的人机沟通预期。</td>
+                  <td data-label="主要内容">自然表达任务；理解沟通成本与 AI 的不稳定性；掌握新对话、语音和图片三个技巧。</td>
+                  <td data-label="练习或素材">沟通流程图、结果与时间不确定性示意、修改卡片练习。</td>
+                  <td data-label="完成结果">能用清楚的语言和参考资料描述任务。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">04 创建原型</td>
+                  <td data-label="页面作用">完成第一次从想法到原型的生成。</td>
+                  <td data-label="主要内容">说清做什么、给谁用、看起来像什么；想法不完整时让 AI 补全；先确认方案再生成。</td>
+                  <td data-label="练习或素材">计划模式截图、快递官网首页练习。</td>
+                  <td data-label="完成结果">能发起一次完整的原型创建任务。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">05 编辑原型</td>
+                  <td data-label="页面作用">学会准确指出修改对象和预期。</td>
+                  <td data-label="主要内容">直接描述修改；使用截图与标注；把页面加入对话；使用 Axhub Make 批注。</td>
+                  <td data-label="练习或素材">添加页面截图、批注工具截图、局部修改练习。</td>
+                  <td data-label="完成结果">能让 AI 完成一处明确的页面修改。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">06 发布原型</td>
+                  <td data-label="页面作用">知道如何分享和交付成果。</td>
+                  <td data-label="主要内容">识别云端发布、Axure/Figma/HTML 导出和局域网访问入口。</td>
+                  <td data-label="练习或素材">发布菜单截图、访问链接截图。</td>
+                  <td data-label="完成结果">能找到适合当前场景的分享或导出入口。</td>
+                </tr>
+                <tr>
+                  <td data-label="章节">07 进阶指导</td>
+                  <td data-label="页面作用">给出完成新手学习后的下一步方向。</td>
+                  <td data-label="主要内容">生产与复用、原型能力进阶、项目与协作三类学习路线。</td>
+                  <td data-label="练习或素材">在线原型入口示意、八项进阶主题。</td>
+                  <td data-label="完成结果">知道下一步学什么，并可清理新手项目。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="interaction-states">
+          <h2>交互与状态方案</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>对象/场景</th>
+                  <th>前置状态</th>
+                  <th>用户操作</th>
+                  <th>原型表现</th>
+                  <th>后续状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td data-label="对象/场景">章节目录</td>
+                  <td data-label="前置状态">用户正在阅读任一章节。</td>
+                  <td data-label="用户操作">选择另一个章节。</td>
+                  <td data-label="原型表现">正文切换到目标章节，目录同步突出当前位置。</td>
+                  <td data-label="后续状态">用户可以继续阅读或直接开始该章练习。</td>
+                </tr>
+                <tr>
+                  <td data-label="对象/场景">顺序学习</td>
+                  <td data-label="前置状态">用户已读到章节底部。</td>
+                  <td data-label="用户操作">选择上一章或下一章。</td>
+                  <td data-label="原型表现">切换到相邻章节；第一章没有上一章，最后一章没有下一章。</td>
+                  <td data-label="后续状态">继续沿学习路径推进。</td>
+                </tr>
+                <tr>
+                  <td data-label="对象/场景">复制练习</td>
+                  <td data-label="前置状态">章节展示可发送给 AI 的练习内容。</td>
+                  <td data-label="用户操作">选择“复制”。</td>
+                  <td data-label="原型表现">成功时显示“已复制”；失败时明确提示“复制失败”。</td>
+                  <td data-label="后续状态">用户将内容发送到已选择的 AI 工具。</td>
+                </tr>
+                <tr>
+                  <td data-label="对象/场景">打开工具官网</td>
+                  <td data-label="前置状态">用户正在比较 AI 工具。</td>
+                  <td data-label="用户操作">选择“打开”。</td>
+                  <td data-label="原型表现">在新页面打开对应官方网站，不中断当前教程。</td>
+                  <td data-label="后续状态">用户完成下载或了解后返回教程。</td>
+                </tr>
+                <tr>
+                  <td data-label="对象/场景">窄屏阅读</td>
+                  <td data-label="前置状态">用户在手机或较窄窗口中查看。</td>
+                  <td data-label="用户操作">滚动页面或切换章节。</td>
+                  <td data-label="原型表现">章节目录移到正文上方，卡片、表格和图片按单列阅读。</td>
+                  <td data-label="后续状态">核心内容和操作保持完整可用。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="design-basis">
+          <h2>设计基底与原型特有调整</h2>
+          <ul>
+            <li><strong>整体基调：</strong>采用安静、清晰的长文阅读体验，弱化工具界面感，让用户把注意力放在学习内容和实际操作上。</li>
+            <li><strong>信息结构：</strong>桌面端使用章节目录与正文并列布局；窄屏将目录移到正文上方，保留清晰的当前章节状态。</li>
+            <li><strong>视觉表达：</strong>以暖纸张底色、深色正文和墨蓝强调建立层级；图片只用于解释真实入口和操作，不作为装饰。</li>
+            <li><strong>内容组件：</strong>说明文字、步骤、对比表、练习卡和完成标准使用一致的间距与边界，避免出现与学习无关的装饰模块。</li>
+            <li><strong>原型特有调整：</strong>第三章增加“接受 AI 的不稳定性”，用结果分支和反复调整过程帮助新手建立合理预期。</li>
+          </ul>
+        </section>
+
+        <section id="open-questions">
+          <h2>当前待确认事项</h2>
+          <ul>
+            <li>“在线原型”入口尚未正式开放，上线时间确定后，需要同步调整第七章的入口状态和引导文案。</li>
+            <li>推荐模型名称和评价会随市场变化，需要确认后续由谁维护以及多久复核一次。</li>
+          </ul>
+        </section>
+
+        <section id="decision-history">
+          <h2>用户重要决策与变更</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>日期</th><th>用户决策或变更</th><th>对当前原型的影响</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td data-label="日期">2026-07-11</td>
+                  <td data-label="用户决策或变更">在“给 AI 下达指令”中增加“接受 AI 的不稳定性”。</td>
+                  <td data-label="对当前原型的影响">第三章在沟通成本与实用技巧之间增加结果不确定性、时间不确定性和平均效率的说明。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </article>
+
+      <article class="spec-page" data-spec-page="chapter-content" hidden>
+        <h1>章节内容</h1>
+        <p class="definition">每章围绕一个新手任务展开：先说明为什么，再提供可执行方法，最后用一项小练习或完成标准帮助用户确认自己已经掌握。</p>
+
+        <section id="chapter-one">
+          <h2>01 安装 Agent</h2>
+          <p><strong>章节目标：</strong>选择一个顺手的 AI 工具，在工具中打开当前 Make 项目，并确认没有打开错误目录。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>工具</th><th>适合情况</th><th>上手难度</th><th>综合能力</th></tr></thead>
+              <tbody>
+                <tr><td data-label="工具">ChatGPT</td><td data-label="适合情况">软件简单、综合性价比高，但模型选择较少。</td><td data-label="上手难度">较难</td><td data-label="综合能力">强</td></tr>
+                <tr><td data-label="工具">Cursor</td><td data-label="适合情况">模型齐全、使用体验好，但费用较高。</td><td data-label="上手难度">简单</td><td data-label="综合能力">强</td></tr>
+                <tr><td data-label="工具">TRAE CN 系列</td><td data-label="适合情况">中文友好，国内版免费。</td><td data-label="上手难度">简单</td><td data-label="综合能力">一般</td></tr>
+                <tr><td data-label="工具">WorkBuddy</td><td data-label="适合情况">中文友好，使用方式简单。</td><td data-label="上手难度">简单</td><td data-label="综合能力">一般</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>关键内容</h3>
+          <ol>
+            <li>先说明 Agent 是帮助用户完成原型工作的 AI 工具，用户只需选择一个顺手的工具。</li>
+            <li>用截图引导用户从 Make 首页打开 AI，或在所选工具中把当前目录作为项目打开。</li>
+            <li>提供目录确认练习：AI 只检查当前项目，不修改文件；目录正确时只回复“已打开正确项目”。</li>
+          </ol>
+          <p><strong>完成标准：</strong>已选择一个工具；已在工具中打开本项目；AI 已确认项目正确。</p>
+        </section>
+
+        <section id="chapter-two">
+          <h2>02 选对模型</h2>
+          <p><strong>章节目标：</strong>让用户主动选择适合原型任务的模型，避免在不了解实际模型的情况下依赖自动选择。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>模型</th><th>厂商</th><th>推荐说明</th></tr></thead>
+              <tbody>
+                <tr><td data-label="模型">GPT-5.6</td><td data-label="厂商">OpenAI</td><td data-label="推荐说明">适合处理复杂问题和任务，性价比高。</td></tr>
+                <tr><td data-label="模型">Claude Opus 4.8</td><td data-label="厂商">Anthropic</td><td data-label="推荐说明">综合能力强，价格较高，适合规划。</td></tr>
+                <tr><td data-label="模型">Grok 4.5</td><td data-label="厂商">xAI</td><td data-label="推荐说明">综合能力强、速度快，性价比高。</td></tr>
+                <tr><td data-label="模型">GLM-5.2</td><td data-label="厂商">智谱 AI</td><td data-label="推荐说明">国产替代选择，综合能力强，不支持多模态。</td></tr>
+                <tr><td data-label="模型">Kimi K2.7</td><td data-label="厂商">Moonshot</td><td data-label="推荐说明">国产替代选择，UI/UX 设计能力突出。</td></tr>
+                <tr><td data-label="模型">DeepSeek V4 Pro</td><td data-label="厂商">DeepSeek</td><td data-label="推荐说明">国产替代选择，性价比高，综合能力强，不支持多模态。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>关键内容：</strong>先解释为什么要手动选模型，再展示推荐清单，最后用截图告诉用户模型入口通常位于对话输入框附近。</p>
+          <p><strong>完成标准：</strong>已选择一个推荐模型；知道何时不应依赖自动选择；能找到模型切换入口。</p>
+        </section>
+
+        <section id="chapter-three">
+          <h2>03 给 AI 下达指令</h2>
+          <p><strong>章节目标：</strong>让用户敢于用自然语言开始沟通，同时理解 AI 协作需要额外沟通，并且单次结果与完成时间不完全可预测。</p>
+          <h3>内容顺序</h3>
+          <ol>
+            <li><strong>先正常沟通：</strong>像和同事说话一样说明任务，不要求背提示词模板。</li>
+            <li><strong>接受沟通成本：</strong>使用 AI 后，需要增加说明任务、确认方案和验收结果三个环节。</li>
+            <li><strong>接受 AI 的不稳定性：</strong>同一要求可能产生不同结果，一个任务也可能需要次数不定的调整；评价效率时看一段时间内的平均提升。</li>
+            <li><strong>三个实用技巧：</strong>一个任务开一个新对话；使用语音输入；多提供设计参考、修改截图和问题截图。</li>
+            <li><strong>练习：</strong>让 AI 只修改第 03 章练习卡片的标题、正文和轻量颜色，并说明改动内容。</li>
+          </ol>
+          <p><strong>完成标准：</strong>已用自然语言描述任务；已准备截图或参考图；已把练习要求发送给 AI。</p>
+        </section>
+
+        <section id="chapter-four">
+          <h2>04 创建原型</h2>
+          <p><strong>章节目标：</strong>让用户从一个不完整的想法出发，完成第一次原型创建。</p>
+          <h3>关键内容</h3>
+          <ul>
+            <li>需求比较清楚时，先说三个信息：要做什么、给谁用、看起来像什么。</li>
+            <li>想法还不完整时，可以先说已有方向，让 AI 补充页面内容、业务结构和视觉方案。</li>
+            <li>正式生成前优先使用计划或规格模式，先阅读并确认方案，再进入页面制作。</li>
+            <li>练习要求保持简短：“生成一个快递官网首页原型，面向个人寄件和小商家用户。”</li>
+          </ul>
+          <p><strong>完成标准：</strong>知道清晰需求需要哪三项信息；知道如何让 AI 补全想法；已发起一次原型创建练习。</p>
+        </section>
+
+        <section id="chapter-five">
+          <h2>05 编辑原型</h2>
+          <p><strong>章节目标：</strong>让用户学会准确指出页面中要修改的位置、预期结果和原因。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方式</th><th>适用情况</th><th>用户要做什么</th></tr></thead>
+              <tbody>
+                <tr><td data-label="方式">直接描述</td><td data-label="适用情况">修改对象和预期都很清楚。</td><td data-label="用户要做什么">说明哪个区域、改成什么样、为什么要改。</td></tr>
+                <tr><td data-label="方式">截图与标注</td><td data-label="适用情况">局部位置难以用文字说明。</td><td data-label="用户要做什么">圈出目标位置，并补一句预期变化。</td></tr>
+                <tr><td data-label="方式">把页面加入对话</td><td data-label="适用情况">需要 AI 结合整个页面判断。</td><td data-label="用户要做什么">将当前页面加入对话，再说明任务。</td></tr>
+                <tr><td data-label="方式">Axhub Make 批注</td><td data-label="适用情况">需要在页面上逐点给出修改意见。</td><td data-label="用户要做什么">点击具体位置添加批注，再让 AI 执行。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>练习：</strong>选择页面中一处不满意的内容，用任一种方式告诉 AI，只完成这一处修改。</p>
+          <p><strong>完成标准：</strong>会使用截图、标注或语音表达修改；知道如何把页面加入对话；知道如何让 AI 执行批注。</p>
+        </section>
+
+        <section id="chapter-six">
+          <h2>06 发布原型</h2>
+          <p><strong>章节目标：</strong>帮助用户识别成果分享与交付入口，不要求在教程内真正完成部署。</p>
+          <ul>
+            <li><strong>右上角菜单：</strong>用于发布到云端，或导出为 Axure、Figma 和 HTML 文件。</li>
+            <li><strong>项目菜单：</strong>用于获取开发环境的局域网地址，适合团队查看和手机调试。</li>
+          </ul>
+          <p><strong>完成标准：</strong>知道发布和导出入口；知道支持的主要导出格式；能找到局域网访问地址。</p>
+        </section>
+
+        <section id="chapter-seven">
+          <h2>07 进阶指导</h2>
+          <p><strong>章节目标：</strong>让用户知道完成新手路径后可以继续学习什么，不要求一次学完。</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>方向</th><th>包含内容</th><th>学习价值</th></tr></thead>
+              <tbody>
+                <tr><td data-label="方向">生产与复用</td><td data-label="包含内容">设计系统搭建、文档生成、原型导入。</td><td data-label="学习价值">把一次生成沉淀为可以反复使用的资料和规范。</td></tr>
+                <tr><td data-label="方向">原型能力进阶</td><td data-label="包含内容">进阶新建原型、进阶编辑原型。</td><td data-label="学习价值">提高新建和修改原型的完整性与稳定性。</td></tr>
+                <tr><td data-label="方向">项目与协作</td><td data-label="包含内容">版本管理、团队协作、远程工作。</td><td data-label="学习价值">让多人和长期项目更容易管理。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>获取方式：</strong>后续学习项目计划通过“导入原型”中的“在线原型”提供；入口未开放前保留“近期上线”提示。</p>
+          <p><strong>完成标准：</strong>知道三类进阶方向；知道后续学习项目的获取入口；知道学完后可以删除“新手指导”项目。</p>
+        </section>
+      </article>
+    </main>
+  </div>
+
+  <script>
+    const navItems = [...document.querySelectorAll('[data-page-target]')];
+    const pages = [...document.querySelectorAll('[data-spec-page]')];
+
+    const showPage = (pageId) => {
+      for (const navItem of navItems) {
+        const isCurrent = navItem.dataset.pageTarget === pageId;
+        if (isCurrent) {
+          navItem.setAttribute('aria-current', 'page');
+        } else {
+          navItem.removeAttribute('aria-current');
+        }
+      }
+
+      for (const page of pages) {
+        page.hidden = page.dataset.specPage !== pageId;
+      }
+    };
+
+    for (const navItem of navItems) {
+      navItem.addEventListener('click', () => showPage(navItem.dataset.pageTarget));
+    }
+  </script>
+</body>
+</html>

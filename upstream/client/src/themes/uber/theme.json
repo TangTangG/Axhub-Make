@@ -1,0 +1,293 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "sourceName": "getdesign.md",
+    "originalDetailUrl": "https://getdesign.md/uber/design-md",
+    "fallbackRawUrl": "https://raw.githubusercontent.com/VoltAgent/awesome-design-md/main/design-md/uber/DESIGN.md",
+    "mirrorSource": "github:VoltAgent/awesome-design-md",
+    "websiteUrl": "https://uber.com/"
+  },
+  "identity": {
+    "id": "P0-113",
+    "slug": "uber",
+    "brand": "Uber",
+    "titleZh": "Uber 主题",
+    "titleEn": "Uber",
+    "descriptionZh": "Uber 的 Design.md 主题展示，围绕媒体内容、强视觉、能源运营、消费品牌组织页面。",
+    "descriptionEn": "Mobility platform. Bold black and white, tight type, urban energy."
+  },
+  "tags": {
+    "sourceTags": [],
+    "generatedTags": [
+      "request-flow",
+      "media",
+      "bold",
+      "energy"
+    ],
+    "designTags": [],
+    "distributionTags": [
+      "媒体内容",
+      "强视觉",
+      "能源运营",
+      "消费品牌",
+      "电商零售",
+      "品牌展示",
+      "移动端",
+      "内容货架",
+      "趣味互动"
+    ]
+  },
+  "assets": {
+    "designMd": {
+      "path": "DESIGN.md",
+      "sourcePath": ".local/design-md-batch-regression/getdesign/uber/DESIGN.md"
+    },
+    "tailwind": {
+      "path": "tw.css",
+      "sourcePath": ".local/design-md-batch-regression/getdesign/uber/tw.css"
+    },
+    "tokens": {
+      "path": "assets/tokens.json",
+      "method": "derived_from_design_md_and_metadata"
+    },
+    "cover": null,
+    "previewHtml": {
+      "type": "local-preview",
+      "path": "assets/official-homepage.webp",
+      "publicPath": "assets/official-homepage.webp",
+      "importPath": "./assets/official-homepage.webp?url",
+      "sourcePath": "assets/official-homepage.webp"
+    }
+  },
+  "tokens": {
+    "palette": [
+      "#000000",
+      "#0000ee",
+      "#5e5e5e",
+      "#ffffff",
+      "#afafaf",
+      "#4b4b4b",
+      "#efefef",
+      "#f3f3f3",
+      "#e2e2e2",
+      "#282828",
+      "#a0a0a0",
+      "#fbbf24"
+    ],
+    "typography": {
+      "display": "UberMove",
+      "body": "UberMoveText",
+      "mono": "ui-monospace",
+      "hints": [
+        "UberMove",
+        "UberMoveText",
+        "ui-monospace",
+        "Helvetica Neue",
+        "Geist",
+        "Inter",
+        "mono-kickers"
+      ]
+    },
+    "radius": {
+      "control": "0px",
+      "card": "16px",
+      "preview": "36px",
+      "pill": "999px",
+      "source": "design-md"
+    },
+    "spacing": {
+      "xxs": "4px",
+      "xs": "6px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "xl": "20px",
+      "2xl": "24px",
+      "3xl": "32px",
+      "source": "design-md"
+    }
+  },
+  "previewImages": [
+    {
+      "type": "local-preview",
+      "path": "assets/official-homepage.webp"
+    }
+  ],
+  "display": {
+    "brand": "Uber 主题",
+    "brandAlias": "Uber",
+    "description": "Uber 的 Design.md 主题展示，围绕媒体内容、强视觉、能源运营、消费品牌组织页面。",
+    "descriptionEn": "Mobility platform. Bold black and white, tight type, urban energy.",
+    "variant": "consumer-commerce",
+    "distributionTags": [
+      "媒体内容",
+      "强视觉",
+      "能源运营",
+      "消费品牌",
+      "电商零售",
+      "品牌展示",
+      "移动端",
+      "内容货架",
+      "趣味互动"
+    ],
+    "fontStylesheets": [],
+    "palette": [
+      {
+        "color": "#000000",
+        "labelZh": "主色",
+        "labelEn": "Primary",
+        "textColor": "#ffffff"
+      },
+      {
+        "color": "#0000ee",
+        "labelZh": "主色悬停",
+        "labelEn": "Primary Hover",
+        "textColor": "#ffffff"
+      },
+      {
+        "color": "#5e5e5e",
+        "labelZh": "辅助色",
+        "labelEn": "Secondary",
+        "textColor": "#ffffff"
+      },
+      {
+        "color": "#ffffff",
+        "labelZh": "强调色",
+        "labelEn": "Accent",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#afafaf",
+        "labelZh": "背景色",
+        "labelEn": "Background",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#4b4b4b",
+        "labelZh": "表面色",
+        "labelEn": "Surface",
+        "textColor": "#ffffff"
+      },
+      {
+        "color": "#efefef",
+        "labelZh": "文本色",
+        "labelEn": "Text",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#f3f3f3",
+        "labelZh": "边框色",
+        "labelEn": "Border",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#e2e2e2",
+        "labelZh": "颜色 9",
+        "labelEn": "Color 9",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#282828",
+        "labelZh": "颜色 10",
+        "labelEn": "Color 10",
+        "textColor": "#ffffff"
+      },
+      {
+        "color": "#a0a0a0",
+        "labelZh": "颜色 11",
+        "labelEn": "Color 11",
+        "textColor": "#171717"
+      },
+      {
+        "color": "#fbbf24",
+        "labelZh": "颜色 12",
+        "labelEn": "Color 12",
+        "textColor": "#171717"
+      }
+    ],
+    "shadows": [],
+    "borders": [
+      {
+        "label": "边框 1 - Border 1",
+        "value": "#e2e2e2",
+        "cssValue": "#e2e2e2",
+        "description": "surface-pressed: \"#e2e2e2\""
+      },
+      {
+        "label": "边框 2 - Border 2",
+        "value": "#4b4b4b",
+        "cssValue": "#4b4b4b",
+        "description": "hairline-mid: \"#4b4b4b\""
+      }
+    ],
+    "typography": [
+      "UberMove",
+      "UberMoveText",
+      "ui-monospace",
+      "Helvetica Neue",
+      "Geist",
+      "Inter"
+    ],
+    "previewImages": [
+      {
+        "type": "local-preview",
+        "path": "assets/official-homepage.webp"
+      }
+    ],
+    "panels": [
+      {
+        "eyebrow": "品牌",
+        "title": "第一眼识别明确",
+        "body": "适合消费品牌、电商、媒体和产品展示页。"
+      },
+      {
+        "eyebrow": "Token",
+        "title": "颜色与字体可复用",
+        "body": "页面从本地 metadata 与 Design.md 提取 palette、typography 和标签，用于快速预览主题质感。"
+      },
+      {
+        "eyebrow": "组件",
+        "title": "面向真实界面片段",
+        "body": "按钮、输入、卡片和间距样例保持克制，便于比较不同主题的系统性差异。"
+      }
+    ],
+    "usageGuidance": {
+      "do": [
+        "建议：Reserve {colors.primary} ({#000000}) for every primary CTA pill. One black pill per visible viewport is the brand's whole conversion story。",
+        "建议：Use {rounded.pill} 999 px on every interactive element (buttons, chips, app pills). The pill IS the brand's geometric signature。",
+        "建议：Render cards in {rounded.xl} 16 px — promo cards, content cards, the ride-request form card, the annual-showcase card all share this radius。",
+        "建议：Set every headline in {typography.display-*} weight 700 in sentence-case. The display face never carries body copy。",
+        "建议：Use polarity-flipped black promo bands mid-page to break up white-on-white rhythm. The polarity shift IS the depth cue。"
+      ],
+      "dont": [
+        "避免：introduce a second brand accent colour (orange, blue, green). The brand's entire UI is black-and-white plus grayscale; new accents flatten the system。",
+        "避免：render the primary CTA as a {rounded.xl} rectangle except inside the larger ride-request flow (where {button-large-rounded} is the documented exception)。",
+        "避免：use all-caps display headlines. Sentence-case is the voice; uppercase is restricted to rare eyebrow tags。",
+        "避免：drop a soft drop-shadow on every card. The brand uses Level 0 flat as the default; shadow is reserved for the floating pill and the ride-request form。",
+        "避免：reduce the brand to its illustration system alone. The pill geometry + black/white duet carries the brand even without illustrations。"
+      ]
+    },
+    "radius": {
+      "control": "0px",
+      "card": "16px",
+      "preview": "36px",
+      "pill": "999px",
+      "source": "design-md"
+    },
+    "spacing": {
+      "xxs": "4px",
+      "xs": "6px",
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "xl": "20px",
+      "2xl": "24px",
+      "3xl": "32px",
+      "source": "design-md"
+    }
+  },
+  "status": {
+    "displayPage": "done",
+    "collectionErrors": []
+  }
+}

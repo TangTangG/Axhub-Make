@@ -1,0 +1,32 @@
+title = "Axhub Make Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Excalidraw ships public Firebase client configuration in its browser bundles."
+targetRules = ["gcp-api-key"]
+paths = [
+  '''(^|/)vendor/axhub-excalidraw/dist/(dev|prod)/chunk-[^/]+\.js$''',
+  '''(^|/)admin/assets/chunks/vendor(-common|-excalidraw)?\.js$''',
+]
+
+[[allowlists]]
+description = "Protocol fixtures, field names, and generated vendor code that match the generic key heuristic."
+targetRules = ["generic-api-key"]
+paths = [
+  '''(^|/)src/server/__tests__/(canvas-api|canvas-bridge-hot-reload|http-routing|opencode-bridge-regression|preview-bridge)\.test\.ts$''',
+  '''(^|/)vendor/axhub-excalidraw/dist/dev/index\.js$''',
+  '''(^|/)vendor/axhub-export-core/dist/index\.(js|mjs)$''',
+  '''(^|/)admin/assets/(chunks/vendor-common|dev-template-bootstrap)\.js$''',
+  '''(^|/)skills/third-party/implement-design/SKILL\.md$''',
+  '''(^|/)client/src/prototypes/touch-and-talk-annotation-demo/\.spec/prototype-comments\.json$''',
+]
+
+[[allowlists]]
+description = "Let the dedicated GCP rule own Firebase client key findings instead of reporting them twice."
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = [
+  '''apiKey["']?\s*:\s*["']AIza[0-9A-Za-z_-]{35}''',
+]
